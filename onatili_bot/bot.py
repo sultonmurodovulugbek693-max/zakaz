@@ -409,11 +409,11 @@ async def _show_tests(message: Message, owner_id: int, edit: bool = False) -> No
         open_count = sum(1 for t in tests if not t["closed"])
         text = (
             f"📋 <b>Testlarim</b>\n{LINE}\n"
-            f"Jami: {len(tests)} ta · 🟢 ochiq: {open_count} · 🔒 yakunlangan: {len(tests) - open_count}\n\n"
+            f"Jami: {len(tests)} ta · ⏳ javob yig'ilmoqda: {open_count} · 📢 e'lon qilingan: {len(tests) - open_count}\n\n"
             "Testni tanlang:"
         )
         markup = inline([
-            [(f"{'🔒' if t['closed'] else '🟢'} {t['title'][:26]} · {t['code']} · 👥 {t['students']}", f"t:{t['id']}")]
+            [(f"{'📢' if t['closed'] else '⏳'} {t['title'][:26]} · {t['code']} · 👥 {t['students']}", f"t:{t['id']}")]
             for t in tests
         ])
     if edit:
