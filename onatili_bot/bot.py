@@ -11,6 +11,7 @@ Ishga tushirish:  python bot.py
 import asyncio
 import html
 import logging
+import os
 import re
 import sqlite3
 
@@ -851,7 +852,31 @@ async def main() -> None:
         BotCommand(command="cancel", description="Bekor qilish"),
     ])
     logger.info("Bot ishga tushdi")
+    await _start_health_server()
     await dp.start_polling(bot)
+
+
+async def _start_health_server() -> None:
+    """
+    Render Web Service port ochilishini talab qiladi — PORT berilgan bo'lsa,
+    kichik veb-server "Bot ishlayapti" deb javob beradi. Shu manzilni
+    UptimeRobot/cron-job.org har 10 daqiqada ochib tursa, bepul tarifda bot uxlamaydi.
+    """
+    port = os.getenv("PORT")
+    if not port:
+        return
+    from aiohttp import web
+
+    async def health(_request: web.Request) -> web.Response:
+        return web.Response(text="Bot ishlayapti")
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", int(port)).start()
+    logger.info("Veb-server %s-portda ochildi", port)
 
 
 if __name__ == "__main__":
