@@ -3,7 +3,8 @@ Ona tili test boti (Milliy sertifikat mock).
 
 O'qituvchi: test yaratadi (A–D variant kalitlari) → bot test kodi, titul PDF
 va kalit PDF beradi → natijalarni PDF jadvalda ko'radi, esseni baholaydi.
-O'quvchi: test kodi va javoblarini yuboradi → bot darhol tekshiradi.
+O'quvchi: test kodi va javoblarini yuboradi → natija yashirin turadi.
+O'qituvchi «Natijalarni e'lon qilish»ni bosganda hammaga natijasi yuboriladi.
 
 Ishga tushirish:  python bot.py
 """
@@ -147,11 +148,13 @@ HELP_TEXT = (
     "3. Yozma javoblar — har biri yangi qatorda. 3 tagacha sinonim: <code>chiroyli | go'zal | ko'rkam</code>\n"
     "4. Xohlasangiz B, C, D variantlarni qo'shing\n"
     "5. Bot test kodi, titul va kalit PDF'ini beradi — titulni chop eting\n"
-    f"6. «{BTN_MY_TESTS}» → natijalar, esse bahosi (0–24), yakunlash\n\n"
+    f"6. «{BTN_MY_TESTS}» → kim topshirganini kuzating, esseni baholang (0–24)\n"
+    "7. Hamma topshirgach — «📢 Natijalarni e'lon qilish». Shunda har bir o'quvchiga natijasi boradi\n\n"
     "🧑‍🎓 <b>O'quvchi uchun</b>\n"
     f"«{BTN_CHECK}» → kod → variant → ism → javoblar\n"
     "⚡️ Tez usul: <code>12345*abcdabcd...</code>\n"
-    "Javob bermagan savolga <code>-</code> qo'ying. Har testga bir marta javob yuboriladi.\n\n"
+    "Javob bermagan savolga <code>-</code> qo'ying. Har testga bir marta javob yuboriladi.\n"
+    "⏳ Natija o'qituvchi e'lon qilganda keladi.\n\n"
     "🏅 <b>Milliy sertifikat mock</b>\n"
     "• 45 topshiriq, 180 daqiqa, jami 100 ball (esse — 24)\n"
     "• Ballar UZBMB rasmiy namunasidagidek: 1,1 / 1,7 / 2,5\n"
@@ -173,7 +176,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         f"Assalomu alaykum, {esc(message.from_user.first_name)}! 👋\n\n"
         "Milliy sertifikat uslubidagi mock testlar uchun yordamchi.\n\n"
         "👩‍🏫 <b>O'qituvchi</b> — test yaratadi, titul va kalitni PDF'da oladi, natijalarni kuzatadi\n"
-        "🧑‍🎓 <b>O'quvchi</b> — kod va javoblarni yuboradi, natijani darhol oladi\n\n"
+        "🧑‍🎓 <b>O'quvchi</b> — kod va javoblarni yuboradi, natijani o'qituvchi e'lon qilganda oladi\n\n"
         "Boshlash uchun pastdagi tugmani tanlang 👇",
         reply_markup=MAIN_KB,
     )
@@ -432,7 +435,7 @@ async def _own_test(callback: CallbackQuery) -> dict | None:
 
 
 def _test_card(test: dict, keys: dict, attempts: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
-    status = "🔒 Yakunlangan" if test["closed"] else "🟢 Ochiq — javob qabul qilinmoqda"
+    status = "📢 Natijalar e'lon qilingan" if test["closed"] else "🟢 Javob qabul qilinmoqda · natijalar yashirin"
     lines = [
         f"📝 <b>{esc(test['title'])}</b>",
         LINE,
@@ -457,14 +460,18 @@ def _test_card(test: dict, keys: dict, attempts: list[dict]) -> tuple[str, Inlin
             shares = [percent(a["test_correct"] + a["written_correct"], a["auto_total"]) for a in attempts]
             lines.append(f"📈 O'rtacha: <b>{fmt_num(sum(shares) / len(shares))}%</b> · 🏆 eng yuqori: <b>{fmt_num(max(shares))}%</b>")
     tid = test["id"]
-    rows = [
+    rows = []
+    if not test["closed"]:
+        rows.append([("📢 Natijalarni e'lon qilish", f"close:{tid}")])
+    rows += [
         [("📊 Natijalar PDF", f"res:{tid}")],
         [("📄 Titul", f"sheet:{tid}"), ("🔑 Kalit", f"key:{tid}")],
     ]
     if test["fmt"] == "milliy":
         rows.append([("✍️ Esseni baholash", f"essay:{tid}")])
-    rows.append([("🔓 Qayta ochish", f"open:{tid}") if test["closed"] else ("🏁 Yakunlash", f"close:{tid}"),
-                 ("🗑 O'chirish", f"del:{tid}")])
+    if test["closed"]:
+        rows.append([("🔓 Qayta ochish", f"open:{tid}")])
+    rows.append([("🗑 O'chirish", f"del:{tid}")])
     rows.append([("⬅️ Testlarim", "back")])
     return "\n".join(lines), inline(rows)
 
@@ -528,14 +535,27 @@ async def send_results(callback: CallbackQuery) -> None:
 async def close_ask(callback: CallbackQuery) -> None:
     test = await _own_test(callback)
     if test:
+        attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+        if not attempts:
+            await callback.answer("Hali hech kim javob yubormagan", show_alert=True)
+            return
         await callback.answer()
+        waiting = sum(1 for a in attempts if a["essay"] is None) if test["fmt"] == "milliy" else 0
+        warning = (
+            f"\n⚠️ <b>{waiting} ta</b> o'quvchining essesi hali baholanmagan — ular essesiz ball oladi.\n"
+            if waiting else ""
+        )
         await safe_edit(
             callback.message,
-            f"🏁 <b>{esc(test['title'])}</b> testini yakunlaysizmi?\n\n"
-            "• Yangi javoblar qabul qilinmaydi\n"
+            f"📢 <b>{esc(test['title'])}</b> natijalarini e'lon qilasizmi?\n{LINE}\n"
+            f"👥 Topshirganlar: <b>{len(attempts)}</b> ta\n{warning}\n"
+            "• Javob qabul qilish to'xtaydi\n"
             "• Har bir o'quvchiga natijasi va to'g'ri javoblar yuboriladi\n"
-            + ("• Rasch bali va daraja hisoblanadi\n" if test["fmt"] == "milliy" else ""),
-            inline([[("✅ Ha, yakunlash", f"closeok:{test['id']}"), ("↩️ Yo'q", f"t:{test['id']}")]]),
+            + ("• Rasch bali va daraja barcha natijalar asosida hisoblanadi\n" if test["fmt"] == "milliy" else ""),
+            inline(
+                ([[("✍️ Avval esselarni baholash", f"essay:{test['id']}")]] if waiting else [])
+                + [[("📢 Ha, e'lon qilish", f"closeok:{test['id']}"), ("↩️ Yo'q", f"t:{test['id']}")]]
+            ),
         )
 
 
@@ -545,16 +565,16 @@ async def close_test(callback: CallbackQuery) -> None:
     if not test:
         return
     if test["closed"]:
-        await callback.answer("Test allaqachon yakunlangan")
+        await callback.answer("Natijalar allaqachon e'lon qilingan")
         await _render_card(callback, test)
         return
     await asyncio.to_thread(db.set_closed, test["id"], True)
     test["closed"] = 1
-    await callback.answer("🏁 Test yakunlandi")
+    await callback.answer("📢 E'lon qilinmoqda…")
     await _render_card(callback, test)
-    await _send_results(callback.message, test)
     sent = await _notify_participants(callback.bot, test)
-    await callback.message.answer(f"📨 Natijalar {sent} ta o'quvchiga yuborildi.")
+    await callback.message.answer(f"📨 Natijalar <b>{sent}</b> ta o'quvchiga yuborildi.")
+    await _send_results(callback.message, test)
 
 
 async def _notify_participants(bot: Bot, test: dict) -> int:
@@ -568,7 +588,7 @@ async def _notify_participants(bot: Bot, test: dict) -> int:
         key = keys.get(attempt["variant"], {})
         line = "".join(key.get(item["label"], "?") for item in choices).lower()
         text = (
-            f"🏁 <b>{esc(test['title'])}</b> yakunlandi\n{LINE}\n"
+            f"📢 <b>Natijalar e'lon qilindi</b> · {esc(test['title'])}\n{LINE}\n"
             f"{_result_text(attempt, test, rasch.get(attempt['id']))}\n\n"
             f"🔑 To'g'ri javoblar ({attempt['variant']} variant):\n<code>{line}</code>"
         )
@@ -689,10 +709,12 @@ async def essay_score(message: Message, state: FSMContext) -> None:
         reply_markup=MAIN_KB,
     )
     await message.answer("Keyingisi?", reply_markup=inline([[("✍️ Keyingi o'quvchi", f"essay:{test['id']}")]]))
+    if not test["closed"]:
+        return  # natijalar hali e'lon qilinmagan — o'quvchi bahoni e'lon bilan birga oladi
     try:
         await message.bot.send_message(
             attempt["tg_id"],
-            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
+            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
             f"💯 Jami ball: <b>{total}/{top}</b>",
         )
     except Exception:
@@ -737,17 +759,23 @@ async def check_code(message: Message, state: FSMContext) -> None:
         await message.answer("🔍 Bunday kodli test topilmadi. Kodni tekshirib qayta yuboring.", reply_markup=CANCEL_KB)
         await state.set_state(Check.code)
         return
-    if test["closed"]:
-        await state.clear()
-        await message.answer("🔒 Bu test yakunlangan, javob qabul qilinmaydi.", reply_markup=MAIN_KB)
-        return
     previous = await asyncio.to_thread(db.find_attempt, test["id"], message.from_user.id)
     if previous:
         await state.clear()
-        await message.answer(
-            f"ℹ️ Siz bu testga javob yuborgansiz.\n{LINE}\n{_result_text(previous, test)}",
-            reply_markup=_review_button(previous["id"]),
-        )
+        if test["closed"]:  # natijalar e'lon qilingan
+            await message.answer(
+                f"📊 <b>Natijangiz</b> · {esc(test['title'])}\n{LINE}\n{_result_text(previous, test)}",
+                reply_markup=_review_button(previous["id"]),
+            )
+        else:
+            await message.answer(
+                f"ℹ️ Siz bu testga javob yuborgansiz.\n\n⏳ Natijalar o'qituvchi e'lon qilgandan keyin keladi.",
+                reply_markup=MAIN_KB,
+            )
+        return
+    if test["closed"]:
+        await state.clear()
+        await message.answer("🔒 Bu testning natijalari e'lon qilingan, javob qabul qilinmaydi.", reply_markup=MAIN_KB)
         return
 
     await state.update_data(test_id=test["id"], pending=match.group(2))
@@ -927,20 +955,19 @@ async def _finish_check(message: Message, state: FSMContext, test: dict, answers
     try:
         attempt = await asyncio.to_thread(db.save_attempt, test["id"], tg_id, data["name"], data["variant"], answers, result)
     except sqlite3.IntegrityError:
-        previous = await asyncio.to_thread(db.find_attempt, test["id"], tg_id)
         await message.answer(
-            f"ℹ️ Siz bu testga javob yuborgansiz.\n{LINE}\n{_result_text(previous, test)}", reply_markup=MAIN_KB
+            "ℹ️ Siz bu testga javob yuborgansiz.\n\n⏳ Natijalar o'qituvchi e'lon qilgandan keyin keladi.",
+            reply_markup=MAIN_KB,
         )
         return
 
-    note = (
-        "\n\nℹ️ Esse o'qituvchi tomonidan baholanadi. Rasch bali va daraja test yakunlanganda yuboriladi."
-        if test["fmt"] == "milliy" else ""
-    )
-    await message.answer("✅ Javoblaringiz qabul qilindi!", reply_markup=MAIN_KB)
+    # Natija darhol ko'rsatilmaydi: o'qituvchi hamma topshirgach e'lon qiladi
     await message.answer(
-        f"📊 <b>Natija</b> · {esc(test['title'])}\n{LINE}\n{_result_text(attempt, test)}{note}",
-        reply_markup=_review_button(attempt["id"]),
+        f"✅ <b>Javoblaringiz qabul qilindi!</b>\n{LINE}\n"
+        f"📝 {esc(test['title'])}\n"
+        f"👤 {esc(data['name'])} · {data['variant']} variant\n\n"
+        "⏳ Natijalar o'qituvchi e'lon qilgandan keyin shu yerga keladi.",
+        reply_markup=MAIN_KB,
     )
 
     correct = result["test_correct"] + result["written_correct"]
@@ -948,11 +975,14 @@ async def _finish_check(message: Message, state: FSMContext, test: dict, answers
         f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
         else f"{correct}/{result['auto_total']} ({fmt_num(percent(correct, result['auto_total']))}%)"
     )
+    count = len(await asyncio.to_thread(db.list_attempts, test["id"]))
     try:
         await message.bot.send_message(
             test["owner_id"],
             f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
-            f"👤 {esc(data['name'])} · {data['variant']} variant — <b>{summary}</b>",
+            f"👤 {esc(data['name'])} · {data['variant']} variant — <b>{summary}</b>\n"
+            f"👥 Jami topshirdi: <b>{count}</b> ta",
+            reply_markup=inline([[("📋 Testni ochish", f"t:{test['id']}")]]),
         )
     except Exception:
         logger.warning("O'qituvchiga natija haqida xabar yuborilmadi")
@@ -966,8 +996,11 @@ async def review(callback: CallbackQuery) -> None:
     if not test or callback.from_user.id not in (attempt["tg_id"], test["owner_id"]):
         await callback.answer("Topilmadi", show_alert=True)
         return
+    if not test["closed"] and callback.from_user.id != test["owner_id"]:
+        await callback.answer("⏳ Natijalar hali e'lon qilinmagan", show_alert=True)
+        return
     await callback.answer()
-    show_key = bool(test["closed"]) or callback.from_user.id == test["owner_id"]
+    show_key = True
     key = (await asyncio.to_thread(db.get_keys, test["id"])).get(attempt["variant"], {}) if show_key else {}
     wrong = set(attempt["wrong"])
     answers = attempt["answers"]
@@ -995,8 +1028,6 @@ async def review(callback: CallbackQuery) -> None:
                 right = f"  → <i>{esc(' / '.join(split_options(key.get(label, ''))))}</i>"
             rows.append(f"{mark} <b>{label}</b>: {given}{right}")
         text += "\n✍️ <b>Yozma</b>\n" + "\n".join(rows)
-    if not show_key:
-        text += "\n\n🔒 To'g'ri javoblar test yakunlangach ko'rinadi."
     await callback.message.answer(text[:4000])
 
 
