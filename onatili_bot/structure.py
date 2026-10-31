@@ -75,6 +75,9 @@ class AnswerError(ValueError):
 
 # ---------- Variantli javoblar: "abcd..." yoki "1a2b3c..." ----------
 
+# Kirill klaviaturada yozilgan javob harflari: "а б с д е ф" / "а в с д" -> a b c d e f
+_CYRILLIC_LETTERS = str.maketrans({"а": "a", "б": "b", "в": "b", "с": "c", "д": "d", "е": "e", "ф": "f"})
+
 def parse_choices(text: str, items: list[dict], allow_blank: bool = False) -> dict[str, str]:
     """
     Variantli savollar javobini o'qiydi. Ikki xil yozish mumkin:
@@ -83,7 +86,7 @@ def parse_choices(text: str, items: list[dict], allow_blank: bool = False) -> di
     allow_blank=True (o'quvchi): ketma-ket yozishda "-" yoki "x" — javob berilmagan.
     """
     items = choice_items(items)
-    raw = "".join(text.split()).lower()
+    raw = "".join(text.split()).lower().translate(_CYRILLIC_LETTERS)
     if not raw:
         raise AnswerError("Javoblar bo'sh.")
 
