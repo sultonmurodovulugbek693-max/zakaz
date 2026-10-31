@@ -21,6 +21,8 @@ from structure import (ESSAY_MAX, LETTERS, choice_items, fmt_num, format_title, 
 
 pdfmetrics.registerFont(TTFont("Sans", str(FONTS_DIR / "DejaVuSans.ttf")))
 pdfmetrics.registerFont(TTFont("Sans-Bold", str(FONTS_DIR / "DejaVuSans-Bold.ttf")))
+# <b> teglari matnda qalin bo'lishi uchun shrift oilasi
+pdfmetrics.registerFontFamily("Sans", normal="Sans", bold="Sans-Bold", italic="Sans", boldItalic="Sans-Bold")
 
 INK = colors.HexColor("#1f2933")
 ACCENT = colors.HexColor("#1d6f42")
