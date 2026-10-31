@@ -1,0 +1,1 @@
+-r onatili_bot/requirements.txt
