@@ -35,6 +35,7 @@ from aiogram.types import (
 )
 
 import db
+import essay_ai
 import pdfs
 from config import BOT_TOKEN
 from scoring import rasch_results, total_points
@@ -57,6 +58,9 @@ from structure import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("onatili_bot")
+
+# 1 — AI bahosi o'qituvchi tasdiqlamasa ham darhol qo'llanadi; 0 — o'qituvchi tasdiqlaydi (tavsiya)
+AUTO_CONFIRM_ESSAYS = os.getenv("ESSAY_AUTO_CONFIRM", "0") == "1"
 
 dp = Dispatcher()
 dp.message.filter(F.chat.type == "private")
@@ -100,8 +104,9 @@ def bar(value: float, total: float, width: int = 10) -> str:
     return "▰" * filled + "▱" * (width - filled) + f" {round(share * 100)}%"
 
 
-def step(number: int, total: int, title: str) -> str:
-    return f"<b>{number}/{total}-qadam</b> · {title}\n{LINE}\n"
+def step(number: int, total: int | None, title: str) -> str:
+    label = f"{number}/{total}-qadam" if total else f"{number}-qadam"
+    return f"<b>{label}</b> · {title}\n{LINE}\n"
 
 
 async def safe_edit(message: Message, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
@@ -121,6 +126,7 @@ async def remember(message: Message) -> None:
 class Create(StatesGroup):
     title = State()
     fmt = State()
+    topic = State()
     count = State()
     choices = State()
     texts = State()
@@ -133,6 +139,7 @@ class Check(StatesGroup):
     name = State()
     choices = State()
     texts = State()
+    essay = State()
 
 
 class Essay(StatesGroup):
@@ -204,7 +211,7 @@ async def create_start(message: Message, state: FSMContext) -> None:
     await remember(message)
     await state.set_state(Create.title)
     await message.answer(
-        step(1, 4, "Test nomi")
+        step(1, None, "Test nomi")
         + "Test nomini yozing.\nMasalan: <i>Mock №3 · 11-sinf</i> yoki <i>9-sinf, 1-chorak</i>",
         reply_markup=CANCEL_KB,
     )
@@ -219,7 +226,7 @@ async def create_title(message: Message, state: FSMContext) -> None:
     await state.update_data(title=title)
     await state.set_state(Create.fmt)
     await message.answer(
-        step(2, 4, "Test turi")
+        step(2, None, "Test turi")
         + f"📝 <b>{esc(title)}</b>\n\nTest turini tanlang:\n\n"
         "🏅 <b>Milliy sertifikat</b> — 45 savol: test, moslashtirish, yozma, esse. Rasch bali va daraja\n"
         "📝 <b>Oddiy test</b> — 5–100 ta savol, faqat A–D",
@@ -244,15 +251,41 @@ async def create_fmt(callback: CallbackQuery, state: FSMContext) -> None:
             "• 33–35 — moslashtirish (A–F)\n"
             "• 36–39 — yozma (bitta javob)\n"
             "• 40–44 — yozma (a va b)\n"
-            "• 45 — esse (24 ball, o'zingiz baholaysiz)\n\n"
-            "⏱ 180 daqiqa · 💯 jami 100 ball",
+            "• 45 — esse (24 ball" + (", AI tekshiradi, siz tasdiqlaysiz)" if essay_ai.enabled() else ", o'zingiz baholaysiz)")
+            + "\n\n⏱ 180 daqiqa · 💯 jami 100 ball",
         )
-        await _ask_key_choices(callback.message, state)
+        await state.set_state(Create.topic)
+        await callback.message.answer(
+            step(3, 5, "Esse mavzusi")
+            + "45-savoldagi <b>vaziyat matnini</b> yuboring — esse shu mavzu bo'yicha tekshiriladi.\n\n"
+            "<i>Masalan: Bugungi kunda televideniye orqali namoyish qilinadigan reklamalarga ko'pchilik salbiy "
+            "munosabat bildiradi. Ayrimlar esa ularni kerakli deb hisoblashadi.</i>",
+            reply_markup=inline([[("⏭ Mavzusiz davom etish", "topic:skip")]]),
+        )
     else:
         await state.update_data(fmt="oddiy")
         await state.set_state(Create.count)
         await safe_edit(callback.message, "📝 <b>Oddiy test</b> tanlandi.")
         await callback.message.answer(step(3, 4, "Savollar soni") + "Nechta savol? 5 dan 100 gacha son yozing.")
+
+
+@dp.message(Create.topic, F.text)
+async def create_topic(message: Message, state: FSMContext) -> None:
+    topic = message.text.strip()
+    if len(topic) < 15:
+        await message.answer("✋ Vaziyat matnini to'liq yozing (yoki «⏭ Mavzusiz davom etish»).")
+        return
+    await state.update_data(essay_topic=topic[:2000])
+    await message.answer("✅ Esse mavzusi saqlandi.")
+    await _ask_key_choices(message, state)
+
+
+@dp.callback_query(Create.topic, F.data == "topic:skip")
+async def create_topic_skip(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.update_data(essay_topic=None)
+    await _ask_key_choices(callback.message, state)
 
 
 @dp.message(Create.count, F.text)
@@ -274,10 +307,10 @@ async def _ask_key_choices(message: Message, state: FSMContext) -> None:
     variant = VARIANT_NAMES[len(data["keys"])]
     count = len(choice_items(_items_from_data(data)))
     extra = "\n🔸 33–35 javoblari A–F bo'lishi mumkin." if data["fmt"] == "milliy" else ""
-    number = 3 if data["fmt"] == "milliy" else 4
+    number, total = (4, 5) if data["fmt"] == "milliy" else (4, 4)
     await state.set_state(Create.choices)
     await message.answer(
-        step(number, 4, f"{variant} variant kaliti")
+        step(number, total, f"{variant} variant kaliti")
         + f"1–{count} savollarning to'g'ri javoblarini yuboring:\n\n"
         f"<code>abcdabcd...</code> — {count} ta harf ketma-ket\n"
         f"<code>1a2b3c...</code> — raqam va harf{extra}",
@@ -299,7 +332,7 @@ async def create_choices(message: Message, state: FSMContext) -> None:
         labels = [item["label"] for item in text_items(items)]
         await state.set_state(Create.texts)
         await message.answer(
-            step(4, 4, "Yozma javoblar")
+            step(5, 5, "Yozma javoblar")
             + f"36–44 javoblarini yuboring — <b>har biri yangi qatorda</b>, {len(labels)} qator:\n"
             f"<code>{', '.join(labels)}</code>\n\n"
             "🔸 Har biriga <b>3 tagacha</b> sinonim: <code>|</code> yoki <code>/</code> bilan\n"
@@ -356,7 +389,8 @@ async def _save_test(message: Message, state: FSMContext, owner_id: int) -> None
     data = await state.get_data()
     await state.clear()
     items = _items_from_data(data)
-    test = await asyncio.to_thread(db.create_test, owner_id, data["title"], data["fmt"], data["count"], items, data["keys"])
+    test = await asyncio.to_thread(db.create_test, owner_id, data["title"], data["fmt"], data["count"], items,
+                                   data["keys"], data.get("essay_topic"))
     names = list(data["keys"])
     await message.answer(
         "🎉 <b>Test tayyor!</b>\n"
@@ -540,7 +574,10 @@ async def close_ask(callback: CallbackQuery) -> None:
             await callback.answer("Hali hech kim javob yubormagan", show_alert=True)
             return
         await callback.answer()
-        waiting = sum(1 for a in attempts if a["essay"] is None) if test["fmt"] == "milliy" else 0
+        essays = await asyncio.to_thread(db.essays_for_test, test["id"]) if test["fmt"] == "milliy" else {}
+        # esse yubormaganlar (➖) kutilmaydi — ular esse uchun 0 ball oladi
+        waiting = sum(1 for a in attempts
+                      if a["essay"] is None and (essays.get(a["id"]) or {}).get("status", "manual") != "none")
         warning = (
             f"\n⚠️ <b>{waiting} ta</b> o'quvchining essesi hali baholanmagan — ular essesiz ball oladi.\n"
             if waiting else ""
@@ -582,6 +619,7 @@ async def _notify_participants(bot: Bot, test: dict) -> int:
     keys = await asyncio.to_thread(db.get_keys, test["id"])
     attempts = await asyncio.to_thread(db.list_attempts, test["id"])
     rasch = await asyncio.to_thread(rasch_results, test, attempts) if test["fmt"] == "milliy" else {}
+    essays = await asyncio.to_thread(db.essays_for_test, test["id"]) if test["fmt"] == "milliy" else {}
     choices, texts = choice_items(test["items"]), text_items(test["items"])
     sent = 0
     for attempt in attempts:
@@ -600,6 +638,13 @@ async def _notify_participants(bot: Bot, test: dict) -> int:
         try:
             await bot.send_message(attempt["tg_id"], text[:4000], reply_markup=_review_button(attempt["id"]))
             sent += 1
+            essay = essays.get(attempt["id"])
+            if essay and essay.get("ai_result") and attempt["essay"] is not None:
+                await bot.send_message(
+                    attempt["tg_id"],
+                    f"📝 <b>Esse tahlili</b> · {fmt_num(attempt['essay'])}/{ESSAY_MAX}\n{LINE}\n"
+                    f"{_criteria_text(essay['ai_result'])}"[:4000],
+                )
         except Exception:
             logger.warning("Qatnashchiga xabar yuborilmadi: %s", attempt["tg_id"])
         await asyncio.sleep(0.05)
@@ -638,7 +683,32 @@ async def delete_confirm(callback: CallbackQuery) -> None:
         await _show_tests(callback.message, callback.from_user.id, edit=True)
 
 
-# ---------- Esse baholash ----------
+# ---------- Esse baholash (o'qituvchi) ----------
+
+ESSAY_ICONS = {"pending": "⏳", "graded": "🤖", "failed": "❗️", "manual": "✍️", "none": "➖"}
+
+
+def _essay_status(attempt: dict, essay: dict | None) -> str:
+    """Ro'yxatdagi belgi: ✅ tasdiqlangan, 🤖 AI taklifi, ⏳ navbatda, ✍️ qo'lda, ❗️ xato, ➖ esse yo'q."""
+    if attempt["essay"] is not None:
+        return f"✅ {fmt_num(attempt['essay'])}"
+    if not essay:
+        return "✍️"
+    if essay["status"] == "graded":
+        return f"🤖 {fmt_num(essay['ai_score'])}"
+    return ESSAY_ICONS.get(essay["status"], "✍️")
+
+
+def _criteria_text(result: dict) -> str:
+    lines = [f"{'🟢' if c['score'] == 2 else '🟡' if c['score'] == 1 else '🔴'} "
+             f"<b>{essay_ai.RUBRIC_TITLES.get(c['key'], c['key'])}</b> — {c['score']}/2\n    <i>{esc(c['comment'])}</i>"
+             for c in result.get("criteria", [])]
+    if result.get("outline"):
+        lines.append("⚠️ Reja yoki epigraf qo'yilgan")
+    if result.get("comment"):
+        lines.append(f"\n💬 {esc(result['comment'])}")
+    return "\n".join(lines)
+
 
 @dp.callback_query(F.data.startswith("essay:"))
 async def essay_list(callback: CallbackQuery) -> None:
@@ -650,28 +720,139 @@ async def essay_list(callback: CallbackQuery) -> None:
         await callback.answer("Hali hech kim javob yubormagan", show_alert=True)
         return
     await callback.answer()
-    waiting = sum(1 for a in attempts if a["essay"] is None)
-    rows = [
-        [(f"{'✍️' if a['essay'] is None else '✅ ' + fmt_num(a['essay'])} · {a['student_name'][:30]}", f"es:{a['id']}")]
-        for a in attempts[:90]
-    ]
-    rows.append([("⬅️ Orqaga", f"t:{test['id']}")])
+    await _render_essay_list(callback.message, test, attempts)
+
+
+async def _render_essay_list(message: Message, test: dict, attempts: list[dict]) -> None:
+    essays = await asyncio.to_thread(db.essays_for_test, test["id"])
+    confirmed = sum(1 for a in attempts if a["essay"] is not None)
+    suggested = [a for a in attempts if a["essay"] is None and (essays.get(a["id"]) or {}).get("status") == "graded"]
+    pending = sum(1 for e in essays.values() if e["status"] == "pending")
+    cost = sum(e["cost"] for e in essays.values())
+    rows = []
+    if suggested:
+        rows.append([(f"🤖 AI baholarini tasdiqlash ({len(suggested)} ta)", f"esall:{test['id']}")])
+    rows += [[(f"{_essay_status(a, essays.get(a['id']))} · {a['student_name'][:30]}", f"es:{a['id']}")]
+             for a in attempts[:90]]
+    rows.append([("🔄 Yangilash", f"essay:{test['id']}"), ("⬅️ Orqaga", f"t:{test['id']}")])
+    ai_line = (f"🤖 AI: {essay_ai.provider_name()} · navbatda {pending} ta · sarf ${cost:.3f}\n"
+               if essay_ai.enabled() else "🤖 AI o'chiq — esselarni o'zingiz baholaysiz\n")
     await safe_edit(
-        callback.message,
+        message,
         f"✍️ <b>Esse baholash</b> · {esc(test['title'])}\n{LINE}\n"
-        f"Baholanmagan: <b>{waiting}</b> / {len(attempts)}\n"
-        f"0–{ESSAY_MAX} ball (0,5 qadam bilan). O'quvchini tanlang:",
+        f"✅ Tasdiqlangan: <b>{confirmed}</b> / {len(attempts)}\n{ai_line}\n"
+        "✅ tasdiqlangan · 🤖 AI taklifi · ⏳ navbatda · ✍️ qo'lda baholash · ❗️ AI xatosi · ➖ esse yo'q",
         inline(rows),
     )
 
 
-@dp.callback_query(F.data.startswith("es:"))
-async def essay_pick(callback: CallbackQuery, state: FSMContext) -> None:
+@dp.callback_query(F.data.startswith("esall:"))
+async def essay_confirm_all(callback: CallbackQuery) -> None:
+    test = await _own_test(callback)
+    if not test:
+        return
+    attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+    essays = await asyncio.to_thread(db.essays_for_test, test["id"])
+    count = 0
+    for attempt in attempts:
+        essay = essays.get(attempt["id"])
+        if attempt["essay"] is None and essay and essay["status"] == "graded":
+            await asyncio.to_thread(db.set_essay, attempt["id"], essay["ai_score"])
+            count += 1
+    await callback.answer(f"✅ {count} ta AI bahosi tasdiqlandi", show_alert=True)
+    await _render_essay_list(callback.message, test, await asyncio.to_thread(db.list_attempts, test["id"]))
+
+
+async def _owned_attempt(callback: CallbackQuery) -> tuple[dict, dict] | None:
     attempt = await asyncio.to_thread(db.get_attempt, int(callback.data.split(":")[1]))
     test = attempt and await asyncio.to_thread(db.get_test, attempt["test_id"])
     if not test or test["owner_id"] != callback.from_user.id:
         await callback.answer("Topilmadi", show_alert=True)
+        return None
+    return attempt, test
+
+
+@dp.callback_query(F.data.startswith("es:"))
+async def essay_pick(callback: CallbackQuery) -> None:
+    found = await _owned_attempt(callback)
+    if not found:
         return
+    attempt, test = found
+    await callback.answer()
+    essay = await asyncio.to_thread(db.get_essay, attempt["id"])
+    aid = attempt["id"]
+    lines = [f"👤 <b>{esc(attempt['student_name'])}</b> · {attempt['variant']} variant", LINE]
+    if attempt["essay"] is not None:
+        lines.append(f"✅ Tasdiqlangan baho: <b>{fmt_num(attempt['essay'])}</b> / {ESSAY_MAX}")
+    rows = []
+    if not essay or essay["status"] == "none":
+        lines.append("➖ O'quvchi esse yubormagan (yoki qog'ozda topshirgan).")
+    elif essay["status"] == "graded":
+        result = essay["ai_result"] or {}
+        lines.append(f"🤖 AI bahosi ({esc(essay['provider'] or '')}): <b>{fmt_num(essay['ai_score'])}</b> / {ESSAY_MAX}\n")
+        lines.append(_criteria_text(result))
+        rows.append([(f"✅ AI bahosini tasdiqlash ({fmt_num(essay['ai_score'])})", f"esok:{aid}")])
+    elif essay["status"] == "pending":
+        lines.append("⏳ AI hali baholamadi — bir necha daqiqadan keyin qayta oching.")
+    elif essay["status"] == "failed":
+        lines.append(f"❗️ AI baholay olmadi: <i>{esc(essay['error'] or '')}</i>")
+        if essay_ai.enabled():
+            rows.append([("🔁 AI'da qayta baholash", f"esretry:{aid}")])
+    else:
+        lines.append("✍️ Esseni o'zingiz baholang.")
+    if essay and (essay["text"] or essay["photos"]):
+        rows.append([("📄 Esse matni / rasmi", f"estext:{aid}")])
+    rows.append([("✏️ O'zim ball qo'yaman", f"esmanual:{aid}")])
+    rows.append([("⬅️ Ro'yxat", f"essay:{test['id']}")])
+    await safe_edit(callback.message, "\n".join(lines)[:4000], inline(rows))
+
+
+@dp.callback_query(F.data.startswith("esok:"))
+async def essay_confirm(callback: CallbackQuery) -> None:
+    found = await _owned_attempt(callback)
+    if not found:
+        return
+    attempt, test = found
+    essay = await asyncio.to_thread(db.get_essay, attempt["id"])
+    if not essay or essay["status"] != "graded":
+        await callback.answer("AI bahosi yo'q", show_alert=True)
+        return
+    await asyncio.to_thread(db.set_essay, attempt["id"], essay["ai_score"])
+    await callback.answer(f"✅ {fmt_num(essay['ai_score'])} ball tasdiqlandi")
+    await _essay_saved_notice(callback.bot, test, attempt, essay["ai_score"])
+    await _render_essay_list(callback.message, test, await asyncio.to_thread(db.list_attempts, test["id"]))
+
+
+@dp.callback_query(F.data.startswith("esretry:"))
+async def essay_retry(callback: CallbackQuery) -> None:
+    found = await _owned_attempt(callback)
+    if found:
+        await asyncio.to_thread(db.retry_essay, found[0]["id"])
+        await callback.answer("🔁 Esse AI navbatiga qo'yildi", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("estext:"))
+async def essay_show_text(callback: CallbackQuery) -> None:
+    found = await _owned_attempt(callback)
+    if not found:
+        return
+    attempt, _ = found
+    await callback.answer()
+    essay = await asyncio.to_thread(db.get_essay, attempt["id"])
+    for file_id in essay["photos"]:
+        await callback.message.answer_photo(file_id)
+    if essay["text"]:
+        text = essay["text"]
+        for start in range(0, len(text), 3800):
+            await callback.message.answer(f"📄 <b>{esc(attempt['student_name'])}</b>\n\n{esc(text[start:start + 3800])}")
+
+
+@dp.callback_query(F.data.startswith("esmanual:"))
+async def essay_manual(callback: CallbackQuery, state: FSMContext) -> None:
+    found = await _owned_attempt(callback)
+    if not found:
+        return
+    attempt, _ = found
     await callback.answer()
     await state.set_state(Essay.score)
     await state.update_data(attempt_id=attempt["id"])
@@ -680,6 +861,22 @@ async def essay_pick(callback: CallbackQuery, state: FSMContext) -> None:
         f"👤 <b>{esc(attempt['student_name'])}</b>{current}\n\nEsse balini yozing (0–{ESSAY_MAX}), masalan <code>18,5</code>:",
         reply_markup=CANCEL_KB,
     )
+
+
+async def _essay_saved_notice(bot: Bot, test: dict, attempt: dict, score: float) -> None:
+    """Natijalar e'lon qilingan bo'lsa — o'quvchiga yangilangan esse bahosi yuboriladi."""
+    if not test["closed"]:
+        return
+    attempt = dict(attempt, essay=score)
+    top = fmt_num(max_points(test["items"], test["fmt"]))
+    try:
+        await bot.send_message(
+            attempt["tg_id"],
+            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
+            f"💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>",
+        )
+    except Exception:
+        logger.warning("Esse bali o'quvchiga yuborilmadi")
 
 
 @dp.message(Essay.score, F.text)
@@ -701,24 +898,58 @@ async def essay_score(message: Message, state: FSMContext) -> None:
         await message.answer("Topilmadi.", reply_markup=MAIN_KB)
         return
     await asyncio.to_thread(db.set_essay, attempt["id"], score)
-    attempt["essay"] = score
     top = fmt_num(max_points(test["items"], test["fmt"]))
-    total = fmt_num(total_points(attempt))
+    total = fmt_num(total_points(dict(attempt, essay=score)))
     await message.answer(
         f"✅ <b>{esc(attempt['student_name'])}</b>\n📝 Esse: <b>{fmt_num(score)}</b>/{ESSAY_MAX} · 💯 Jami: <b>{total}</b>/{top}",
         reply_markup=MAIN_KB,
     )
-    await message.answer("Keyingisi?", reply_markup=inline([[("✍️ Keyingi o'quvchi", f"essay:{test['id']}")]]))
-    if not test["closed"]:
-        return  # natijalar hali e'lon qilinmagan — o'quvchi bahoni e'lon bilan birga oladi
+    await message.answer("Keyingisi?", reply_markup=inline([[("✍️ Esselar ro'yxati", f"essay:{test['id']}")]]))
+    await _essay_saved_notice(message.bot, test, attempt, score)
+
+
+# ---------- AI esse navbati (fon jarayoni) ----------
+
+ESSAY_MAX_TRIES = 4
+
+
+async def essay_worker(bot: Bot) -> None:
+    """Navbatdagi esselarni birma-bir AI'da baholaydi. Xato bo'lsa — keyinroq qayta urinadi, esse yo'qolmaydi."""
+    if not essay_ai.enabled():
+        logger.info("AI esse tekshiruvi o'chiq (AI_PROVIDER=%s)", essay_ai.AI_PROVIDER)
+        return
+    logger.info("AI esse tekshiruvi yoqildi: %s", essay_ai.provider_name())
+    delay = 10
+    while True:
+        try:
+            batch = await asyncio.to_thread(db.pending_essays, 5)
+            for essay in batch:
+                await _grade_one(bot, essay)
+                await asyncio.sleep(2)
+            delay = 10
+        except essay_ai.AIError as error:  # limit yoki tarmoq — kutib turamiz
+            logger.warning("AI vaqtincha ishlamayapti: %s", error)
+            delay = min(delay * 2, 600)
+        except Exception:
+            logger.exception("Esse navbatida xato")
+            delay = min(delay * 2, 600)
+        await asyncio.sleep(delay)
+
+
+async def _grade_one(bot: Bot, essay: dict) -> None:
     try:
-        await message.bot.send_message(
-            attempt["tg_id"],
-            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
-            f"💯 Jami ball: <b>{total}/{top}</b>",
-        )
-    except Exception:
-        logger.warning("Esse bali o'quvchiga yuborilmadi")
+        images = [] if essay["text"] else await _download_photos(bot, essay["photos"])
+        result = await essay_ai.grade(essay["topic"] or "", essay["text"], images)
+    except essay_ai.AIError as error:
+        give_up = not error.retry or essay["tries"] + 1 >= ESSAY_MAX_TRIES
+        await asyncio.to_thread(db.essay_failed, essay["attempt_id"], str(error), give_up)
+        if error.retry and not give_up:
+            raise  # limit/tarmoq — butun navbat biroz kutadi
+        return
+    await asyncio.to_thread(db.save_essay_result, essay["attempt_id"], result)
+    if AUTO_CONFIRM_ESSAYS:
+        await asyncio.to_thread(db.set_essay, essay["attempt_id"], result["score"])
+    logger.info("Esse baholandi: attempt=%s ball=%s ($%.4f)", essay["attempt_id"], result["score"], result["cost"])
 
 
 # ---------- O'quvchi: javobni tekshirish ----------
@@ -909,7 +1140,133 @@ async def check_texts(message: Message, state: FSMContext) -> None:
         await message.answer(f"❗️ {esc(str(error))}\nQaytadan yuboring.")
         return
     data = await state.get_data()
-    await _finish_check(message, state, test, {**data["answers"], **written})
+    answers = {**data["answers"], **written}
+    if test["fmt"] == "milliy":
+        await state.update_data(answers=answers)
+        await _ask_essay(message, state)
+        return
+    await _finish_check(message, state, test, answers)
+
+
+# ---------- O'quvchi: esse (45-savol) ----------
+
+ESSAY_MIN_CHARS = 200
+ESSAY_MAX_PHOTOS = 3
+
+
+async def _ask_essay(message: Message, state: FSMContext) -> None:
+    await state.set_state(Check.essay)
+    await state.update_data(essay_photos=[], essay_text=None, essay_cost=0.0)
+    who = "AI tekshiradi, o'qituvchi tasdiqlaydi" if essay_ai.enabled() else "o'qituvchi baholaydi"
+    await message.answer(
+        f"📝 <b>45. Esse</b> · {who}\n{LINE}\n"
+        "Esseni yuboring:\n"
+        "✍️ <b>matn qilib</b> — bitta xabarda, xatboshilarni yangi qatordan\n"
+        f"📷 yoki <b>qo'lyozma rasmi</b> — 1–{ESSAY_MAX_PHOTOS} sahifa, aniq va yorug' joyda\n\n"
+        "Esse yozmagan bo'lsangiz — pastdagi tugmani bosing.",
+        reply_markup=inline([[("⏭ Essesiz topshirish", "sx:skip")]]),
+    )
+
+
+@dp.message(Check.essay, F.text)
+async def essay_text_in(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    if len(text) < ESSAY_MIN_CHARS:
+        await message.answer(
+            f"✋ Esse juda qisqa ({len(text)} belgi). To'liq esseni bitta xabarda yuboring "
+            "yoki «⏭ Essesiz topshirish»ni bosing.",
+            reply_markup=inline([[("⏭ Essesiz topshirish", "sx:skip")]]),
+        )
+        return
+    await state.update_data(essay_text=text[:12000], essay_photos=[])
+    await _finish_from_state(message, state)
+
+
+@dp.message(Check.essay, F.photo)
+async def essay_photo_in(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    photos = list(data.get("essay_photos") or [])
+    if len(photos) >= ESSAY_MAX_PHOTOS:
+        await message.answer(f"✋ Ko'pi bilan {ESSAY_MAX_PHOTOS} ta sahifa. «✅ Tayyor»ni bosing.")
+        return
+    photos.append(message.photo[-1].file_id)  # eng katta o'lcham
+    await state.update_data(essay_photos=photos)
+    await message.answer(
+        f"📷 {len(photos)}-sahifa qabul qilindi. Yana sahifa bo'lsa yuboring yoki «✅ Tayyor»ni bosing.",
+        reply_markup=inline([
+            [(f"✅ Tayyor ({len(photos)} sahifa)", "sx:done")],
+            [("🗑 Rasmlarni qaytadan yuborish", "sx:reset")],
+        ]),
+    )
+
+
+async def _download_photos(bot: Bot, file_ids: list[str]) -> list[tuple[bytes, str]]:
+    images = []
+    for file_id in file_ids:
+        buffer = await bot.download(file_id)
+        images.append((buffer.read(), "image/jpeg"))
+    return images
+
+
+@dp.callback_query(Check.essay, F.data.startswith("sx:"))
+async def essay_action(callback: CallbackQuery, state: FSMContext) -> None:
+    action = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    photos = data.get("essay_photos") or []  # sx:skip / sx:done / sx:reset / sx:ok / sx:type
+    if action == "skip":
+        await callback.answer()
+        await state.update_data(essay_text=None, essay_photos=[])
+        await safe_edit(callback.message, "⏭ Essesiz topshirilmoqda…")
+        await _finish_from_state(callback.message, state)
+    elif action == "reset":
+        await callback.answer("Rasmlar o'chirildi")
+        await state.update_data(essay_photos=[], essay_text=None)
+        await safe_edit(callback.message, "📷 Rasmlarni qaytadan yuboring (yoki esseni matn qilib yozing).")
+    elif action == "type":
+        await callback.answer()
+        await state.update_data(essay_photos=[], essay_text=None)
+        await safe_edit(callback.message, "✍️ Esseni matn qilib bitta xabarda yuboring.")
+    elif action == "ok":
+        await callback.answer()
+        await safe_edit(callback.message, "✅ Esse matni tasdiqlandi.")
+        await _finish_from_state(callback.message, state)
+    elif action == "done":
+        if not photos:
+            await callback.answer("Avval rasm yuboring", show_alert=True)
+            return
+        await callback.answer()
+        if not essay_ai.enabled():  # AI o'chiq — rasmlar o'qituvchiga boradi
+            await safe_edit(callback.message, f"✅ {len(photos)} sahifa qabul qilindi.")
+            await _finish_from_state(callback.message, state)
+            return
+        await safe_edit(callback.message, "⏳ Qo'lyozma o'qilmoqda… (bir necha soniya)")
+        try:
+            images = await _download_photos(callback.bot, photos)
+            text, cost = await essay_ai.transcribe(images)
+        except Exception as error:
+            logger.warning("Qo'lyozmani o'qib bo'lmadi: %s", error)
+            await callback.message.answer("⚠️ Rasmni hozir o'qib bo'lmadi — esse rasm holida yuboriladi.")
+            await _finish_from_state(callback.message, state)
+            return
+        await state.update_data(essay_text=text[:12000], essay_cost=data.get("essay_cost", 0) + cost)
+        await callback.message.answer(
+            f"📄 <b>Qo'lyozmangiz shunday o'qildi</b>\n{LINE}\n{esc(text[:3300])}\n{LINE}\n"
+            "To'g'ri o'qilganini tekshiring: noto'g'ri o'qilgan so'zlar xato deb hisoblanishi mumkin.",
+            reply_markup=inline([
+                [("✅ To'g'ri, yuborish", "sx:ok")],
+                [("📷 Qaytadan rasmga olish", "sx:reset"), ("✍️ Matn qilib yozaman", "sx:type")],
+            ]),
+        )
+
+
+async def _finish_from_state(message: Message, state: FSMContext) -> None:
+    test = await _test_from_state(state)
+    if not test:
+        await state.clear()
+        await message.answer("Test topilmadi.", reply_markup=MAIN_KB)
+        return
+    data = await state.get_data()
+    await _finish_check(message, state, test, data["answers"])
 
 
 def _result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None = None) -> str:
@@ -961,11 +1318,25 @@ async def _finish_check(message: Message, state: FSMContext, test: dict, answers
         )
         return
 
+    essay_line = ""
+    if test["fmt"] == "milliy":
+        essay_text, photos = data.get("essay_text"), data.get("essay_photos") or []
+        if essay_text or photos:
+            status = "pending" if essay_ai.enabled() else "manual"
+            essay_line = "📝 Esse: qabul qilindi\n"
+        else:
+            status = "none"
+            essay_line = "📝 Esse: yuborilmadi\n"
+        await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
+        if data.get("essay_cost"):
+            await asyncio.to_thread(db.add_essay_cost, attempt["id"], data["essay_cost"])
+
     # Natija darhol ko'rsatilmaydi: o'qituvchi hamma topshirgach e'lon qiladi
     await message.answer(
         f"✅ <b>Javoblaringiz qabul qilindi!</b>\n{LINE}\n"
         f"📝 {esc(test['title'])}\n"
-        f"👤 {esc(data['name'])} · {data['variant']} variant\n\n"
+        f"👤 {esc(data['name'])} · {data['variant']} variant\n"
+        f"{essay_line}\n"
         "⏳ Natijalar o'qituvchi e'lon qilgandan keyin shu yerga keladi.",
         reply_markup=MAIN_KB,
     )
@@ -1103,7 +1474,11 @@ async def main() -> None:
     except Exception:
         logger.warning("Buyruqlar ro'yxatini o'rnatib bo'lmadi", exc_info=True)
     logger.info("Bot ishga tushdi")
-    await dp.start_polling(bot)
+    worker = asyncio.create_task(essay_worker(bot))  # AI esse navbati
+    try:
+        await dp.start_polling(bot)
+    finally:
+        worker.cancel()
 
 
 if __name__ == "__main__":

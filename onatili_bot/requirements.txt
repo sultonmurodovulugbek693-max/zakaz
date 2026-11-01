@@ -1,3 +1,4 @@
 aiogram==3.31.0
 reportlab==5.0.1
 python-dotenv==1.2.4
+anthropic==2.3.0  # Claude bilan esse tekshirish (AI_PROVIDER=claude)

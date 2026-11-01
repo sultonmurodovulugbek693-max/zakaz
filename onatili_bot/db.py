@@ -51,6 +51,28 @@ CREATE TABLE IF NOT EXISTS attempts (
 """
 
 
+# Esse (45-savol): matn yoki qo'lyozma rasmlari (Telegram file_id), AI bahosi.
+# status: none — esse yuborilmagan; manual — AI o'chiq, o'qituvchi baholaydi;
+#         pending — AI navbatida; graded — AI baholadi; failed — AI baholay olmadi
+ESSAY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS essays (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id INTEGER UNIQUE NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+    text       TEXT,
+    photos     TEXT NOT NULL DEFAULT '[]',
+    status     TEXT NOT NULL,
+    ai_score   REAL,
+    ai_result  TEXT,
+    provider   TEXT,
+    cost       REAL NOT NULL DEFAULT 0,
+    tries      INTEGER NOT NULL DEFAULT 0,
+    error      TEXT,
+    created_at TEXT,
+    graded_at  TEXT
+);
+"""
+
+
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -68,6 +90,10 @@ def init() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)")}
         if "points" not in columns:  # eski baza — ball ustuni keyin qo'shilgan
             conn.execute("ALTER TABLE attempts ADD COLUMN points REAL NOT NULL DEFAULT 0")
+        test_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tests)")}
+        if "essay_topic" not in test_columns:
+            conn.execute("ALTER TABLE tests ADD COLUMN essay_topic TEXT")
+        conn.executescript(ESSAY_SCHEMA)
 
 
 # ---------- Foydalanuvchilar ----------
@@ -103,15 +129,16 @@ def _test_dict(row: sqlite3.Row | None) -> dict | None:
 
 
 def create_test(owner_id: int, title: str, fmt: str, count: int, items: list[dict],
-                keys: dict[str, dict[str, str]]) -> dict:
+                keys: dict[str, dict[str, str]], essay_topic: str | None = None) -> dict:
     with connect() as conn:
         while True:
             code = str(random.randint(10000, 99999))
             if not conn.execute("SELECT 1 FROM tests WHERE code = ?", (code,)).fetchone():
                 break
         cursor = conn.execute(
-            "INSERT INTO tests (code, owner_id, title, fmt, count, items, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (code, owner_id, title, fmt, count, json.dumps(items, ensure_ascii=False), _now()),
+            "INSERT INTO tests (code, owner_id, title, fmt, count, items, created_at, essay_topic) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (code, owner_id, title, fmt, count, json.dumps(items, ensure_ascii=False), _now(), essay_topic),
         )
         test_id = cursor.lastrowid
         for name, answers in keys.items():
@@ -204,3 +231,76 @@ def list_attempts(test_id: int) -> list[dict]:
 def set_essay(attempt_id: int, score: float) -> None:
     with connect() as conn:
         conn.execute("UPDATE attempts SET essay = ? WHERE id = ?", (score, attempt_id))
+
+
+# ---------- Esselar ----------
+
+def _essay_dict(row: sqlite3.Row | None) -> dict | None:
+    if row is None:
+        return None
+    essay = dict(row)
+    essay["photos"] = json.loads(essay["photos"] or "[]")
+    essay["ai_result"] = json.loads(essay["ai_result"]) if essay["ai_result"] else None
+    return essay
+
+
+def create_essay(attempt_id: int, text: str | None, photos: list[str], status: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO essays (attempt_id, text, photos, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            (attempt_id, text, json.dumps(photos), status, _now()),
+        )
+
+
+def get_essay(attempt_id: int) -> dict | None:
+    with connect() as conn:
+        return _essay_dict(conn.execute("SELECT * FROM essays WHERE attempt_id = ?", (attempt_id,)).fetchone())
+
+
+def essays_for_test(test_id: int) -> dict[int, dict]:
+    """{attempt_id: esse} — testning barcha esselari."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT e.* FROM essays e JOIN attempts a ON a.id = e.attempt_id WHERE a.test_id = ?", (test_id,)
+        ).fetchall()
+    return {row["attempt_id"]: _essay_dict(row) for row in rows}
+
+
+def pending_essays(limit: int = 5) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT e.*, t.essay_topic AS topic, t.id AS test_id FROM essays e "
+            "JOIN attempts a ON a.id = e.attempt_id JOIN tests t ON t.id = a.test_id "
+            "WHERE e.status = 'pending' ORDER BY e.id LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_essay_dict(row) | {"topic": row["topic"], "test_id": row["test_id"]} for row in rows]
+
+
+def save_essay_result(attempt_id: int, result: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE essays SET status = 'graded', ai_score = ?, ai_result = ?, provider = ?, cost = cost + ?, "
+            "graded_at = ?, error = NULL WHERE attempt_id = ?",
+            (result["score"], json.dumps(result, ensure_ascii=False), result.get("provider"),
+             result.get("cost", 0), _now(), attempt_id),
+        )
+
+
+def essay_failed(attempt_id: int, error: str, give_up: bool) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE essays SET tries = tries + 1, error = ?, "
+            "status = CASE WHEN ? THEN 'failed' ELSE status END WHERE attempt_id = ?",
+            (error[:500], int(give_up), attempt_id),
+        )
+
+
+def add_essay_cost(attempt_id: int, cost: float) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essays SET cost = cost + ? WHERE attempt_id = ?", (cost, attempt_id))
+
+
+def retry_essay(attempt_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essays SET status = 'pending', tries = 0, error = NULL WHERE attempt_id = ?", (attempt_id,))
