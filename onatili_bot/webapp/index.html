@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Ona tili · Test</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Ilova: Telegram mavzusi ranglari + bitta yashil urg'u ("imtihon varaqasi"). Kartalar, doirachali javob varaqasi */
+  --bg: var(--tg-theme-secondary-bg-color, #f1f4f2);
+  --surface: var(--tg-theme-bg-color, #ffffff);
+  --ink: var(--tg-theme-text-color, #18211c);
+  --muted: var(--tg-theme-hint-color, #6b7871);
+  --accent: #1d7a48;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --line: color-mix(in srgb, var(--muted) 22%, transparent);
+  --good: #1f9d55; --warn: #d4a017; --bad: #d64545;
+  --radius: 18px;
+  --font-display: "Unbounded", "Onest", system-ui, sans-serif;
+  --font-body: "Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+html.dark { --accent: #3fbf78; --accent-ink: #06150d; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font-body); line-height: 1.45; }
+button { font: inherit; color: inherit; }
+input, textarea { font: inherit; color: var(--ink); }
+#app { max-width: 640px; margin: 0 auto; padding: 14px 16px calc(96px + var(--safe-bottom)); }
+.view { animation: viewIn .35s cubic-bezier(.2,.8,.2,1); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.view > *, .card > *, .list > * { min-width: 0; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(10px); } }
+h1 { font-family: var(--font-display); font-size: 24px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-size: 17px; margin: 0; font-weight: 700; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.row { display: flex; gap: 10px; align-items: center; }
+.between { justify-content: space-between; }
+.wrap { flex-wrap: wrap; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 16px; display: grid; gap: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.hero { display: grid; gap: 6px; padding: 6px 2px 2px; }
+.hero .hi { font-size: 14px; color: var(--muted); }
+.brand { display: inline-flex; gap: 8px; align-items: center; font-weight: 700; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.brand i { width: 22px; height: 22px; border-radius: 7px; background: var(--accent); display: inline-grid; place-items: center; color: var(--accent-ink); font-style: normal; font-size: 12px; font-family: var(--font-display); }
+
+/* Tugmalar */
+.btn { border: 0; border-radius: 14px; padding: 13px 16px; font-weight: 600; background: var(--accent); color: var(--accent-ink); cursor: pointer; display: inline-flex; gap: 8px; align-items: center; justify-content: center; transition: transform .12s, filter .2s, opacity .2s; }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .5; }
+.btn.block { width: 100%; }
+.btn.ghost { background: var(--accent-soft); color: var(--accent); }
+.btn.plain { background: transparent; color: var(--accent); padding: 8px 10px; }
+.btn.danger { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.btn.sm { padding: 9px 12px; font-size: 14px; border-radius: 12px; }
+.btn:focus-visible, .chip:focus-visible, .bubble:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sticky-bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 16px calc(10px + var(--safe-bottom)); background: linear-gradient(transparent, var(--bg) 30%); z-index: 20; }
+.sticky-bottom > div { max-width: 640px; margin: 0 auto; }
+
+/* Segment */
+.segment { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border-radius: 14px; padding: 4px; position: relative; }
+.segment button { border: 0; background: transparent; padding: 10px; border-radius: 11px; font-weight: 600; cursor: pointer; position: relative; z-index: 1; transition: color .25s; color: var(--muted); }
+.segment button.on { color: var(--accent-ink); }
+.segment .pill { position: absolute; top: 4px; bottom: 4px; width: calc(50% - 4px); left: 4px; background: var(--accent); border-radius: 11px; transition: transform .35s cubic-bezier(.3,1.3,.5,1); }
+.segment.right .pill { transform: translateX(100%); }
+
+/* Kod kiritish */
+.code-input { width: 100%; text-align: center; font-family: var(--font-display); font-size: 30px; letter-spacing: .4em; padding: 14px 8px 14px calc(8px + .4em); border-radius: 14px; border: 2px solid var(--line); background: var(--bg); transition: border-color .2s; }
+.code-input:focus { border-color: var(--accent); outline: none; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+.input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--bg); font-size: 16px; transition: border-color .2s; }
+.input:focus { border-color: var(--accent); outline: none; }
+textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
+
+/* Ro'yxat */
+.list { display: grid; gap: 8px; }
+.item { background: var(--surface); border-radius: 16px; padding: 14px; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; cursor: pointer; transition: transform .15s; border: 0; text-align: left; width: 100%; }
+.item:active { transform: scale(.985); }
+.item .ico { width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; font-size: 20px; background: var(--accent-soft); }
+.item b { display: block; font-size: 15.5px; line-height: 1.25; }
+.item small { color: var(--muted); font-size: 12.5px; }
+.pill-tag { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 99px; white-space: nowrap; }
+.pill-tag.wait { background: color-mix(in srgb, var(--warn) 18%, transparent); color: color-mix(in srgb, var(--warn) 80%, var(--ink)); }
+.pill-tag.done { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.empty { text-align: center; padding: 28px 16px; color: var(--muted); display: grid; gap: 6px; justify-items: center; }
+.empty .big { font-size: 40px; }
+
+/* Javob varaqasi: doirachalar */
+.sheet-progress { position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 8px 0 6px; display: grid; gap: 6px; }
+.track { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.track > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .3s cubic-bezier(.2,.8,.2,1); }
+.qrow { display: grid; grid-template-columns: 34px 1fr; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.qrow:last-child { border-bottom: 0; }
+.qnum { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+.qrow.done .qnum { color: var(--accent); }
+.bubbles { display: flex; gap: 8px; flex-wrap: wrap; }
+.bubble { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--line); background: transparent; font-weight: 700; font-size: 14px; display: grid; place-items: center; cursor: pointer; transition: background .15s, border-color .15s, color .15s, transform .15s; }
+.bubble.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); animation: pick .3s cubic-bezier(.3,1.6,.5,1); }
+@keyframes pick { 50% { transform: scale(1.18); } }
+.section-title { display: flex; justify-content: space-between; align-items: baseline; }
+.textq { display: grid; grid-template-columns: 42px 1fr; gap: 8px; align-items: center; }
+.textq b { color: var(--muted); font-size: 14px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { border: 1.5px solid var(--line); background: var(--surface); border-radius: 99px; padding: 8px 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.topic { background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; font-style: italic; }
+.counter { font-size: 12.5px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Statistika */
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.tile { background: var(--surface); border-radius: 16px; padding: 14px; display: grid; gap: 2px; }
+.tile b { font-family: var(--font-display); font-size: 24px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.tile span { font-size: 12.5px; color: var(--muted); }
+.gradebar { display: flex; height: 14px; border-radius: 99px; overflow: hidden; background: var(--line); }
+.gradebar i { display: block; height: 100%; animation: growx .9s cubic-bezier(.2,.8,.2,1) backwards; }
+@keyframes growx { from { width: 0 !important; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; }
+.legend span { display: inline-flex; gap: 5px; align-items: center; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { border: 0; background: var(--surface); border-radius: 99px; padding: 9px 14px; font-weight: 600; white-space: nowrap; cursor: pointer; color: var(--muted); }
+.tabs button.on { background: var(--ink); color: var(--surface); }
+.heat { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 6px; }
+.heat div { border-radius: 10px; padding: 7px 4px; text-align: center; font-size: 12px; line-height: 1.2; animation: viewIn .4s backwards; }
+.heat b { display: block; font-size: 13px; }
+.h-good { background: color-mix(in srgb, var(--good) 22%, transparent); }
+.h-mid { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+.h-bad { background: color-mix(in srgb, var(--bad) 22%, transparent); }
+.people .item { grid-template-columns: 30px 1fr auto; }
+.rank { font-family: var(--font-display); font-size: 15px; color: var(--muted); text-align: center; }
+.grade-chip { font-family: var(--font-display); font-size: 13px; padding: 5px 9px; border-radius: 9px; color: #fff; min-width: 38px; text-align: center; }
+.score-col { text-align: right; display: grid; gap: 3px; justify-items: end; }
+.score-col b { font-variant-numeric: tabular-nums; }
+
+/* Natija tahlili */
+.review { display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 6px; }
+.rv { border-radius: 10px; padding: 6px; font-size: 12.5px; text-align: center; line-height: 1.25; }
+.rv b { display: block; }
+.rv.ok { background: color-mix(in srgb, var(--good) 18%, transparent); }
+.rv.no { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.wr { display: grid; gap: 2px; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+.wr:last-child { border-bottom: 0; }
+.crit { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+.crit:last-child { border-bottom: 0; }
+.crit p { grid-column: 1 / -1; margin: 0; font-size: 13.5px; color: var(--muted); }
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.dots i.on { background: var(--accent); }
+
+/* Dizayn tanlash */
+.themes { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.themes::-webkit-scrollbar { display: none; }
+.swatch { flex: 0 0 auto; width: 92px; border: 2px solid transparent; border-radius: 14px; padding: 6px; background: var(--bg); cursor: pointer; display: grid; gap: 6px; scroll-snap-align: start; text-align: left; }
+.swatch.on { border-color: var(--accent); }
+.swatch .sw { height: 54px; border-radius: 10px; position: relative; overflow: hidden; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 18px; }
+.swatch span { font-size: 11.5px; font-weight: 600; line-height: 1.2; }
+
+/* Muvaffaqiyat */
+.success { text-align: center; display: grid; gap: 10px; justify-items: center; padding: 30px 10px; }
+.check { width: 92px; height: 92px; }
+.check circle { fill: none; stroke: var(--accent); stroke-width: 6; stroke-dasharray: 276; stroke-dashoffset: 276; animation: draw .7s ease-out forwards; }
+.check path { fill: none; stroke: var(--accent); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 80; stroke-dashoffset: 80; animation: draw .45s .55s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.bigcode { font-family: var(--font-display); font-size: 40px; letter-spacing: .18em; color: var(--accent); }
+
+/* Bildirishnoma va yuklanish */
+.toast { position: fixed; left: 50%; bottom: calc(90px + var(--safe-bottom)); transform: translate(-50%, 20px); background: var(--ink); color: var(--surface); padding: 11px 16px; border-radius: 14px; font-size: 14px; font-weight: 500; opacity: 0; transition: all .3s cubic-bezier(.2,.8,.2,1); z-index: 50; max-width: calc(100% - 32px); text-align: center; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.skeleton { border-radius: 16px; background: linear-gradient(90deg, var(--surface) 25%, color-mix(in srgb, var(--surface) 70%, var(--line)) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; height: 72px; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.sheet-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; display: flex; align-items: flex-end; animation: fade .2s; }
+@keyframes fade { from { opacity: 0; } }
+.sheet-modal > div { background: var(--surface); width: 100%; max-width: 640px; margin: 0 auto; border-radius: 22px 22px 0 0; padding: 18px 16px calc(18px + var(--safe-bottom)); max-height: 88vh; overflow-y: auto; display: grid; gap: 12px; animation: up .3s cubic-bezier(.2,.8,.2,1); }
+@keyframes up { from { transform: translateY(40px); opacity: .5; } }
+
+/* ---------- Natija kartasi (20 dizayn) ---------- */
+.rcard { --r: 22px; --ring: 108px; position: relative; isolation: isolate; overflow: hidden; background: var(--bg-c); color: var(--fg); font-family: var(--font); border-radius: var(--r); padding: 20px 20px 16px; display: grid; gap: 14px; box-shadow: 0 14px 34px rgba(16, 30, 22, .16); }
+.rcard .pattern { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.rcard .c-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--mu); }
+.rcard .who { display: grid; gap: 2px; }
+.rcard .who small { color: var(--mu); font-size: 12px; }
+.rcard .who b { font-family: var(--dfont); font-size: 22px; line-height: 1.15; }
+.rcard .score { display: grid; grid-template-columns: var(--ring) 1fr; gap: 16px; align-items: center; }
+.rcard .ring { position: relative; width: var(--ring); height: var(--ring); }
+.rcard .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.rcard .ring .tr { fill: none; stroke: var(--track); stroke-width: 9; }
+.rcard .ring .pr { fill: none; stroke: var(--a); stroke-width: 9; stroke-linecap: round; stroke-dasharray: 276.46; stroke-dashoffset: var(--off); animation: ring 1.6s cubic-bezier(.2,.8,.2,1) .25s backwards; }
+.rcard .ring .val { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.rcard .num { font-family: var(--dfont); font-size: 26px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.rcard .of { font-size: 10.5px; color: var(--mu); margin-top: 3px; }
+.rcard .grade { display: grid; gap: 2px; justify-items: start; }
+.rcard .grade span { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--mu); }
+.rcard .grade b { font-family: var(--dfont); font-size: 50px; line-height: .95; color: var(--a); animation: pop .6s cubic-bezier(.3,1.6,.5,1) 1.1s backwards; }
+.rcard .grade small { font-size: 12.5px; color: var(--mu); }
+.rcard .bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rcard .bars li { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: 13px; }
+.rcard .bars li b { font-variant-numeric: tabular-nums; }
+.rcard .bars i { grid-column: 1 / -1; height: 7px; border-radius: 99px; background: var(--track); overflow: hidden; display: block; }
+.rcard .bars i::after { content: ""; display: block; height: 100%; width: var(--w); background: var(--b); border-radius: inherit; animation: grow 1.2s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d); }
+.rcard .c-foot { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--mu); border-top: 1px dashed color-mix(in srgb, var(--mu) 45%, transparent); padding-top: 10px; }
+@keyframes ring { from { stroke-dashoffset: 276.46; } }
+@keyframes grow { from { width: 0; } }
+@keyframes pop { from { transform: scale(.3); opacity: 0; } }
+.rcard > *:not(.pattern) { animation: rise .6s cubic-bezier(.2,.8,.2,1) backwards; }
+.rcard > .who { animation-delay: .05s; } .rcard > .score { animation-delay: .1s; } .rcard > .bars { animation-delay: .15s; }
+@keyframes rise { from { transform: translateY(14px); opacity: 0; } }
+.t-diploma { --r: 6px; text-align: center; border: 2px solid var(--a); box-shadow: inset 0 0 0 6px var(--bg-c), inset 0 0 0 7px var(--a), 0 14px 34px rgba(60,40,10,.18); }
+.t-diploma .c-head { justify-content: center; gap: 10px; } .t-diploma .c-head::before, .t-diploma .c-head::after { content: "❦"; letter-spacing: 0; font-size: 14px; color: var(--a); } .t-diploma .c-head .no { display: none; }
+.t-diploma .score { grid-template-columns: 1fr; justify-items: center; } .t-diploma .grade { justify-items: center; } .t-diploma .who b { font-size: 26px; font-style: italic; }
+.t-ikat .pattern { background: linear-gradient(var(--bg-c), var(--bg-c)) 0 64px / 100% 100% no-repeat, repeating-linear-gradient(90deg, #e2216f 0 18px, #ffcf3f 18px 30px, #2d1e8f 30px 52px, #ffcf3f 52px 64px, #12a5a0 64px 84px); }
+.t-ikat .c-head { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35); margin-bottom: 26px; }
+.t-tiles { padding: 32px 30px 26px; } .t-tiles .pattern { background: linear-gradient(var(--bg-c), var(--bg-c)) 14px 14px / calc(100% - 28px) calc(100% - 28px) no-repeat, conic-gradient(from 45deg, #0e5a8a 25%, #39b5c4 0 50%, #0e5a8a 0 75%, #f2c14e 0) 0 0 / 28px 28px; }
+.t-neon .who b, .t-neon .grade b, .t-neon .num { text-shadow: 0 0 10px var(--a), 0 0 24px var(--a); } .t-neon .ring svg { filter: drop-shadow(0 0 6px var(--a)); }
+.t-neon .grade b { animation: pop .6s cubic-bezier(.3,1.6,.5,1) 1.1s backwards, flicker 3.2s linear 2s infinite; }
+.t-neon .pattern { background: radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--a) 30%, transparent), transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--b) 25%, transparent), transparent 50%); }
+@keyframes flicker { 0%, 18%, 22%, 60%, 64%, 100% { opacity: 1; } 20%, 62% { opacity: .55; } }
+.t-terminal { --r: 10px; } .t-terminal .pattern { background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+.t-terminal .who b::after { content: "▌"; margin-left: 4px; animation: blink 1s steps(1) infinite; color: var(--a); } .t-terminal .ring .pr { stroke-linecap: butt; } .t-terminal .ring .tr { stroke-dasharray: 3 3; }
+.t-terminal .bars i, .t-terminal .bars i::after { border-radius: 0; }
+@keyframes blink { 50% { opacity: 0; } }
+.t-brutal { --r: 0; border: 3px solid #111; box-shadow: 8px 8px 0 #111; } .t-brutal .bars i { border: 2px solid #111; border-radius: 0; height: 12px; } .t-brutal .bars i::after { border-radius: 0; }
+.t-brutal .grade b { background: #111; color: var(--bg-c); padding: 2px 10px 6px; } .t-brutal .ring .pr { stroke-linecap: butt; }
+.t-glass .pattern { background: radial-gradient(circle at 15% 15%, #ff8bd1 0, transparent 45%), radial-gradient(circle at 90% 30%, #7b8cff 0, transparent 45%), radial-gradient(circle at 50% 100%, #3fe0c5 0, transparent 50%), #2a2350; background-size: 140% 140%; animation: drift 9s ease-in-out infinite alternate; }
+.t-glass .score, .t-glass .bars { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); border-radius: 16px; padding: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+@keyframes drift { to { background-position: 100% 100%; } }
+.t-chalk { --r: 6px; border: 12px solid #7a4e2a; box-shadow: inset 0 0 40px rgba(0,0,0,.45), 0 14px 34px rgba(0,0,0,.25); } .t-chalk .pattern { background: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px) 0 0 / 7px 7px; }
+.t-newspaper { --r: 2px; } .t-newspaper .c-head { border-top: 3px solid var(--fg); border-bottom: 1px solid var(--fg); padding: 6px 0; color: var(--fg); justify-content: center; } .t-newspaper .c-head .no { display: none; }
+.t-newspaper .c-head .brand-c { font-family: var(--dfont); font-size: 17px; letter-spacing: .02em; text-transform: none; font-weight: 900; } .t-newspaper .who b { font-style: italic; }
+.t-newspaper .bars i::after { background: repeating-linear-gradient(45deg, var(--fg) 0 2px, transparent 2px 4px); } .t-newspaper .pattern { background: radial-gradient(rgba(0,0,0,.05) 1px, transparent 1.2px) 0 0 / 4px 4px; }
+.t-bauhaus { --r: 0; } .t-bauhaus .pattern { background: radial-gradient(circle at 100% 0, #e63b2e 0 70px, transparent 71px), conic-gradient(from 135deg at 0 100%, #1f4fbf 0 90deg, transparent 0) 0 100% / 90px 90px no-repeat, linear-gradient(#f2c230, #f2c230) 100% 100% / 46px 46px no-repeat; }
+.t-pastel { --r: 28px; } .t-pastel .pattern { background: radial-gradient(circle at 0 0, #d8f3e6, transparent 50%), radial-gradient(circle at 100% 100%, #e8e1ff, transparent 50%); }
+.t-ocean .pattern { background: linear-gradient(160deg, #0b3a66, #0f6e8c 55%, #1aa3a1); } .t-ocean .pattern::after { content: ""; position: absolute; left: -20%; right: -20%; bottom: -30px; height: 90px; background: radial-gradient(60px 22px at 50% 0, transparent 98%, rgba(255,255,255,.12) 100%) 0 0 / 120px 40px repeat-x; animation: wave 6s linear infinite; }
+@keyframes wave { to { transform: translateX(120px); } }
+.t-autumn .pattern { background: radial-gradient(circle at 110% -10%, #f2a541 0 120px, transparent 121px), radial-gradient(circle at 110% -10%, #e07a2f 0 160px, transparent 161px); opacity: .9; }
+.t-minimal { --r: 0; box-shadow: none; border: 1px solid var(--fg); } .t-minimal .ring .tr, .t-minimal .ring .pr { stroke-width: 3; } .t-minimal .bars i { height: 2px; }
+.t-luxe { border: 1px solid #b8913f; } .t-luxe .grade b, .t-luxe .num, .t-luxe .who b { background: linear-gradient(110deg, #8a6420, #f5d77a 40%, #b8913f 60%, #f9e4a0); -webkit-background-clip: text; background-clip: text; color: transparent; background-size: 200% 100%; animation: shine 3.5s linear infinite; }
+.t-luxe .grade b { animation: pop .6s cubic-bezier(.3,1.6,.5,1) 1.1s backwards, shine 3.5s linear infinite; }
+@keyframes shine { to { background-position: -200% 0; } }
+.t-sakura .pattern { background: radial-gradient(circle at 90% 8%, #ffd6e4 0 60px, transparent 61px), radial-gradient(circle at 8% 95%, #ffe9f0 0 70px, transparent 71px); } .t-sakura .pattern::after { content: "🌸"; position: absolute; top: -20px; left: 70%; font-size: 18px; animation: fall 7s linear infinite; }
+@keyframes fall { to { transform: translate(-90px, 520px) rotate(320deg); } }
+.t-sport .pattern { background: repeating-linear-gradient(-55deg, transparent 0 22px, rgba(255,255,255,.05) 22px 44px), linear-gradient(-55deg, transparent 62%, var(--a) 62% 66%, transparent 66% 70%, var(--a) 70% 72%, transparent 72%); }
+.t-sport .who b, .t-sport .grade b { font-style: italic; text-transform: uppercase; } .t-sport .bars i { transform: skewX(-20deg); border-radius: 0; } .t-sport .bars i::after { border-radius: 0; }
+.t-paper { --r: 4px; box-shadow: 0 1px 0 #d9c9a3, 0 3px 0 #efe3c4, 0 4px 0 #d9c9a3, 0 14px 30px rgba(80,55,20,.2); } .t-paper .pattern { background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(120,80,20,.14)), repeating-linear-gradient(0deg, transparent 0 27px, rgba(120,80,20,.07) 27px 28px); }
+.t-space .pattern { background: radial-gradient(1px 1px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 70% 15%, #fff, transparent), radial-gradient(1.5px 1.5px at 85% 60%, #fff, transparent), radial-gradient(1px 1px at 40% 80%, #fff, transparent), radial-gradient(1px 1px at 10% 70%, #fff, transparent), radial-gradient(1.5px 1.5px at 55% 45%, #cbb8ff, transparent), radial-gradient(circle at 100% 0, rgba(140,90,255,.45), transparent 55%), #0d0a24; animation: twinkle 4s ease-in-out infinite alternate; }
+@keyframes twinkle { to { filter: brightness(1.35); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp;
+const $app = document.getElementById("app");
+const GRADE_COLORS = { "A+": "#0f5132", "A": "#1d6f42", "B+": "#2e8b57", "B": "#5a9e3a", "C+": "#b08900", "C": "#c77c02", "NC": "#9b2c2c" };
+const GRADE_ORDER = ["A+", "A", "B+", "B", "C+", "C", "NC"];
+const THEMES = {
+  classic:   ["Klassik", { "bg-c": "#ffffff", fg: "#1f2933", mu: "#5d6b66", a: "#1d6f42", b: "#2e9b5f", track: "#e3efe7", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+  diploma:   ["Diplom", { "bg-c": "#fbf6e9", fg: "#3b2f1c", mu: "#8a7550", a: "#a8801f", b: "#c9a446", track: "#efe4c6", font: "'Cormorant Garamond', serif", dfont: "'Cormorant Garamond', serif" }],
+  ikat:      ["Atlas", { "bg-c": "#fff8f0", fg: "#2b1838", mu: "#7a6380", a: "#c4186a", b: "#2d1e8f", track: "#f1e3ee", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+  tiles:     ["Registon", { "bg-c": "#fbfaf5", fg: "#10344f", mu: "#5d7486", a: "#0e5a8a", b: "#2aa7b8", track: "#e1eef3", font: "'Onest', sans-serif", dfont: "'Playfair Display', serif" }],
+  neon:      ["Neon", { "bg-c": "#0b0b1a", fg: "#f2f0ff", mu: "#9b97c2", a: "#29e6ff", b: "#ff3fd1", track: "#22223d", font: "'Onest', sans-serif", dfont: "'Russo One', sans-serif" }],
+  terminal:  ["Terminal", { "bg-c": "#06120b", fg: "#b8ffcf", mu: "#5fa77a", a: "#39ff88", b: "#39ff88", track: "#11301e", font: "'JetBrains Mono', monospace", dfont: "'JetBrains Mono', monospace" }],
+  brutal:    ["Brutal", { "bg-c": "#ffe14d", fg: "#111111", mu: "#4a4320", a: "#111111", b: "#ff5a36", track: "#fff3b0", font: "'Onest', sans-serif", dfont: "'Archivo Black', sans-serif" }],
+  glass:     ["Shisha", { "bg-c": "#2a2350", fg: "#ffffff", mu: "#d9d4ff", a: "#ffffff", b: "#3fe0c5", track: "rgba(255,255,255,.22)", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+  chalk:     ["Bo'r doska", { "bg-c": "#21412f", fg: "#f4f4ec", mu: "#b7c9bc", a: "#ffe680", b: "#f4f4ec", track: "rgba(255,255,255,.15)", font: "'Caveat', cursive", dfont: "'Caveat', cursive" }],
+  newspaper: ["Gazeta", { "bg-c": "#f4f1ea", fg: "#151515", mu: "#5b5750", a: "#151515", b: "#151515", track: "#e2ddd2", font: "'Cormorant Garamond', serif", dfont: "'Playfair Display', serif" }],
+  bauhaus:   ["Bauhaus", { "bg-c": "#f6f1e7", fg: "#141414", mu: "#5a554b", a: "#e63b2e", b: "#1f4fbf", track: "#e6dfd0", font: "'Onest', sans-serif", dfont: "'Archivo Black', sans-serif" }],
+  pastel:    ["Pastel", { "bg-c": "#fbfbff", fg: "#2f3048", mu: "#7a7b98", a: "#7c6cf0", b: "#4ccf9a", track: "#ecebfb", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+  ocean:     ["Okean", { "bg-c": "#0b3a66", fg: "#ffffff", mu: "#b5d6e8", a: "#7ff0e0", b: "#ffd166", track: "rgba(255,255,255,.18)", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+  autumn:    ["Kuzgi", { "bg-c": "#fff6ec", fg: "#3a2414", mu: "#8a6a52", a: "#c4561d", b: "#e8a33b", track: "#f6e3cf", font: "'Onest', sans-serif", dfont: "'Playfair Display', serif" }],
+  minimal:   ["Minimal", { "bg-c": "#ffffff", fg: "#111111", mu: "#777777", a: "#111111", b: "#111111", track: "#e9e9e9", font: "'Onest', sans-serif", dfont: "'Onest', sans-serif" }],
+  luxe:      ["Qora oltin", { "bg-c": "#0f0e0c", fg: "#f3ead6", mu: "#a8987a", a: "#d4ad57", b: "#d4ad57", track: "#2a261f", font: "'Onest', sans-serif", dfont: "'Cormorant Garamond', serif" }],
+  sakura:    ["Sakura", { "bg-c": "#fffafc", fg: "#4a2433", mu: "#a07688", a: "#e0457b", b: "#f59ab8", track: "#fbe4ec", font: "'Onest', sans-serif", dfont: "'Playfair Display', serif" }],
+  sport:     ["Sport", { "bg-c": "#141414", fg: "#ffffff", mu: "#a5a5a5", a: "#ff3b30", b: "#ffffff", track: "#2c2c2c", font: "'Onest', sans-serif", dfont: "'Russo One', sans-serif" }],
+  paper:     ["Kitob", { "bg-c": "#f7eed7", fg: "#3d2d14", mu: "#86704a", a: "#8b3a1e", b: "#a8763a", track: "#eadbb6", font: "'Cormorant Garamond', serif", dfont: "'Cormorant Garamond', serif" }],
+  space:     ["Kosmos", { "bg-c": "#0d0a24", fg: "#f1edff", mu: "#a59fd0", a: "#b69bff", b: "#5ee7ff", track: "rgba(255,255,255,.14)", font: "'Onest', sans-serif", dfont: "'Unbounded', sans-serif" }],
+};
+
+// ---------- Yordamchilar ----------
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = n => n == null ? "—" : (Math.round(n * 10) / 10).toString().replace(".", ",");
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function haptic(kind = "light") { try { kind === "select" ? tg.HapticFeedback.selectionChanged() : ["success", "error", "warning"].includes(kind) ? tg.HapticFeedback.notificationOccurred(kind) : tg.HapticFeedback.impactOccurred(kind); } catch (e) {} }
+let toastTimer;
+function toast(text) { const t = document.getElementById("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
+function confirmBox(text) { return new Promise(res => { if (tg && tg.showConfirm) { try { tg.showConfirm(text, ok => res(!!ok)); return; } catch (e) {} } res(window.confirm(text)); }); }
+function store(key, value) { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (e) { return null; } }
+
+async function api(path, data) {
+  const opts = { headers: { "X-Init-Data": (tg && tg.initData) || "" } };
+  if (data !== undefined) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
+  let res;
+  try { res = await fetch(path, opts); } catch (e) { throw new Error("Internet aloqasi yo'q"); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "Xatolik yuz berdi");
+  return json;
+}
+
+function countUp(root = document) {
+  root.querySelectorAll("[data-count]").forEach(el => {
+    const to = parseFloat(el.dataset.count), suffix = el.dataset.suffix || "";
+    if (reduceMotion || isNaN(to)) { el.textContent = num(to) + suffix; return; }
+    const start = performance.now(), dur = 1300, delay = +el.dataset.delay || 200;
+    (function frame(now) {
+      const p = Math.min(1, Math.max(0, (now - start - delay) / dur));
+      el.textContent = num(to * (1 - Math.pow(1 - p, 3))) + suffix;
+      if (p < 1) requestAnimationFrame(frame);
+    })(start);
+  });
+}
+
+// ---------- Navigatsiya ----------
+const S = { boot: null, stack: [], role: store("role") || "student" };
+function go(view, params = {}, replace = false) {
+  if (!replace && S.current) S.stack.push(S.current);
+  S.current = { view, params };
+  render();
+}
+function back() { if (S.stack.length) { S.current = S.stack.pop(); render(); } else { go("home", {}, true); } }
+function render() {
+  window.scrollTo(0, 0);
+  const { view, params } = S.current;
+  try {
+    if (S.stack.length) { tg && tg.BackButton.show(); } else { tg && tg.BackButton.hide(); }
+  } catch (e) {}
+  (VIEWS[view] || VIEWS.home)(params);
+}
+if (tg) { try { tg.BackButton.onClick(back); } catch (e) {} }
+function loading() { $app.innerHTML = `<div class="view"><div class="skeleton" style="height:40px;width:60%"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
+function fail(error) {
+  $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">😕</div><b>${esc(error.message || error)}</b><button class="btn ghost" id="retry">Qayta urinish</button></div></div>`;
+  document.getElementById("retry").onclick = () => render();
+}
+
+// ---------- Natija kartasi ----------
+function resultCard(theme, d) {
+  const [, v] = THEMES[theme] || THEMES.classic;
+  const vars = Object.entries(v).map(([k, val]) => `--${k}:${val}`).join(";");
+  const share = d.max ? Math.max(0, Math.min(1, d.value / d.max)) : 0;
+  const bars = d.parts.map(([label, got, all], j) => `<li><span>${esc(label)}</span><b>${got == null ? "—" : num(got)} / ${all}</b><i style="--w:${got == null ? 0 : (got / all * 100).toFixed(1)}%;--d:${.35 + j * .15}s"></i></li>`).join("");
+  return `<div class="rcard t-${theme}" style="${vars};--off:${(276.46 * (1 - share)).toFixed(1)}">
+    <div class="pattern"></div>
+    <div class="c-head"><span class="brand-c">Ona tili · ${esc(d.kind)}</span><span class="no">${esc(d.code)}</span></div>
+    <div class="who"><small>O'quvchi</small><b>${esc(d.name)}</b><small>${esc(d.sub)}</small></div>
+    <div class="score">
+      <div class="ring"><svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="pr" cx="50" cy="50" r="44"/></svg>
+        <div class="val"><span class="num" data-count="${d.value}" data-suffix="${d.suffix || ""}">${num(d.value)}${d.suffix || ""}</span><span class="of">${esc(d.of)}</span></div></div>
+      <div class="grade"><span>${esc(d.gradeLabel)}</span><b>${esc(d.grade)}</b><small>${esc(d.gradeSub || "")}</small></div>
+    </div>
+    <ul class="bars">${bars}</ul>
+    <div class="c-foot"><span>${esc(d.footLeft)}</span><span>${esc(d.footRight)}</span></div>
+  </div>`;
+}
+function schoolGrade(p) { return p >= 86 ? "5" : p >= 71 ? "4" : p >= 56 ? "3" : "2"; }
+
+function themePicker(selected, onPick) {
+  const html = Object.entries(THEMES).map(([id, [name, v]]) =>
+    `<button class="swatch ${id === selected ? "on" : ""}" data-theme="${id}" type="button" aria-label="${esc(name)}">
+      <div class="sw" style="background:${v["bg-c"]};color:${v.a};font-family:${v.dfont}">B+</div><span>${esc(name)}</span></button>`).join("");
+  setTimeout(() => {
+    document.querySelectorAll(".swatch").forEach(b => b.onclick = () => {
+      document.querySelectorAll(".swatch").forEach(x => x.classList.toggle("on", x === b));
+      haptic("select"); onPick(b.dataset.theme);
+    });
+    const on = document.querySelector(".swatch.on"); if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
+  });
+  return `<div class="themes">${html}</div>`;
+}
+
+// ---------- Doirachali varaq ----------
+function bubbleSheet(items, answers, opts = {}) {
+  const rows = items.filter(i => i.kind === "choice").map(i => {
+    const letters = "ABCDEF".slice(0, i.options).split("");
+    return `<div class="qrow ${answers[i.label] ? "done" : ""}" data-q="${i.label}"><span class="qnum">${i.label}</span><div class="bubbles">${letters.map(l =>
+      `<button type="button" class="bubble ${answers[i.label] === l ? "on" : ""}" data-q="${i.label}" data-l="${l}" aria-label="${i.label}-savol ${l}">${l}</button>`).join("")}</div></div>`;
+  }).join("");
+  return `<div class="card" id="sheet">${rows}</div>`;
+}
+function bindBubbles(answers, onChange) {
+  document.getElementById("sheet").addEventListener("click", e => {
+    const b = e.target.closest(".bubble"); if (!b) return;
+    const q = b.dataset.q, l = b.dataset.l;
+    answers[q] = answers[q] === l ? undefined : l;
+    if (!answers[q]) delete answers[q];
+    const row = b.closest(".qrow");
+    row.querySelectorAll(".bubble").forEach(x => x.classList.toggle("on", x.dataset.l === answers[q]));
+    row.classList.toggle("done", !!answers[q]);
+    haptic("select"); onChange && onChange();
+  });
+}
+
+// ---------- Ko'rinishlar ----------
+const VIEWS = {};
+
+VIEWS.home = async () => {
+  if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); } }
+  const b = S.boot, role = S.role;
+  const first = (b.user.name || "").split(" ")[0];
+  const attempts = b.attempts.map(a => `<button class="item" data-attempt="${a.id}" data-announced="${a.announced ? 1 : 0}">
+      <span class="ico">${a.announced ? "📊" : "⏳"}</span>
+      <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
+      <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
+  const tests = b.tests.map(t => `<button class="item" data-test="${t.id}">
+      <span class="ico">${t.closed ? "📢" : "📝"}</span>
+      <span><b>${esc(t.title)}</b><small>Kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small></span>
+      <span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><span class="hi">Salom, ${esc(first)} 👋</span>
+      <h1>${role === "student" ? "Testni yeching, natijani kuting" : "Testlar va natijalar"}</h1></div>
+    <div class="segment ${role === "teacher" ? "right" : ""}"><span class="pill"></span>
+      <button class="${role === "student" ? "on" : ""}" data-role="student">🎓 O'quvchi</button>
+      <button class="${role === "teacher" ? "on" : ""}" data-role="teacher">👩‍🏫 O'qituvchi</button></div>
+    ${role === "student" ? `
+      <div class="card"><h2>Test kodi</h2>
+        <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
+        <button class="btn block" id="start" disabled>Boshlash →</button></div>
+      <div class="section-title"><h2>Mening testlarim</h2><span class="muted small">${b.attempts.length} ta</span></div>
+      <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
+    : `
+      <button class="btn block" id="new">＋ Yangi test yaratish</button>
+      <div class="section-title"><h2>Testlarim</h2><span class="muted small">${b.tests.length} ta</span></div>
+      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div>Hali test yaratmagansiz.</div>`}</div>`}
+  </div>`;
+  document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { S.role = x.dataset.role; store("role", S.role); haptic("select"); render(); });
+  const code = document.getElementById("code");
+  if (code) {
+    const start = document.getElementById("start");
+    code.oninput = () => { code.value = code.value.replace(/\D/g, "").slice(0, 5); start.disabled = code.value.length !== 5; if (code.value.length === 5) start.focus(); };
+    start.onclick = () => go("answer", { code: code.value });
+    code.onkeydown = e => { if (e.key === "Enter" && code.value.length === 5) go("answer", { code: code.value }); };
+  }
+  document.querySelectorAll("[data-attempt]").forEach(x => x.onclick = () => x.dataset.announced === "1" ? go("result", { id: x.dataset.attempt }) : toast("⏳ Natijalar hali e'lon qilinmagan"));
+  document.querySelectorAll("[data-test]").forEach(x => x.onclick = () => go("teacher", { id: x.dataset.test }));
+  const nw = document.getElementById("new"); if (nw) nw.onclick = () => go("create");
+};
+
+VIEWS.answer = async ({ code }) => {
+  loading();
+  let t; try { t = await api(`/api/test/${code}`); } catch (e) { return fail(e); }
+  if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true }); }
+  if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
+  const choices = t.items.filter(i => i.kind === "choice"), texts = t.items.filter(i => i.kind === "text");
+  const draftKey = "draft-" + t.code;
+  let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
+  const answers = draft.answers || {}, written = draft.written || {};
+  let variant = draft.variant || (t.variants.length === 1 ? t.variants[0] : null);
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1><span class="muted small">${esc(t.format)}</span></div>
+    <div class="card">
+      <div class="field"><label for="name">Ism va familiya</label><input class="input" id="name" autocomplete="name" value="${esc(draft.name || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+      ${t.variants.length > 1 ? `<div class="field"><label>Variant</label><div class="chips">${t.variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-v="${v}">${v} variant</button>`).join("")}</div></div>` : ""}
+    </div>
+    <div class="sheet-progress"><div class="row between small"><b id="prog-text"></b><span class="muted" id="prog-written"></span></div><div class="track"><i id="prog"></i></div></div>
+    <div class="section-title"><h2>Test savollari</h2><span class="muted small">bosib belgilang</span></div>
+    ${bubbleSheet(t.items, answers)}
+    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2><span class="muted small">${texts[0].label}–${texts[texts.length - 1].label}</span></div>
+      <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" value="${esc(written[i.label] || "")}" placeholder="Javob" autocomplete="off"></div>`).join("")}</div>` : ""}
+    ${t.fmt === "milliy" ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+      <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
+        <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
+        <div class="counter" id="essay-count"></div>
+        <span class="muted small">Qo'lyozmani rasm qilib yubormoqchi bo'lsangiz — botdagi «✅ Javobni tekshirish» orqali yuboring.</span></div>` : ""}
+    <div class="sticky-bottom"><div><button class="btn block" id="submit">Javoblarni yuborish</button></div></div>
+  </div>`;
+  const nameEl = document.getElementById("name"), essayEl = document.getElementById("essay");
+  function save() { store(draftKey, JSON.stringify({ answers, written, variant, name: nameEl.value, essay: essayEl ? essayEl.value : "" })); }
+  function progress() {
+    const n = Object.keys(answers).length, w = Object.values(written).filter(x => x && x.trim()).length;
+    document.getElementById("prog").style.width = (n / choices.length * 100) + "%";
+    document.getElementById("prog-text").textContent = `Belgilandi: ${n} / ${choices.length}`;
+    document.getElementById("prog-written").textContent = texts.length ? `Yozma: ${w} / ${texts.length}` : "";
+    if (essayEl) { const words = essayEl.value.trim() ? essayEl.value.trim().split(/\s+/).length : 0; document.getElementById("essay-count").textContent = `${words} so'z · ${essayEl.value.length} belgi`; }
+    save();
+  }
+  bindBubbles(answers, progress);
+  document.querySelectorAll(".wq").forEach(x => x.oninput = () => { written[x.dataset.q] = x.value; progress(); });
+  document.querySelectorAll("[data-v]").forEach(x => x.onclick = () => { variant = x.dataset.v; document.querySelectorAll("[data-v]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); save(); });
+  nameEl.oninput = save; if (essayEl) essayEl.oninput = progress;
+  progress();
+  document.getElementById("submit").onclick = async () => {
+    const name = nameEl.value.trim();
+    if (name.length < 3) { toast("Ism va familiyangizni yozing"); nameEl.focus(); haptic("error"); return; }
+    if (!variant) { toast("Variantni tanlang"); haptic("error"); return; }
+    const missing = choices.length - Object.keys(answers).length;
+    const essay = essayEl ? essayEl.value.trim() : "";
+    if (essay && essay.length < 200) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
+    const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && !essay ? "esse yozilmagan" : ""].filter(Boolean).join(", ");
+    if (!(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
+    const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    try {
+      await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay });
+      store(draftKey, "{}"); S.boot = null; haptic("success");
+      done({ title: t.title });
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish"; }
+  };
+};
+
+function done({ title, already }) {
+  S.stack = []; S.current = { view: "home", params: {} };
+  try { tg.BackButton.hide(); } catch (e) {}
+  $app.innerHTML = `<div class="view"><div class="card success">
+    <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+    <h1>${already ? "Javobingiz qabul qilingan" : "Javoblaringiz qabul qilindi!"}</h1>
+    <p class="muted">${esc(title)}<br>Natijalar o'qituvchi e'lon qilganda bot sizga xabar beradi va bu yerda natija kartasi ochiladi.</p>
+    <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
+  document.getElementById("home").onclick = () => render();
+}
+
+VIEWS.result = async ({ id }) => {
+  loading();
+  let r; try { r = await api(`/api/result/${id}`); } catch (e) { return fail(e); }
+  const a = r.attempt, t = r.test, milliy = t.fmt === "milliy";
+  const card = milliy ? resultCard(t.theme, {
+    kind: "Mock", code: t.code, name: a.name, sub: `${t.title} · ${a.variant} variant`, value: a.total, max: a.max_points,
+    of: `/ ${num(a.max_points)} ball`, gradeLabel: "Daraja", grade: r.rasch ? r.rasch.grade : "—",
+    gradeSub: r.rasch ? `Rasch bali ${num(r.rasch.score)}` : "e'lon qilinmagan",
+    parts: [["Test (1–35)", a.test_correct, a.choices_total], ["Yozma (36–44)", a.written_correct, a.texts_total], ["Esse", a.essay, r.essay_max]],
+    footLeft: `Kod ${t.code}`, footRight: a.created_at,
+  }) : resultCard(t.theme, {
+    kind: "Test", code: t.code, name: a.name, sub: `${t.title} · ${a.variant} variant`, value: a.percent, max: 100, suffix: "%",
+    of: `${a.test_correct} / ${a.auto_total} to'g'ri`, gradeLabel: "Baho", grade: schoolGrade(a.percent), gradeSub: "5 ballik tizim",
+    parts: [["To'g'ri javoblar", a.test_correct, a.auto_total]], footLeft: `Kod ${t.code}`, footRight: a.created_at,
+  });
+  const wrong = new Set(a.wrong);
+  const review = t.items.filter(i => i.kind === "choice").map(i => {
+    const ok = !wrong.has(i.label), given = a.answers[i.label] || "—";
+    return `<div class="rv ${ok ? "ok" : "no"}"><b>${i.label}</b>${esc(given)}${ok ? " ✓" : ` → ${esc(r.key[i.label] || "?")}`}</div>`;
+  }).join("");
+  const writtenRows = t.items.filter(i => i.kind === "text").map(i => {
+    const ok = !wrong.has(i.label);
+    return `<div class="wr"><div class="row between"><b>${ok ? "✅" : "❌"} ${i.label}</b></div><span>${esc(a.answers[i.label] || "—")}</span>${ok ? "" : `<span class="muted small">To'g'ri: ${esc(r.key[i.label] || "")}</span>`}</div>`;
+  }).join("");
+  const e = r.essay;
+  const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay)} / ${r.essay_max}</span></div>
+    <div class="card">${e.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
+    ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}</div>` : "";
+  $app.innerHTML = `<div class="view">${card}
+    ${!r.announced ? `<div class="card small muted">ℹ️ Natijalar hali e'lon qilinmagan — buni faqat siz (o'qituvchi) ko'ryapsiz.</div>` : ""}
+    <div class="section-title"><h2>Har bir savol</h2><span class="muted small">${a.wrong.length} ta xato</span></div>
+    <div class="card"><div class="review">${review}</div></div>
+    ${writtenRows ? `<div class="section-title"><h2>Yozma javoblar</h2></div><div class="card">${writtenRows}</div>` : ""}
+    ${essayBlock}
+  </div>`;
+  countUp($app);
+};
+
+VIEWS.create = async () => {
+  const st = S.create || (S.create = { title: "", fmt: "milliy", count: 30, topic: "", theme: "classic", variants: ["A"], cur: "A", keys: { A: {} } });
+  const items = itemsFor(st.fmt, st.count);
+  const texts = items.filter(i => i.kind === "text");
+  const key = st.keys[st.cur] || (st.keys[st.cur] = {});
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Yangi test</span><h1>Test yaratish</h1></div>
+    <div class="card">
+      <div class="field"><label for="title">Test nomi</label><input class="input" id="title" value="${esc(st.title)}" placeholder="Masalan: Mock №3 · 11-sinf"></div>
+      <div class="field"><label>Turi</label><div class="chips">
+        <button type="button" class="chip ${st.fmt === "milliy" ? "on" : ""}" data-fmt="milliy">🏅 Milliy sertifikat (45)</button>
+        <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button></div></div>
+      ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
+      ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
+    </div>
+    <div class="section-title"><h2>Natija kartasi dizayni</h2><span class="muted small">${esc(THEMES[st.theme][0])}</span></div>
+    <div class="card">${themePicker(st.theme, id => { st.theme = id; collect(); render(); })}</div>
+    <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
+    <div class="tabs">${st.variants.map(v => `<button class="${v === st.cur ? "on" : ""}" data-var="${v}">${v} variant</button>`).join("")}
+      ${st.variants.length < 4 ? `<button data-add="1">＋ Variant</button>` : ""}</div>
+    <div class="card"><div class="field"><label for="quick">Tez kiritish</label><div class="row"><input class="input" id="quick" placeholder="abcdabcd… yoki 1a2b3c…" autocomplete="off"><button class="btn sm ghost" id="apply">To'ldirish</button></div></div></div>
+    ${bubbleSheet(items, key)}
+    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">3 tagacha sinonim: | bilan</span></div>
+      <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wk" data-q="${i.label}" value="${esc(key[i.label] || "")}" placeholder="javob | sinonim" autocomplete="off"></div>`).join("")}</div>` : ""}
+    <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
+  </div>`;
+  function collect() {
+    const ti = document.getElementById("title"); if (ti) st.title = ti.value;
+    const tp = document.getElementById("topic"); if (tp) st.topic = tp.value;
+    const ct = document.getElementById("count"); if (ct) st.count = Math.max(5, Math.min(100, parseInt(ct.value) || 30));
+    document.querySelectorAll(".wk").forEach(x => { if (x.value.trim()) key[x.dataset.q] = x.value; else delete key[x.dataset.q]; });
+  }
+  function counter() { const n = items.filter(i => i.kind === "choice" && key[i.label]).length; document.getElementById("key-count").textContent = `${st.cur}: ${n} / ${items.filter(i => i.kind === "choice").length}`; }
+  bindBubbles(key, counter); counter();
+  document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; st.variants = ["A"]; st.cur = "A"; haptic("select"); render(); });
+  const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); render(); };
+  document.querySelectorAll("[data-var]").forEach(x => x.onclick = () => { collect(); st.cur = x.dataset.var; render(); });
+  const add = document.querySelector("[data-add]"); if (add) add.onclick = () => { collect(); const v = "ABCD"[st.variants.length]; st.variants.push(v); st.keys[v] = {}; texts.forEach(i => { if (st.keys.A[i.label]) st.keys[v][i.label] = st.keys.A[i.label]; }); st.cur = v; render(); };
+  document.getElementById("apply").onclick = () => {
+    const raw = document.getElementById("quick").value.toLowerCase().replace(/\s/g, "").replace(/[абвсдеф]/g, c => ({ "а": "a", "б": "b", "в": "b", "с": "c", "д": "d", "е": "e", "ф": "f" }[c]));
+    const ch = items.filter(i => i.kind === "choice");
+    if (/\d/.test(raw)) { (raw.match(/(\d+)([a-f])/g) || []).forEach(p => { const m = p.match(/(\d+)([a-f])/); key[m[1]] = m[2].toUpperCase(); }); }
+    else { raw.split("").forEach((c, i) => { if (ch[i] && "abcdef".slice(0, ch[i].options).includes(c)) key[ch[i].label] = c.toUpperCase(); }); }
+    collect(); haptic("success"); render();
+  };
+  document.getElementById("save").onclick = async () => {
+    collect();
+    if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
+    for (const v of st.variants) {
+      const miss = items.filter(i => !st.keys[v][i.label]);
+      if (miss.length) { st.cur = v; render(); toast(`${v} variant: ${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} kaliti yo'q`); haptic("error"); return; }
+    }
+    const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
+    try {
+      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, count: st.count, essay_topic: st.topic, theme: st.theme, keys: st.keys });
+      S.create = null; S.boot = null; haptic("success");
+      S.stack = [];
+      $app.innerHTML = `<div class="view"><div class="card success">
+        <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+        <h1>Test tayyor!</h1><p class="muted">O'quvchilarga shu kodni bering:</p><div class="bigcode">${res.code}</div>
+        <p class="muted small">📄 Titul va 🔑 kalit PDF'lari chatga yuborildi.</p>
+        <div class="row"><button class="btn ghost" id="copy">Kodni nusxalash</button><button class="btn" id="open">Testni ochish</button></div></div></div>`;
+      document.getElementById("copy").onclick = () => { navigator.clipboard.writeText(res.code).then(() => toast("Nusxalandi"), () => toast(res.code)); };
+      document.getElementById("open").onclick = () => { S.current = { view: "home", params: {} }; go("teacher", { id: res.id }); };
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Saqlash va PDF olish"; }
+  };
+};
+
+function itemsFor(fmt, count) {
+  if (fmt !== "milliy") return Array.from({ length: count }, (_, i) => ({ label: String(i + 1), kind: "choice", options: 4 }));
+  const out = [];
+  for (let n = 1; n <= 35; n++) out.push({ label: String(n), kind: "choice", options: n >= 33 ? 6 : 4 });
+  for (let n = 36; n <= 39; n++) out.push({ label: String(n), kind: "text" });
+  for (let n = 40; n <= 44; n++) for (const p of "ab") out.push({ label: n + p, kind: "text" });
+  return out;
+}
+
+VIEWS.teacher = async ({ id, tab }) => {
+  loading();
+  let d; try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); }
+  const t = d.test, milliy = t.fmt === "milliy", n = d.attempts.length;
+  tab = tab || "people";
+  const totals = d.attempts.map(a => milliy ? a.total : a.percent);
+  const avg = n ? totals.reduce((x, y) => x + y, 0) / n : 0, max = n ? Math.max(...totals) : 0;
+  const certified = d.attempts.filter(a => a.grade && a.grade !== "NC").length;
+  const gradeBar = milliy && n ? `<div class="card"><div class="row between"><h2>Darajalar</h2><span class="muted small">Rasch · taxminiy</span></div>
+    <div class="gradebar">${GRADE_ORDER.filter(g => d.grades[g]).map((g, i) => `<i style="width:${d.grades[g] / n * 100}%;background:${GRADE_COLORS[g]};animation-delay:${i * .08}s"></i>`).join("")}</div>
+    <div class="legend">${GRADE_ORDER.filter(g => d.grades[g]).map(g => `<span><i style="background:${GRADE_COLORS[g]}"></i>${g} — ${d.grades[g]}</span>`).join("")}</div></div>` : "";
+  const people = d.attempts.map((a, i) => `<button class="item" data-res="${a.id}"><span class="rank">${i + 1}</span>
+      <span><b>${esc(a.name)}</b><small>${a.variant} variant · ${milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}</small></span>
+      <span class="score-col">${milliy
+        ? `<span class="row" style="gap:8px"><b title="Rasch bali">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
+        : `<b>${num(a.percent)}%</b><small class="muted">${a.test_correct + a.written_correct} / ${a.auto_total}</small>`}</span></button>`).join("");
+  const heat = d.analysis.map((q, i) => `<div class="${q.share >= 70 ? "h-good" : q.share >= 40 ? "h-mid" : "h-bad"}" style="animation-delay:${i * .012}s"><b>${q.label}</b>${q.share}%</div>`).join("");
+  const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;
+  const pending = d.attempts.filter(a => a.essay_status === "pending").length;
+  const essayIcon = a => a.essay != null ? `✅ ${num(a.essay)}` : a.essay_status === "graded" ? `🤖 ${num(a.ai_score)}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
+  const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay_status === "none" ? "esse yuborilmagan" : a.essay != null ? "tasdiqlangan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1>
+      <div class="row wrap"><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span class="muted small">${esc(t.format)} · ${t.variants.join(", ")}</span></div></div>
+    <div class="tiles">
+      <div class="tile"><b data-count="${n}" data-suffix="">${n}</b><span>Qatnashchilar</span></div>
+      <div class="tile"><b data-count="${avg}" data-suffix="${milliy ? "" : "%"}">${num(avg)}</b><span>O'rtacha ${milliy ? "ball" : "natija"}</span></div>
+      <div class="tile"><b data-count="${max}" data-suffix="${milliy ? "" : "%"}">${num(max)}</b><span>Eng yuqori</span></div>
+      <div class="tile"><b data-count="${milliy ? certified : d.attempts.filter(a => a.percent >= 80).length}">0</b><span>${milliy ? "Sertifikat (C+)" : "80% va yuqori"}</span></div>
+    </div>
+    ${gradeBar}
+    <div class="card"><div class="row wrap">
+      ${t.closed ? `<button class="btn ghost sm" id="reopen">🔓 Qayta ochish</button>` : `<button class="btn sm" id="announce">📢 Natijalarni e'lon qilish</button>`}
+      <button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="sheet">📄 Titul</button><button class="btn ghost sm" data-send="key">🔑 Kalit</button>
+    </div></div>
+    <div class="tabs"><button class="${tab === "people" ? "on" : ""}" data-tab="people">👥 Qatnashchilar</button><button class="${tab === "questions" ? "on" : ""}" data-tab="questions">🧩 Savollar</button>${milliy ? `<button class="${tab === "essays" ? "on" : ""}" data-tab="essays">📝 Esselar${suggested ? ` · ${suggested}` : ""}</button>` : ""}<button class="${tab === "design" ? "on" : ""}" data-tab="design">🎨 Dizayn</button></div>
+    ${tab === "people" ? `<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
+    ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty">Natijalar yo'q</div>`) : ""}
+    ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
+      ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}</div><div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
+    ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
+  </div>`;
+  countUp($app);
+  function preview(th) {
+    const el = document.getElementById("preview"); if (!el) return;
+    el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: `${t.title} · A variant`, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 18.5, 24]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
+    countUp(el);
+  }
+  if (tab === "design") preview(t.theme);
+  document.querySelectorAll("[data-tab]").forEach(x => x.onclick = () => { S.current.params = { id, tab: x.dataset.tab }; haptic("select"); render(); });
+  document.querySelectorAll("[data-res]").forEach(x => x.onclick = () => go("result", { id: x.dataset.res }));
+  document.querySelectorAll("[data-essay]").forEach(x => x.onclick = () => essaySheet(x.dataset.essay, id));
+  document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); } });
+  const an = document.getElementById("announce");
+  if (an) an.onclick = async () => {
+    const waiting = d.attempts.filter(a => a.essay == null && a.essay_status && a.essay_status !== "none").length;
+    if (!n) { toast("Hali hech kim javob yubormagan"); return; }
+    if (!(await confirmBox(`${n} ta o'quvchiga natijalar yuborilsinmi?${waiting ? `\n\n⚠️ ${waiting} ta esse hali tasdiqlanmagan.` : ""}\n\nJavob qabul qilish to'xtaydi.`))) return;
+    an.disabled = true; an.textContent = "Yuborilmoqda…";
+    try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(`📢 ${res.sent} ta o'quvchiga yuborildi`); S.boot = null; render(); }
+    catch (e) { toast(e.message); an.disabled = false; an.textContent = "📢 Natijalarni e'lon qilish"; }
+  };
+  const ro = document.getElementById("reopen");
+  if (ro) ro.onclick = async () => { if (!(await confirmBox("Testni qayta ochasizmi? Yangi javoblar qabul qilinadi."))) return; await api(`/api/teacher/test/${t.id}/reopen`, {}); S.boot = null; render(); };
+  const ca = document.getElementById("confirm-all");
+  if (ca) ca.onclick = async () => { try { const res = await api(`/api/teacher/test/${t.id}/essays/confirm-all`, {}); toast(`✅ ${res.count} ta tasdiqlandi`); haptic("success"); render(); } catch (e) { toast(e.message); } };
+};
+
+async function essaySheet(attemptId, testId) {
+  let e; try { e = await api(`/api/teacher/essay/${attemptId}`); } catch (err) { return toast(err.message); }
+  const modal = document.createElement("div"); modal.className = "sheet-modal";
+  const crit = e.ai && e.ai.criteria ? e.ai.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("") : "";
+  modal.innerHTML = `<div role="dialog" aria-label="Esse">
+    <div class="row between"><h2>${esc(e.name)}</h2><button class="btn plain" data-close>Yopish</button></div>
+    ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(e.essay)} / 24</div>` : ""}
+    ${e.status === "graded" ? `<div class="row between"><b>🤖 AI bahosi</b><span class="bigcode" style="font-size:26px;letter-spacing:0">${num(e.ai_score)}</span></div>${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
+    ${e.status === "pending" ? `<p class="muted">⏳ AI hali tekshirmoqda — birozdan keyin qayta oching.</p>` : ""}
+    ${e.status === "failed" ? `<p class="muted">❗️ AI baholay olmadi: ${esc(e.error || "")}</p>` : ""}
+    ${e.status === "none" ? `<p class="muted">➖ O'quvchi esse yubormagan.</p>` : ""}
+    ${e.text ? `<details><summary class="small"><b>Esse matni</b></summary><p style="white-space:pre-wrap;font-size:14px">${esc(e.text)}</p></details>` : e.photos ? `<p class="muted small">📷 Esse ${e.photos} ta rasm — chatda «✍️ Esseni baholash» orqali ko'ring.</p>` : ""}
+    ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(e.ai_score)})</button>` : ""}
+    ${e.status === "failed" ? `<button class="btn ghost block" data-act="retry">🔁 AI'da qayta tekshirish</button>` : ""}
+    <div class="row"><input class="input" id="manual" inputmode="decimal" placeholder="O'z bahoyingiz: 0–24, masalan 18,5"><button class="btn ghost" data-act="score">Saqlash</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.onclick = ev => { if (ev.target === modal || ev.target.closest("[data-close]")) close(); };
+  modal.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+    const action = b.dataset.act, payload = { action };
+    if (action === "score") payload.score = document.getElementById("manual").value;
+    try { await api(`/api/teacher/essay/${attemptId}`, payload); haptic("success"); toast(action === "retry" ? "🔁 Navbatga qo'yildi" : "✅ Saqlandi"); close(); render(); }
+    catch (err) { toast(err.message); haptic("error"); }
+  });
+}
+
+// ---------- Ishga tushirish ----------
+(function init() {
+  if (tg) {
+    try { tg.ready(); tg.expand(); if (tg.colorScheme === "dark") document.documentElement.classList.add("dark"); tg.onEvent("themeChanged", () => document.documentElement.classList.toggle("dark", tg.colorScheme === "dark")); } catch (e) {}
+  }
+  if (!tg || !tg.initData) {
+    $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">📱</div><b>Ilovani Telegram ichida oching</b><span>Botdagi «Ochish» tugmasini bosing.</span></div></div>`;
+    return;
+  }
+  const q = new URLSearchParams(location.search);
+  S.current = { view: "home", params: {} };
+  if (q.get("r")) { S.stack = []; go("result", { id: q.get("r") }); }
+  else if (q.get("t")) { S.role = "teacher"; go("teacher", { id: q.get("t"), tab: q.get("tab") || undefined }); }
+  else if (q.get("v") === "create") { S.role = "teacher"; go("create"); }
+  else if (q.get("c")) { go("answer", { code: q.get("c") }); }
+  else render();
+})();
+</script>
+</body>
+</html>

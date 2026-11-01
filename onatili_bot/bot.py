@@ -31,13 +31,16 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     Message,
+    MenuButtonWebApp,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 import db
 import essay_ai
 import pdfs
-from config import BOT_TOKEN
+import webapp
+from config import BOT_TOKEN, WEBAPP_URL
 from scoring import rasch_results, total_points
 from structure import (
     ESSAY_MAX,
@@ -91,6 +94,28 @@ def inline(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=data) for text, data in row] for row in rows]
     )
+
+
+def app_url(**params) -> str | None:
+    """Mini App manzili (https bo'lmasa — None: Telegram faqat https qabul qiladi)."""
+    if not WEBAPP_URL.startswith("https://"):
+        return None
+    query = "&".join(f"{key}={value}" for key, value in params.items())
+    return f"{WEBAPP_URL}/app" + (f"?{query}" if query else "")
+
+
+def app_button(text: str, **params) -> InlineKeyboardButton | None:
+    url = app_url(**params)
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url)) if url else None
+
+
+def with_app(markup: InlineKeyboardMarkup | None, text: str, **params) -> InlineKeyboardMarkup | None:
+    """Mavjud tugmalar tepasiga «ilovada ochish» tugmasini qo'shadi (ilova sozlangan bo'lsa)."""
+    button = app_button(text, **params)
+    if not button:
+        return markup
+    rows = [[button]] + (markup.inline_keyboard if markup else [])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def esc(text: str) -> str:
@@ -187,6 +212,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         "Boshlash uchun pastdagi tugmani tanlang 👇",
         reply_markup=MAIN_KB,
     )
+    if app_url():
+        await message.answer(
+            "📱 <b>Ilova</b> — javoblarni doirachalarni bosib belgilash, natija kartasi, o'qituvchi paneli:",
+            reply_markup=with_app(None, "📱 Ilovani ochish"),
+        )
 
 
 @dp.message(Command("help", "yordam"))
@@ -215,6 +245,9 @@ async def create_start(message: Message, state: FSMContext) -> None:
         + "Test nomini yozing.\nMasalan: <i>Mock №3 · 11-sinf</i> yoki <i>9-sinf, 1-chorak</i>",
         reply_markup=CANCEL_KB,
     )
+    if app_url():
+        await message.answer("💡 Ilovada qulayroq: kalitni doirachalarni bosib kiritasiz va natija kartasi dizaynini tanlaysiz.",
+                             reply_markup=with_app(None, "📱 Ilovada yaratish", v="create"))
 
 
 @dp.message(Create.title, F.text)
@@ -404,26 +437,36 @@ async def _save_test(message: Message, state: FSMContext, owner_id: int) -> None
         "📄 Titul varaq va 🔑 kalit 👇",
         reply_markup=MAIN_KB,
     )
+    if app_url():
+        await message.answer("📱 Natijalar, statistika va esselarni ilovada kuzating:",
+                             reply_markup=with_app(None, "📱 Testni ilovada ochish", t=test["id"]))
     await _send_sheet(message, test, names)
     await _send_key(message, test)
 
 
+async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
+    """Titul (sheet), kalit (key) yoki natijalar (results) PDF'ini chatga yuboradi."""
+    keys = await asyncio.to_thread(db.get_keys, test["id"])
+    if kind == "sheet":
+        content = await asyncio.to_thread(pdfs.answer_sheet_pdf, test, list(keys))
+        name, caption = f"titul_{test['code']}.pdf", "📄 <b>Titul varaq</b> — chop etib o'quvchilarga tarqating."
+    elif kind == "key":
+        content = await asyncio.to_thread(pdfs.answer_key_pdf, test, keys)
+        name, caption = f"kalit_{test['code']}.pdf", "🔑 <b>Javoblar kaliti</b> — faqat o'zingiz uchun (uzatib bo'lmaydi)."
+    else:
+        attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+        content = await asyncio.to_thread(pdfs.results_pdf, test, attempts)
+        name, caption = f"natijalar_{test['code']}.pdf", f"📊 <b>{esc(test['title'])}</b> — {len(attempts)} ta qatnashchi"
+    await bot.send_document(chat_id, BufferedInputFile(content, filename=name), caption=caption,
+                            protect_content=kind == "key")
+
+
 async def _send_sheet(message: Message, test: dict, names: list[str]) -> None:
-    content = await asyncio.to_thread(pdfs.answer_sheet_pdf, test, names)
-    await message.answer_document(
-        BufferedInputFile(content, filename=f"titul_{test['code']}.pdf"),
-        caption="📄 <b>Titul varaq</b> — chop etib o'quvchilarga tarqating.",
-    )
+    await send_pdf(message.bot, message.chat.id, test, "sheet")
 
 
 async def _send_key(message: Message, test: dict) -> None:
-    keys = await asyncio.to_thread(db.get_keys, test["id"])
-    content = await asyncio.to_thread(pdfs.answer_key_pdf, test, keys)
-    await message.answer_document(
-        BufferedInputFile(content, filename=f"kalit_{test['code']}.pdf"),
-        caption="🔑 <b>Javoblar kaliti</b> — faqat o'zingiz uchun (uzatib bo'lmaydi).",
-        protect_content=True,
-    )
+    await send_pdf(message.bot, message.chat.id, test, "key")
 
 
 # ---------- Testlarim ----------
@@ -549,12 +592,7 @@ async def send_key(callback: CallbackQuery) -> None:
 
 
 async def _send_results(message: Message, test: dict) -> None:
-    attempts = await asyncio.to_thread(db.list_attempts, test["id"])
-    content = await asyncio.to_thread(pdfs.results_pdf, test, attempts)
-    await message.answer_document(
-        BufferedInputFile(content, filename=f"natijalar_{test['code']}.pdf"),
-        caption=f"📊 <b>{esc(test['title'])}</b> — {len(attempts)} ta qatnashchi",
-    )
+    await send_pdf(message.bot, message.chat.id, test, "results")
 
 
 @dp.callback_query(F.data.startswith("res:"))
@@ -605,13 +643,21 @@ async def close_test(callback: CallbackQuery) -> None:
         await callback.answer("Natijalar allaqachon e'lon qilingan")
         await _render_card(callback, test)
         return
+    await callback.answer("📢 E'lon qilinmoqda…")
+    test["closed"] = 1
+    await _render_card(callback, test)
+    await announce_test(callback.bot, test, callback.message.chat.id)
+
+
+async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
+    """Natijalarni e'lon qilish (chat ham, ilova ham shuni chaqiradi)."""
     await asyncio.to_thread(db.set_closed, test["id"], True)
     test["closed"] = 1
-    await callback.answer("📢 E'lon qilinmoqda…")
-    await _render_card(callback, test)
-    sent = await _notify_participants(callback.bot, test)
-    await callback.message.answer(f"📨 Natijalar <b>{sent}</b> ta o'quvchiga yuborildi.")
-    await _send_results(callback.message, test)
+    sent = await _notify_participants(bot, test)
+    await bot.send_message(owner_chat, f"📨 <b>{esc(test['title'])}</b>: natijalar <b>{sent}</b> ta o'quvchiga yuborildi.",
+                           reply_markup=with_app(None, "📱 Statistikani ilovada ko'rish", t=test["id"]))
+    await send_pdf(bot, owner_chat, test, "results")
+    return sent
 
 
 async def _notify_participants(bot: Bot, test: dict) -> int:
@@ -636,7 +682,8 @@ async def _notify_participants(bot: Bot, test: dict) -> int:
             )
             text += f"\n\n✍️ Yozma:\n{written}"
         try:
-            await bot.send_message(attempt["tg_id"], text[:4000], reply_markup=_review_button(attempt["id"]))
+            await bot.send_message(attempt["tg_id"], text[:4000],
+                                   reply_markup=with_app(_review_button(attempt["id"]), "📱 Natija kartasi", r=attempt["id"]))
             sent += 1
             essay = essays.get(attempt["id"])
             if essay and essay.get("ai_result") and attempt["essay"] is not None:
@@ -1014,6 +1061,9 @@ async def check_code(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"📝 <b>{esc(test['title'])}</b>\n📋 {format_title(test['fmt'], test['count'])}", reply_markup=CANCEL_KB
     )
+    if app_url() and not match.group(2):
+        await message.answer("💡 Ilovada doirachalarni bosib yechish qulayroq:",
+                             reply_markup=with_app(None, "📱 Ilovada yechish", c=test["code"]))
     if len(keys) > 1:
         await state.set_state(Check.variant)
         await message.answer(
@@ -1298,39 +1348,59 @@ def _review_button(attempt_id: int) -> InlineKeyboardMarkup:
     return inline([[("🔍 Batafsil: har bir savol", f"rev:{attempt_id}")]])
 
 
+async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: str, answers: dict,
+                         essay_text: str | None, photos: list[str], essay_cost: float) -> dict | None:
+    """Javoblarni tekshirib saqlaydi, esseni navbatga qo'yadi, o'qituvchiga xabar beradi. Takroriy bo'lsa — None."""
+    keys = await asyncio.to_thread(db.get_keys, test["id"])
+    key = keys.get(variant) or next(iter(keys.values()))
+    result = grade(test["items"], key, answers)
+    try:
+        attempt = await asyncio.to_thread(db.save_attempt, test["id"], tg_id, name, variant, answers, result)
+    except sqlite3.IntegrityError:
+        return None
+    if test["fmt"] == "milliy":
+        status = ("pending" if essay_ai.enabled() else "manual") if (essay_text or photos) else "none"
+        await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
+        if essay_cost:
+            await asyncio.to_thread(db.add_essay_cost, attempt["id"], essay_cost)
+    correct = result["test_correct"] + result["written_correct"]
+    summary = (
+        f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
+        else f"{correct}/{result['auto_total']} ({fmt_num(percent(correct, result['auto_total']))}%)"
+    )
+    count = len(await asyncio.to_thread(db.list_attempts, test["id"]))
+    try:
+        await bot.send_message(
+            test["owner_id"],
+            f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
+            f"👤 {esc(name)} · {variant} variant — <b>{summary}</b>\n"
+            f"👥 Jami topshirdi: <b>{count}</b> ta",
+            reply_markup=with_app(inline([[("📋 Testni ochish", f"t:{test['id']}")]]), "📱 Ilovada ochish", t=test["id"]),
+        )
+    except Exception:
+        logger.warning("O'qituvchiga natija haqida xabar yuborilmadi")
+    return attempt
+
+
 async def _finish_check(message: Message, state: FSMContext, test: dict, answers: dict) -> None:
     data = await state.get_data()
     await state.clear()
-    tg_id = message.chat.id
     fresh = await asyncio.to_thread(db.get_test, test["id"])
     if not fresh or fresh["closed"]:
         await message.answer("🔒 Test yakunlangan yoki o'chirilgan, javob qabul qilinmadi.", reply_markup=MAIN_KB)
         return
-    keys = await asyncio.to_thread(db.get_keys, test["id"])
-    key = keys.get(data["variant"]) or next(iter(keys.values()))
-    result = grade(test["items"], key, answers)
-    try:
-        attempt = await asyncio.to_thread(db.save_attempt, test["id"], tg_id, data["name"], data["variant"], answers, result)
-    except sqlite3.IntegrityError:
+    essay_text, photos = data.get("essay_text"), data.get("essay_photos") or []
+    attempt = await record_attempt(message.bot, fresh, message.chat.id, data["name"], data["variant"], answers,
+                                   essay_text, photos, data.get("essay_cost") or 0.0)
+    if attempt is None:
         await message.answer(
             "ℹ️ Siz bu testga javob yuborgansiz.\n\n⏳ Natijalar o'qituvchi e'lon qilgandan keyin keladi.",
             reply_markup=MAIN_KB,
         )
         return
-
     essay_line = ""
     if test["fmt"] == "milliy":
-        essay_text, photos = data.get("essay_text"), data.get("essay_photos") or []
-        if essay_text or photos:
-            status = "pending" if essay_ai.enabled() else "manual"
-            essay_line = "📝 Esse: qabul qilindi\n"
-        else:
-            status = "none"
-            essay_line = "📝 Esse: yuborilmadi\n"
-        await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
-        if data.get("essay_cost"):
-            await asyncio.to_thread(db.add_essay_cost, attempt["id"], data["essay_cost"])
-
+        essay_line = "📝 Esse: qabul qilindi\n" if (essay_text or photos) else "📝 Esse: yuborilmadi\n"
     # Natija darhol ko'rsatilmaydi: o'qituvchi hamma topshirgach e'lon qiladi
     await message.answer(
         f"✅ <b>Javoblaringiz qabul qilindi!</b>\n{LINE}\n"
@@ -1340,23 +1410,6 @@ async def _finish_check(message: Message, state: FSMContext, test: dict, answers
         "⏳ Natijalar o'qituvchi e'lon qilgandan keyin shu yerga keladi.",
         reply_markup=MAIN_KB,
     )
-
-    correct = result["test_correct"] + result["written_correct"]
-    summary = (
-        f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
-        else f"{correct}/{result['auto_total']} ({fmt_num(percent(correct, result['auto_total']))}%)"
-    )
-    count = len(await asyncio.to_thread(db.list_attempts, test["id"]))
-    try:
-        await message.bot.send_message(
-            test["owner_id"],
-            f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
-            f"👤 {esc(data['name'])} · {data['variant']} variant — <b>{summary}</b>\n"
-            f"👥 Jami topshirdi: <b>{count}</b> ta",
-            reply_markup=inline([[("📋 Testni ochish", f"t:{test['id']}")]]),
-        )
-    except Exception:
-        logger.warning("O'qituvchiga natija haqida xabar yuborilmadi")
 
 
 @dp.callback_query(F.data.startswith("rev:"))
@@ -1436,35 +1489,29 @@ async def on_error(event: ErrorEvent) -> bool:
 
 # ---------- Ishga tushirish ----------
 
-async def _start_health_server() -> None:
-    """
-    Render Web Service port ochilishini talab qiladi — PORT berilgan bo'lsa,
-    kichik veb-server "Bot ishlayapti" deb javob beradi. Shu manzilni
-    UptimeRobot/cron-job.org har 10 daqiqada ochib tursa, bepul tarifda bot uxlamaydi.
-    """
-    port = os.getenv("PORT")
-    if not port:
-        return
-    from aiohttp import web
+async def _essay_notice_hook(test: dict, attempt: dict, score: float) -> None:
+    await _essay_saved_notice(BOT_INSTANCE, test, attempt, score)
 
-    async def health(_request: web.Request) -> web.Response:
-        return web.Response(text="Bot ishlayapti")
 
-    app = web.Application()
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", int(port)).start()
-    logger.info("Veb-server %s-portda ochildi", port)
+BOT_INSTANCE: Bot | None = None
 
 
 async def main() -> None:
     if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here":
         raise SystemExit("BOT_TOKEN topilmadi: .env faylida BOT_TOKEN=... ni BotFather tokeni bilan to'ldiring.")
-    await _start_health_server()  # avval port — Render uni darhol ko'rsin
+    global BOT_INSTANCE
     db.init()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    BOT_INSTANCE = bot
+    webapp.HOOKS.update(
+        record_attempt=lambda *args: record_attempt(bot, *args),
+        announce=lambda test, owner: announce_test(bot, test, owner),
+        send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
+        essay_notice=_essay_notice_hook,
+    )
+    port = os.getenv("PORT")
+    if port:  # avval port — Render uni darhol ko'rsin
+        await webapp.start(int(port))
     try:
         await bot.set_my_commands([
             BotCommand(command="start", description="Bosh menyu"),
@@ -1473,6 +1520,13 @@ async def main() -> None:
         ])
     except Exception:
         logger.warning("Buyruqlar ro'yxatini o'rnatib bo'lmadi", exc_info=True)
+    if app_url():
+        try:  # xabar maydoni yonidagi «Ochish» tugmasi — Mini App
+            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Ochish", web_app=WebAppInfo(url=app_url())))
+        except Exception:
+            logger.warning("Menyu tugmasini o'rnatib bo'lmadi", exc_info=True)
+    else:
+        logger.warning("WEBAPP_URL (https) yo'q — Mini App tugmasi o'rnatilmadi")
     logger.info("Bot ishga tushdi")
     worker = asyncio.create_task(essay_worker(bot))  # AI esse navbati
     try:

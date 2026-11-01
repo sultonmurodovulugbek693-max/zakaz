@@ -93,6 +93,8 @@ def init() -> None:
         test_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tests)")}
         if "essay_topic" not in test_columns:
             conn.execute("ALTER TABLE tests ADD COLUMN essay_topic TEXT")
+        if "theme" not in test_columns:  # Mini App natija kartasi dizayni
+            conn.execute("ALTER TABLE tests ADD COLUMN theme TEXT")
         conn.executescript(ESSAY_SCHEMA)
 
 
@@ -304,3 +306,21 @@ def add_essay_cost(attempt_id: int, cost: float) -> None:
 def retry_essay(attempt_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE essays SET status = 'pending', tries = 0, error = NULL WHERE attempt_id = ?", (attempt_id,))
+
+
+# ---------- Mini App ----------
+
+def set_theme(test_id: int, theme: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET theme = ? WHERE id = ?", (theme, test_id))
+
+
+def attempts_of_user(tg_id: int, limit: int = 50) -> list[dict]:
+    """O'quvchining topshirgan testlari (yangi birinchi)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT a.id, a.variant, a.created_at, t.code, t.title, t.fmt, t.closed, t.theme "
+            "FROM attempts a JOIN tests t ON t.id = a.test_id WHERE a.tg_id = ? ORDER BY a.id DESC LIMIT ?",
+            (tg_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
