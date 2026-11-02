@@ -104,6 +104,11 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .section-title { display: flex; justify-content: space-between; align-items: baseline; }
 .textq { display: grid; grid-template-columns: 42px 1fr; gap: 8px; align-items: center; }
 .textq b { color: var(--muted); font-size: 14px; }
+.wkey { display: grid; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.wkey:last-of-type { border-bottom: 0; }
+.syn { display: grid; gap: 6px; padding-left: 50px; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .25s, margin .3s; }
+.syn.open { max-height: 140px; opacity: 1; margin: 6px 0 4px; }
+.syn .input { padding: 9px 12px; font-size: 15px; border-style: dashed; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { border: 1.5px solid var(--line); background: var(--surface); border-radius: 99px; padding: 8px 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -600,18 +605,36 @@ VIEWS.create = async () => {
       ${st.variants.length < 4 ? `<button data-add="1">＋ Variant</button>` : ""}</div>
     <div class="card"><div class="field"><label for="quick">Tez kiritish</label><div class="row"><input class="input" id="quick" placeholder="abcdabcd… yoki 1a2b3c…" autocomplete="off"><button class="btn sm ghost" id="apply">To'ldirish</button></div></div></div>
     ${bubbleSheet(items, key)}
-    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">3 tagacha sinonim: | bilan</span></div>
-      <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wk" data-q="${i.label}" value="${esc(key[i.label] || "")}" placeholder="javob | sinonim" autocomplete="off"></div>`).join("")}</div>` : ""}
+    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">bosing — ma'nodoshlar ochiladi</span></div>
+      <div class="card">${texts.map(i => {
+        const parts = (key[i.label] || "").split("|").map(x => x.trim());
+        const open = parts.length > 1 && parts.slice(1).some(Boolean);
+        return `<div class="wkey" data-q="${i.label}">
+          <div class="textq"><b>${i.label}</b><input class="input wk-main" value="${esc(parts[0] || "")}" placeholder="To'g'ri javob" autocomplete="off"></div>
+          <div class="syn ${open ? "open" : ""}">
+            <input class="input wk-syn" value="${esc(parts[1] || "")}" placeholder="Ma'nodoshi (ixtiyoriy)" autocomplete="off">
+            <input class="input wk-syn" value="${esc(parts[2] || "")}" placeholder="Yana bir ma'nodoshi (ixtiyoriy)" autocomplete="off">
+          </div></div>`;
+      }).join("")}
+      <span class="muted small">O'quvchi uchta javobdan istalganini yozsa ham to'g'ri hisoblanadi. Katta-kichik harf, o'/oʻ farqi, ortiqcha bo'shliq va kirillcha yozuv xato hisoblanmaydi.</span></div>` : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
   </div>`;
   function collect() {
     const ti = document.getElementById("title"); if (ti) st.title = ti.value;
     const tp = document.getElementById("topic"); if (tp) st.topic = tp.value;
     const ct = document.getElementById("count"); if (ct) st.count = Math.max(5, Math.min(100, parseInt(ct.value) || 30));
-    document.querySelectorAll(".wk").forEach(x => { if (x.value.trim()) key[x.dataset.q] = x.value; else delete key[x.dataset.q]; });
+    document.querySelectorAll(".wkey").forEach(box => {
+      const parts = [box.querySelector(".wk-main"), ...box.querySelectorAll(".wk-syn")].map(x => x.value.replace(/\|/g, " ").trim()).filter(Boolean);
+      if (parts.length) key[box.dataset.q] = parts.join(" | "); else delete key[box.dataset.q];
+    });
   }
   function counter() { const n = items.filter(i => i.kind === "choice" && key[i.label]).length; document.getElementById("key-count").textContent = `${st.cur}: ${n} / ${items.filter(i => i.kind === "choice").length}`; }
   bindBubbles(key, counter); counter();
+  // Javob maydoni bosilganda — ostida 2 ta ma'nodosh maydoni ochiladi (ixtiyoriy)
+  document.querySelectorAll(".wkey .wk-main").forEach(input => input.addEventListener("focus", () => {
+    const syn = input.closest(".wkey").querySelector(".syn");
+    if (!syn.classList.contains("open")) { syn.classList.add("open"); haptic("select"); }
+  }));
   document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; st.variants = ["A"]; st.cur = "A"; haptic("select"); render(); });
   document.querySelectorAll("[data-mode]").forEach(x => x.onclick = () => { collect(); st.mode = x.dataset.mode; haptic("select"); render(); });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); render(); };

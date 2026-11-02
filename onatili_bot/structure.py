@@ -14,6 +14,7 @@ Hammasi qo'shilsa 100 ball: yopiq savollar 59,1 + yozma 16,9 + esse 24.
 """
 
 import re
+import unicodedata
 
 ESSAY_MAX = 24
 MAX_TEXT_OPTIONS = 3  # yozma savolga nechta to'g'ri javob (sinonim) kiritish mumkin
@@ -197,12 +198,49 @@ def normalize_punctuation(value: str) -> str:
     return "".join((value or "").translate(_APOSTROPHES).translate(_QUOTES).split())
 
 
+# O'zbek kirill → lotin (o'quvchi telefonda kirill klaviaturada yozib yuborishi mumkin)
+_CYRILLIC = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "ё": "yo", "ж": "j", "з": "z", "и": "i", "й": "y",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "x", "ч": "ch", "ш": "sh", "щ": "sh", "ъ": "'", "ы": "i", "ь": "", "э": "e", "ю": "yu",
+    "я": "ya", "ў": "o'", "қ": "q", "ғ": "g'", "ҳ": "h",
+}
+_CYRILLIC_VOWELS = set("аеёиоуэюяў")
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿­"))
+
+
+def _latin(text: str) -> str:
+    """Kirill harflarini lotinga o'giradi; "е" so'z boshida va unlidan keyin — "ye", "ц" so'z boshida — "s"."""
+    if not any("Ѐ" <= char <= "ӿ" for char in text):
+        return text
+    out = []
+    for index, char in enumerate(text):
+        before = text[index - 1] if index else " "
+        start = not before.isalpha()
+        if char == "е":
+            out.append("ye" if start or before in _CYRILLIC_VOWELS else "e")
+        elif char == "ц":
+            out.append("s" if start else "ts")
+        else:
+            out.append(_CYRILLIC.get(char, char))
+    return "".join(out)
+
+
 def normalize_text(value: str) -> str:
-    """Katta-kichik harf, o' / oʻ / o` farqi, tinish belgilari va ortiqcha bo'shliq hisobga olinmaydi."""
-    text = (value or "").lower().translate(_APOSTROPHES)
-    text = re.sub(r"[.,;:!?\"«»“”„()]", " ", text)
-    text = re.sub(r"\s*-\s*", "-", text)
-    return " ".join(text.split())
+    """
+    Yozma javobni solishtirishga tayyorlaydi — ehtimoliy "texnik" farqlar xato hisoblanmaydi:
+      • katta-kichik harf ("Go'zal" = "go'zal")
+      • o' / oʻ / o‘ / o` / o’ va g' ning barcha yozilishi
+      • kirill yozuvi ("гўзал" = "go'zal"), ko'rinmas belgilar, turli bo'shliqlar
+      • tinish belgilari, qavs, qo'shtirnoq, ortiqcha bo'shliq, chiziqcha atrofidagi bo'shliq
+    Imlo xatosi (harf tushib qolishi yoki almashishi) esa xato bo'lib qoladi — ona tilida imlo baholanadi.
+    """
+    text = unicodedata.normalize("NFKC", value or "").translate(_INVISIBLE).lower()
+    text = _latin(text).translate(_APOSTROPHES)
+    text = re.sub(r"[.,;:!?\"«»“”„()\[\]{}…]", " ", text)
+    text = re.sub(r"\s*[-–—−]\s*", "-", text)
+    text = " ".join(text.split())
+    return text.strip("-' ")
 
 
 def text_is_correct(student: str, correct: str) -> bool:
