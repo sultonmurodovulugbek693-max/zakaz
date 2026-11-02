@@ -15,7 +15,6 @@ import asyncio
 import html
 import logging
 import os
-import sqlite3
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -338,7 +337,7 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     result = grade(test["items"], key, answers)
     try:
         attempt = await asyncio.to_thread(db.save_attempt, test["id"], tg_id, name, variant, answers, result)
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:  # shu test uchun javob allaqachon bor (SQLite ham, PostgreSQL ham)
         return None
     if test["fmt"] == "milliy":
         status = ("pending" if essay_ai.enabled() else "manual") if (essay_text or photos) else "none"
@@ -517,6 +516,9 @@ async def main() -> None:
     if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here":
         raise SystemExit("BOT_TOKEN topilmadi: .env faylida BOT_TOKEN=... ni BotFather tokeni bilan to'ldiring.")
     db.init()
+    logger.info("Baza: %s", db.backend_name())
+    if not db.POSTGRES and os.getenv("RENDER"):
+        logger.warning("DIQQAT: Render'da SQLite ishlatilmoqda — har deployda ma'lumotlar O'CHADI. DATABASE_URL qo'ying!")
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     webapp.HOOKS.update(
         record_attempt=lambda *args, **kwargs: record_attempt(bot, *args, **kwargs),
@@ -551,3 +553,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+    

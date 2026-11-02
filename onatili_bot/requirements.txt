@@ -5,3 +5,5 @@ anthropic==2.3.0  # Claude bilan esse tekshirish (AI_PROVIDER=claude)
 opencv-python-headless==5.0.0.93  # titulni suratdan o'qish (OMR)
 numpy==2.5.4
 pillow==13.0.0
+psycopg[binary]==3.3.6  # PostgreSQL (DATABASE_URL berilganda)
+psycopg-pool==3.3.3

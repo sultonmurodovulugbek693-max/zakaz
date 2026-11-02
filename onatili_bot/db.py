@@ -1,130 +1,204 @@
-"""SQLite baza: testlar, variantlar (kalitlar) va o'quvchilar natijalari."""
+"""
+Baza: testlar, variantlar (kalitlar), natijalar, esselar, oflayn o'quvchilar, kanallar.
+
+Ikki rejim:
+  • DATABASE_URL (postgresql://...) berilgan bo'lsa — PostgreSQL. Productionda SHU kerak:
+    Render'da fayl tizimi vaqtinchalik, SQLite fayli har deployda o'chib ketadi.
+  • aks holda — SQLite fayli (DB_PATH), kompyuterda sinash uchun.
+
+Barcha so'rovlar "?" belgisi bilan yoziladi; PostgreSQL uchun avtomatik "%s" ga aylantiriladi.
+"""
 
 import json
+import os
 import random
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 
 from config import DB_PATH
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    tg_id      INTEGER PRIMARY KEY,
-    full_name  TEXT,
-    username   TEXT,
-    last_name_used TEXT,
-    created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS tests (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    code       TEXT UNIQUE NOT NULL,
-    owner_id   INTEGER NOT NULL,
-    title      TEXT NOT NULL,
-    fmt        TEXT NOT NULL,
-    count      INTEGER NOT NULL DEFAULT 0,
-    items      TEXT NOT NULL,
-    closed     INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS variants (
-    test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
-    name    TEXT NOT NULL,
-    answers TEXT NOT NULL,
-    PRIMARY KEY (test_id, name)
-);
-CREATE TABLE IF NOT EXISTS attempts (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    test_id         INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
-    tg_id           INTEGER NOT NULL,
-    student_name    TEXT NOT NULL,
-    variant         TEXT NOT NULL,
-    answers         TEXT NOT NULL,
-    test_correct    INTEGER NOT NULL,
-    written_correct INTEGER NOT NULL,
-    auto_total      INTEGER NOT NULL,
-    wrong           TEXT NOT NULL,
-    points          REAL NOT NULL DEFAULT 0,
-    essay           REAL,
-    created_at      TEXT,
-    UNIQUE (test_id, tg_id)
-);
-"""
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
+if POSTGRES:
+    import psycopg
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
 
-# Esse (45-savol): matn yoki qo'lyozma rasmlari (Telegram file_id), AI bahosi.
-# status: none — esse yuborilmagan; manual — AI o'chiq, o'qituvchi baholaydi;
-#         pending — AI navbatida; graded — AI baholadi; failed — AI baholay olmadi
-ESSAY_SCHEMA = """
-CREATE TABLE IF NOT EXISTS essays (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id INTEGER UNIQUE NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
-    text       TEXT,
-    photos     TEXT NOT NULL DEFAULT '[]',
-    status     TEXT NOT NULL,
-    ai_score   REAL,
-    ai_result  TEXT,
-    provider   TEXT,
-    cost       REAL NOT NULL DEFAULT 0,
-    tries      INTEGER NOT NULL DEFAULT 0,
-    error      TEXT,
-    created_at TEXT,
-    graded_at  TEXT
-);
-"""
+    IntegrityError = (psycopg.errors.IntegrityError, sqlite3.IntegrityError)
+else:
+    IntegrityError = (sqlite3.IntegrityError,)
 
+# Ustun turlari: Telegram ID'lar 32 bitga sig'maydi (BIGINT); kasr ball — aniq (DOUBLE PRECISION)
+ID = "BIGSERIAL PRIMARY KEY" if POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+BIG = "BIGINT" if POSTGRES else "INTEGER"
+FLOAT = "DOUBLE PRECISION" if POSTGRES else "REAL"
 
-# Oflayn test o'quvchilari: raqam titul kodida bosiladi, skaner varaq kimniki ekanini shundan taniydi
-STUDENT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS students (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    test_id    INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
-    number     INTEGER NOT NULL,
-    name       TEXT NOT NULL,
-    variant    TEXT NOT NULL,
-    attempt_id INTEGER REFERENCES attempts(id) ON DELETE SET NULL,
-    UNIQUE (test_id, number)
-);
-"""
+SCHEMA = [
+    f"""CREATE TABLE IF NOT EXISTS users (
+        tg_id          {BIG} PRIMARY KEY,
+        full_name      TEXT,
+        username       TEXT,
+        last_name_used TEXT,
+        created_at     TEXT
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS tests (
+        id          {ID},
+        code        TEXT UNIQUE NOT NULL,
+        owner_id    {BIG} NOT NULL,
+        title       TEXT NOT NULL,
+        fmt         TEXT NOT NULL,
+        count       INTEGER NOT NULL DEFAULT 0,
+        items       TEXT NOT NULL,
+        closed      INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT,
+        essay_topic TEXT,
+        theme       TEXT,
+        mode        TEXT NOT NULL DEFAULT 'online'
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS variants (
+        test_id {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        name    TEXT NOT NULL,
+        answers TEXT NOT NULL,
+        PRIMARY KEY (test_id, name)
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS attempts (
+        id              {ID},
+        test_id         {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        tg_id           {BIG} NOT NULL,
+        student_name    TEXT NOT NULL,
+        variant         TEXT NOT NULL,
+        answers         TEXT NOT NULL,
+        test_correct    INTEGER NOT NULL,
+        written_correct INTEGER NOT NULL,
+        auto_total      INTEGER NOT NULL,
+        wrong           TEXT NOT NULL,
+        points          {FLOAT} NOT NULL DEFAULT 0,
+        essay           {FLOAT},
+        created_at      TEXT,
+        UNIQUE (test_id, tg_id)
+    )""",
+    # Esse (45-savol): matn yoki qo'lyozma rasmlari (Telegram file_id), AI bahosi.
+    # status: none — esse yo'q; manual — AI o'chiq; pending — AI navbatida; graded — baholandi; failed — xato
+    f"""CREATE TABLE IF NOT EXISTS essays (
+        id         {ID},
+        attempt_id {BIG} UNIQUE NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+        text       TEXT,
+        photos     TEXT NOT NULL DEFAULT '[]',
+        status     TEXT NOT NULL,
+        ai_score   {FLOAT},
+        ai_result  TEXT,
+        provider   TEXT,
+        cost       {FLOAT} NOT NULL DEFAULT 0,
+        tries      INTEGER NOT NULL DEFAULT 0,
+        error      TEXT,
+        created_at TEXT,
+        graded_at  TEXT
+    )""",
+    # Oflayn test o'quvchilari: raqam titul kodida bosiladi, skaner varaq kimniki ekanini shundan taniydi
+    f"""CREATE TABLE IF NOT EXISTS students (
+        id         {ID},
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        number     INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        variant    TEXT NOT NULL,
+        attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
+        UNIQUE (test_id, number)
+    )""",
+    # Majburiy obuna kanallari (admin bot ichidan qo'shadi)
+    f"""CREATE TABLE IF NOT EXISTS channels (
+        chat_id  {BIG} PRIMARY KEY,
+        title    TEXT NOT NULL,
+        url      TEXT NOT NULL,
+        added_by {BIG},
+        added_at TEXT
+    )""",
+]
 
-# Majburiy obuna kanallari (admin bot ichidan qo'shadi)
-CHANNEL_SCHEMA = """
-CREATE TABLE IF NOT EXISTS channels (
-    chat_id  INTEGER PRIMARY KEY,
-    title    TEXT NOT NULL,
-    url      TEXT NOT NULL,
-    added_by INTEGER,
-    added_at TEXT
-);
-"""
+# Eski bazalar uchun keyin qo'shilgan ustunlar
+MIGRATIONS = [
+    ("attempts", "points", f"{FLOAT} NOT NULL DEFAULT 0"),
+    ("tests", "essay_topic", "TEXT"),
+    ("tests", "theme", "TEXT"),
+    ("tests", "mode", "TEXT NOT NULL DEFAULT 'online'"),
+]
 
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+# ---------- Ulanish ----------
+
+class _Connection:
+    """sqlite3 va psycopg uchun bitta ko'rinish: execute("... ? ...", params) -> qatorlar dict ko'rinishida."""
+
+    def __init__(self, raw, postgres: bool):
+        self.raw, self.postgres = raw, postgres
+
+    def execute(self, sql: str, params: tuple | list = ()):
+        if self.postgres:
+            sql = sql.replace("?", "%s")
+        return self.raw.execute(sql, params)
+
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ConnectionPool(
+                DATABASE_URL, min_size=1, max_size=8, open=True, timeout=30,
+                kwargs={"row_factory": dict_row, "autocommit": False},
+                check=ConnectionPool.check_connection,  # uzilib qolgan ulanish qayta ochiladi
+            )
+        return _pool
+
+
+@contextmanager
+def connect():
+    """Tranzaksiya: muvaffaqiyatli bo'lsa saqlanadi, xato bo'lsa bekor qilinadi."""
+    if POSTGRES:
+        with _get_pool().connection() as raw:  # chiqishda commit / xatoda rollback
+            yield _Connection(raw, True)
+        return
+    raw = sqlite3.connect(DB_PATH)
+    raw.row_factory = sqlite3.Row
+    raw.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield _Connection(raw, False)
+        raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+
+
+def _row(row) -> dict | None:
+    return dict(row) if row is not None else None
 
 
 def init() -> None:
     with connect() as conn:
-        conn.executescript(SCHEMA)
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)")}
-        if "points" not in columns:  # eski baza — ball ustuni keyin qo'shilgan
-            conn.execute("ALTER TABLE attempts ADD COLUMN points REAL NOT NULL DEFAULT 0")
-        test_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tests)")}
-        if "essay_topic" not in test_columns:
-            conn.execute("ALTER TABLE tests ADD COLUMN essay_topic TEXT")
-        if "theme" not in test_columns:  # Mini App natija kartasi dizayni
-            conn.execute("ALTER TABLE tests ADD COLUMN theme TEXT")
-        if "mode" not in test_columns:  # online — ilovada; offline — qog'oz titul + skaner
-            conn.execute("ALTER TABLE tests ADD COLUMN mode TEXT NOT NULL DEFAULT 'online'")
-        conn.executescript(STUDENT_SCHEMA)
-        conn.executescript(ESSAY_SCHEMA)
-        conn.executescript(CHANNEL_SCHEMA)
+        for statement in SCHEMA:
+            conn.execute(statement)
+        for table, column, ddl in MIGRATIONS:
+            if POSTGRES:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
+            else:
+                columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def backend_name() -> str:
+    return "PostgreSQL" if POSTGRES else f"SQLite ({DB_PATH})"
 
 
 # ---------- Foydalanuvchilar ----------
@@ -151,7 +225,7 @@ def set_last_name_used(tg_id: int, name: str) -> None:
 
 # ---------- Testlar ----------
 
-def _test_dict(row: sqlite3.Row | None) -> dict | None:
+def _test_dict(row) -> dict | None:
     if row is None:
         return None
     test = dict(row)
@@ -166,12 +240,11 @@ def create_test(owner_id: int, title: str, fmt: str, count: int, items: list[dic
             code = str(random.randint(10000, 99999))
             if not conn.execute("SELECT 1 FROM tests WHERE code = ?", (code,)).fetchone():
                 break
-        cursor = conn.execute(
+        test_id = conn.execute(
             "INSERT INTO tests (code, owner_id, title, fmt, count, items, created_at, essay_topic) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (code, owner_id, title, fmt, count, json.dumps(items, ensure_ascii=False), _now(), essay_topic),
-        )
-        test_id = cursor.lastrowid
+        ).fetchone()["id"]
         for name, answers in keys.items():
             conn.execute(
                 "INSERT INTO variants (test_id, name, answers) VALUES (?, ?, ?)",
@@ -219,7 +292,7 @@ def get_keys(test_id: int) -> dict[str, dict[str, str]]:
 
 # ---------- Natijalar ----------
 
-def _attempt_dict(row: sqlite3.Row | None) -> dict | None:
+def _attempt_dict(row) -> dict | None:
     if row is None:
         return None
     attempt = dict(row)
@@ -230,14 +303,13 @@ def _attempt_dict(row: sqlite3.Row | None) -> dict | None:
 
 def save_attempt(test_id: int, tg_id: int, student_name: str, variant: str, answers: dict, result: dict) -> dict:
     with connect() as conn:
-        cursor = conn.execute(
+        row = conn.execute(
             "INSERT INTO attempts (test_id, tg_id, student_name, variant, answers, test_correct, written_correct, "
-            "auto_total, wrong, points, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "auto_total, wrong, points, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (test_id, tg_id, student_name, variant, json.dumps(answers, ensure_ascii=False),
              result["test_correct"], result["written_correct"], result["auto_total"],
              json.dumps(result["wrong"]), result["points"], _now()),
-        )
-        row = conn.execute("SELECT * FROM attempts WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        ).fetchone()
     return _attempt_dict(row)
 
 
@@ -266,7 +338,7 @@ def set_essay(attempt_id: int, score: float) -> None:
 
 # ---------- Esselar ----------
 
-def _essay_dict(row: sqlite3.Row | None) -> dict | None:
+def _essay_dict(row) -> dict | None:
     if row is None:
         return None
     essay = dict(row)
@@ -322,7 +394,7 @@ def essay_failed(attempt_id: int, error: str, give_up: bool) -> None:
     with connect() as conn:
         conn.execute(
             "UPDATE essays SET tries = tries + 1, error = ?, "
-            "status = CASE WHEN ? THEN 'failed' ELSE status END WHERE attempt_id = ?",
+            "status = CASE WHEN ? = 1 THEN 'failed' ELSE status END WHERE attempt_id = ?",
             (error[:500], int(give_up), attempt_id),
         )
 
@@ -337,11 +409,22 @@ def retry_essay(attempt_id: int) -> None:
         conn.execute("UPDATE essays SET status = 'pending', tries = 0, error = NULL WHERE attempt_id = ?", (attempt_id,))
 
 
+def set_essay_photos(attempt_id: int, photos: list[str], status: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essays SET photos = ?, status = ?, tries = 0, error = NULL WHERE attempt_id = ?",
+                     (json.dumps(photos), status, attempt_id))
+
+
 # ---------- Mini App ----------
 
 def set_theme(test_id: int, theme: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE tests SET theme = ? WHERE id = ?", (theme, test_id))
+
+
+def set_mode(test_id: int, mode: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET mode = ? WHERE id = ?", (mode, test_id))
 
 
 def attempts_of_user(tg_id: int, limit: int = 50) -> list[dict]:
@@ -379,9 +462,8 @@ def remove_channel(chat_id: int) -> None:
 def stats() -> dict:
     with connect() as conn:
         return {
-            "users": conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
-            "tests": conn.execute("SELECT COUNT(*) FROM tests").fetchone()[0],
-            "attempts": conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],
+            name: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+            for name, table in (("users", "users"), ("tests", "tests"), ("attempts", "attempts"))
         }
 
 
@@ -394,7 +476,8 @@ def offline_tg_id(test_id: int, number: int) -> int:
 
 def list_students(test_id: int) -> list[dict]:
     with connect() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM students WHERE test_id = ? ORDER BY number", (test_id,))]
+        return [dict(r) for r in conn.execute("SELECT * FROM students WHERE test_id = ? ORDER BY number",
+                                              (test_id,)).fetchall()]
 
 
 def get_student(test_id: int, student_id: int | None = None, number: int | None = None) -> dict | None:
@@ -403,12 +486,13 @@ def get_student(test_id: int, student_id: int | None = None, number: int | None 
             row = conn.execute("SELECT * FROM students WHERE id = ? AND test_id = ?", (student_id, test_id)).fetchone()
         else:
             row = conn.execute("SELECT * FROM students WHERE number = ? AND test_id = ?", (number, test_id)).fetchone()
-    return dict(row) if row else None
+    return _row(row)
 
 
 def add_students(test_id: int, names: list[str], variants: list[str]) -> list[dict]:
     with connect() as conn:
-        start = conn.execute("SELECT COALESCE(MAX(number), 0) FROM students WHERE test_id = ?", (test_id,)).fetchone()[0]
+        start = conn.execute("SELECT COALESCE(MAX(number), 0) AS n FROM students WHERE test_id = ?",
+                             (test_id,)).fetchone()["n"]
         for index, (name, variant) in enumerate(zip(names, variants), start=1):
             conn.execute("INSERT INTO students (test_id, number, name, variant) VALUES (?, ?, ?, ?)",
                          (test_id, start + index, name, variant))
@@ -440,14 +524,3 @@ def delete_attempt(attempt_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE students SET attempt_id = NULL WHERE attempt_id = ?", (attempt_id,))
         conn.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,))
-
-
-def set_mode(test_id: int, mode: str) -> None:
-    with connect() as conn:
-        conn.execute("UPDATE tests SET mode = ? WHERE id = ?", (mode, test_id))
-
-
-def set_essay_photos(attempt_id: int, photos: list[str], status: str) -> None:
-    with connect() as conn:
-        conn.execute("UPDATE essays SET photos = ?, status = ?, tries = 0, error = NULL WHERE attempt_id = ?",
-                     (json.dumps(photos), status, attempt_id))
