@@ -186,7 +186,7 @@ def answer_sheet_pdf(test: dict, variant_names: list[str]) -> bytes:
 def _footer(c: canvas.Canvas, width: float, test: dict) -> None:
     c.setFont("Sans", 7)
     c.setFillColor(GRID)
-    c.drawCentredString(width / 2, 8 * mm, f"Natijani bilish: botga test kodi ({test['code']}) va javoblaringizni yuboring")
+    c.drawCentredString(width / 2, 8 * mm, f"Ona tili test boti · test kodi {test['code']} · varaqni o'qituvchiga topshiring")
     c.setFillColor(INK)
 
 
@@ -223,14 +223,30 @@ def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: floa
     c.drawRightString(width - margin, y, f"Test kodi: {test['code']}")
     if student:
         c.setFont("Sans-Bold", 11)
-        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  № {student['number']:03d}")
+        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  ID {student['number']:03d}")
         c.setFont("Sans-Bold", 10)
-    y -= 8 * mm
-    c.setFont("Sans", 8.5)
-    for rule in ESSAY_RULES:
-        c.drawString(margin, y, "• " + rule)
-        y -= 4.6 * mm
-    y -= 3 * mm
+    y -= 7 * mm
+    topic = (test.get("essay_topic") or "").strip()
+    if topic:
+        # O'qituvchi kiritgan esse mavzusi (45-savol vaziyati) — ramka ichida
+        style = ParagraphStyle("topic", fontName="Sans", fontSize=10.5, leading=14.5, textColor=INK)
+        para = Paragraph("<b>Mavzu:</b> " + _esc(topic).replace("\n", "<br/>"), style)
+        box_width = width - 2 * margin
+        _, text_height = para.wrap(box_width - 8 * mm, 200 * mm)
+        box_height = text_height + 6 * mm
+        c.setFillColor(LIGHT)
+        c.setStrokeColor(ACCENT)
+        c.setLineWidth(0.8)
+        c.roundRect(margin, y - box_height, box_width, box_height, 2 * mm, stroke=1, fill=1)
+        para.drawOn(c, margin + 4 * mm, y - box_height + 3 * mm)
+        y -= box_height + 5 * mm
+    else:
+        c.setFont("Sans-Bold", 10)
+        c.drawString(margin, y - 2, "Mavzu:")
+        c.setStrokeColor(GRID)
+        c.line(margin + 16 * mm, y - 3, width - margin, y - 3)
+        y -= 10 * mm
+    y -= 1 * mm
     c.setStrokeColor(GRID)
     c.setLineWidth(0.5)
     while y > 16 * mm:

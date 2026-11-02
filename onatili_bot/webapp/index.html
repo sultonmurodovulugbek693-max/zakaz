@@ -805,7 +805,7 @@ function compressImage(file, max = 2000) {
 
 function rosterHTML(d) {
   const vs = d.test.variants;
-  const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank">${String(s.number).padStart(3, "0")}</span>
+  const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${String(s.number).padStart(3, "0")}</span>
     <span><b>${esc(s.name)}</b><small>${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
     <span class="row" style="gap:6px"><button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button><button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
   return `<div class="card"><h2>O'quvchilarni qo'shish</h2>
@@ -813,7 +813,10 @@ function rosterHTML(d) {
     <div class="field"><label>Variantlar</label><div class="chips" id="vmode">
       ${vs.length > 1 ? `<button type="button" class="chip on" data-vm="cycle">Navbat bilan (${vs.join(", ")})</button><button type="button" class="chip" data-vm="random">Aralash</button>` : ""}
       ${vs.map((v, i) => `<button type="button" class="chip ${vs.length === 1 && !i ? "on" : ""}" data-vm="${v}">Hammasi ${v}</button>`).join("")}</div></div>
-    <button class="btn block" id="add-st">＋ Ro'yxatga qo'shish</button></div>
+    <button class="btn block" id="add-st">＋ Ro'yxatga qo'shish</button>
+    <label class="btn ghost block" for="xlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
+    <input type="file" id="xlsx" accept=".xlsx,.csv,.txt" hidden>
+    <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida), variant ustuni ixtiyoriy (A, B, C, D). Har o'quvchiga ID beriladi: 001, 002, …</span></div>
     <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div>Hali o'quvchi yo'q.<br>Ismlarni yuqoriga yozing — har biriga shaxsiy titul chiqadi.</div>`}</div>`;
 }
 
@@ -828,6 +831,17 @@ function bindRoster(d, id) {
     add.disabled = true;
     try { await api(`/api/teacher/test/${id}/students`, { names, mode: vmode }); haptic("success"); toast(`✅ ${names.length} ta o'quvchi qo'shildi`); render(); }
     catch (e) { toast(e.message); add.disabled = false; }
+  };
+  const xlsx = document.getElementById("xlsx");
+  if (xlsx) xlsx.onchange = async () => {
+    const file = xlsx.files[0]; if (!file) return;
+    const label = document.querySelector('label[for="xlsx"]'); label.textContent = "Yuklanmoqda…";
+    try {
+      const form = new FormData(); form.append("file", file, file.name); form.append("mode", vmode);
+      const r = await apiForm(`/api/teacher/test/${id}/students/import`, form);
+      haptic("success"); toast(`✅ ${r.added} ta o'quvchi qo'shildi${r.with_variant ? ` (${r.with_variant} tasining varianti fayldan)` : ""}`); render();
+    } catch (e) { toast(e.message); haptic("error"); label.textContent = "📥 Excel'dan yuklash (.xlsx, .csv)"; }
+    xlsx.value = "";
   };
   document.querySelectorAll("[data-var-of]").forEach(x => x.onclick = async () => {
     const next = vs[(vs.indexOf(x.textContent.trim()) + 1) % vs.length];
@@ -897,10 +911,12 @@ function showReview(r, d, allItems, box) {
   let variant = r.variant;
   const free = d.students.filter(s => !s.scanned);
   const who = r.student
-    ? `<div class="row between"><span><b>№ ${String(r.student.number).padStart(3, "0")} · ${esc(r.student.name)}</b><br><small class="muted">titul kodi bo'yicha topildi</small></span><span class="pill-tag done">✓</span></div>
+    ? `<div class="row between"><span><b>№ ${String(r.student.number).padStart(3, "0")} · ${esc(r.student.name)}</b><br><small class="muted">${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
        ${r.student.scanned ? `<span class="pill-tag wait">⚠️ Avval skanerlangan — saqlasangiz almashtiriladi</span>` : ""}`
     : `${r.name_image ? `<img src="${r.name_image}" alt="Ism katagi" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
-       <span class="muted small">${r.code_status === "blank" ? "Bo'sh titul — o'quvchini tanlang yoki ismini yozing" : "Titul kodi o'qilmadi — o'quvchini tanlang"}</span>
+       <span class="muted small">${r.id_source === "unknown" ? `⚠️ ID ${String(r.id_read).padStart(3, "0")} o'qildi, lekin ro'yxatda bunday o'quvchi yo'q — tanlang yoki ismini yozing`
+         : r.id_status === "unclear" ? "⚠️ ID doirachalari noaniq bo'yalgan — o'quvchini tanlang"
+         : r.code_status === "blank" ? "Bo'sh titul, ID bo'yalmagan — o'quvchini tanlang yoki ismini yozing" : "Titul kodi o'qilmadi — o'quvchini tanlang"}</span>
        ${free.length ? `<select class="input" id="pick"><option value="">— Ro'yxatdan tanlang —</option>${free.map(s => `<option value="${s.id}">№ ${s.number} · ${esc(s.name)}</option>`).join("")}</select>` : ""}
        <input class="input" id="newname" placeholder="yoki yangi o'quvchi ismi">`;
   box.innerHTML = `

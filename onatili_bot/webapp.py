@@ -10,6 +10,8 @@ bot.py dan HOOKS orqali beriladi — bu modul botni import qilmaydi.
 
 import asyncio
 import base64
+import csv
+import io
 import json
 import random
 import logging
@@ -500,12 +502,90 @@ async def students_add(request: web.Request) -> web.Response:
     if not names:
         raise ApiError(400, "Ism-familiyalarni yozing (har biri yangi qatorda)")
     existing = await run(db.list_students, test["id"])
-    if len(existing) + len(names) > 2000:
-        raise ApiError(400, "Bitta testda ko'pi bilan 2000 o'quvchi")
+    if len(existing) + len(names) > sheet.MAX_STUDENTS:
+        raise ApiError(400, f"Bitta testda ko'pi bilan {sheet.MAX_STUDENTS} o'quvchi (ID 001–999)")
     variants = list(await run(db.get_keys, test["id"]))
     chosen = assign_variants(len(names), variants, str(payload.get("mode") or "cycle"), start=len(existing))
     students = await run(db.add_students, test["id"], names, chosen)
     return ok({"students": [student_view(s) for s in students]})
+
+
+HEADER_WORDS = ("ism", "familiya", "f.i.sh", "fish", "f.i.o", "name", "o'quvchi", "oquvchi", "talaba", "№", "variant")
+
+
+def parse_roster(data: bytes, filename: str, variant_names: list[str]) -> list[tuple[str, str | None]]:
+    """
+    Excel (.xlsx) yoki CSV ro'yxat → [(ism-familiya, variant yoki None)].
+    Sarlavha qatori, tartib raqami ustuni va bo'sh qatorlar o'tkazib yuboriladi; "Familiya" va "Ism"
+    alohida ustunlarda bo'lsa — birlashtiriladi; A/B/C/D katakchasi — variant.
+    """
+    name = (filename or "").lower()
+    if name.endswith(".xlsx"):
+        import openpyxl
+        try:
+            book = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        except Exception:
+            raise ApiError(400, "Excel faylini ochib bo'lmadi — .xlsx formatida saqlang")
+        rows = [list(row) for row in book.active.iter_rows(values_only=True)]
+    elif name.endswith((".csv", ".txt")):
+        for encoding in ("utf-8-sig", "cp1251"):
+            try:
+                text = data.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ApiError(400, "Faylni o'qib bo'lmadi")
+        delimiter = ";" if text.count(";") > text.count(",") else ","
+        rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+    elif name.endswith(".xls"):
+        raise ApiError(400, "Eski .xls formati — Excel'da «Save as → .xlsx» qilib qayta yuklang")
+    else:
+        raise ApiError(400, "Faqat Excel (.xlsx) yoki CSV fayl")
+
+    result = []
+    for row in rows:
+        cells = [" ".join(str(cell).split()) for cell in row if cell is not None and str(cell).strip()]
+        if not cells:
+            continue
+        lowered = " ".join(cells).lower()
+        if any(word in lowered for word in HEADER_WORDS) and not result and len(lowered) < 80:
+            continue  # sarlavha qatori
+        variant = next((cell.upper() for cell in cells if cell.upper() in variant_names and len(cell) == 1), None)
+        words = [cell for cell in cells
+                 if not cell.replace(".", "").isdigit() and not (len(cell) == 1 and cell.upper() in "ABCDEF")]
+        full = " ".join(words[:3])[:60]
+        if len(full) >= 3:
+            result.append((full, variant))
+    return result
+
+
+async def students_import(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Fayl yuborilmadi")
+    field = form.get("file")
+    if field is None or not hasattr(field, "file"):
+        raise ApiError(400, "Fayl yuborilmadi")
+    data = field.file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise ApiError(400, "Fayl juda katta (5 MB gacha)")
+    variants = list(await run(db.get_keys, test["id"]))
+    parsed = await run(parse_roster, data, field.filename, variants)
+    if not parsed:
+        raise ApiError(400, "Faylda ism-familiya topilmadi — birinchi ustunda F.I.Sh. bo'lsin")
+    existing = await run(db.list_students, test["id"])
+    if len(existing) + len(parsed) > sheet.MAX_STUDENTS:
+        raise ApiError(400, f"Bitta testda ko'pi bilan {sheet.MAX_STUDENTS} o'quvchi")
+    auto = assign_variants(len(parsed), variants, str(form.get("mode") or "cycle"), start=len(existing))
+    names = [n for n, _ in parsed]
+    chosen = [v or auto[i] for i, (_, v) in enumerate(parsed)]
+    students = await run(db.add_students, test["id"], names, chosen)
+    return ok({"students": [student_view(s) for s in students], "added": len(names),
+               "with_variant": sum(1 for _, v in parsed if v)})
 
 
 async def student_update(request: web.Request) -> web.Response:
@@ -589,8 +669,14 @@ async def scan(request: web.Request) -> web.Response:
             logger.exception("Skaner xatosi")
         raise ApiError(422, message)
 
+    # O'quvchi: avval titul pastidagi kod (shaxsiy titul), bo'lmasa o'quvchi bo'yagan ID doirachalari
     number = sheet.decode_number(result["sheet_code"])
+    id_source = "code" if number else None
+    if not number and result.get("sheet_number_status") == "ok":
+        number, id_source = result["sheet_number"], "bubbles"
     student = await run(db.get_student, test["id"], None, number) if number else None
+    if number and not student:
+        id_source = "unknown"  # ID o'qildi, lekin ro'yxatda bunday o'quvchi yo'q
     variant = result["variant"] or (student["variant"] if student else None) or (variants[0] if len(variants) == 1 else None)
     written, ai_note = {}, None
     labels = [i["label"] for i in text_items(test["items"])]
@@ -604,7 +690,9 @@ async def scan(request: web.Request) -> web.Response:
             ai_note = "AI o'chiq — yozma javoblarni rasmga qarab o'zingiz yozing"
     return ok({
         "student": student_view(student) if student else None,
-        "code_status": "ok" if number else ("blank" if result["sheet_code"] == 0 else "unclear"),
+        "code_status": "ok" if student else ("blank" if result["sheet_code"] == 0 else "unclear"),
+        "id_source": id_source, "id_read": number,
+        "id_status": result.get("sheet_number_status"),
         "variant": variant, "variant_read": result["variant"],
         "questions": [{"label": q["label"], "chosen": q["chosen"], "status": q["status"]} for q in result["questions"]],
         "written": written, "written_image": _png_data_url(written_png), "name_image": result["name_image"],
@@ -704,6 +792,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/students", students_list)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students", students_add)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/{student_id:\\d+}", student_update)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/import", students_import)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/save", scan_save)
