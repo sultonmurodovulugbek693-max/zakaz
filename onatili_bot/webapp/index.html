@@ -595,8 +595,6 @@ VIEWS.create = async () => {
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
-    <div class="section-title"><h2>Natija kartasi dizayni</h2><span class="muted small">${esc(THEMES[st.theme][0])}</span></div>
-    <div class="card">${themePicker(st.theme, id => { st.theme = id; collect(); render(); })}</div>
     <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
     <div class="tabs">${st.variants.map(v => `<button class="${v === st.cur ? "on" : ""}" data-var="${v}">${v} variant</button>`).join("")}
       ${st.variants.length < 4 ? `<button data-add="1">＋ Variant</button>` : ""}</div>
