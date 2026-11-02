@@ -40,6 +40,8 @@ VARIANT_TOP = 132
 ID_TOP, ID_ROW, ID_X0, ID_STEP, ID_R = 166, 15.5, 142, 18, 5.6
 ID_ROWS = ("Yuzlik", "O'nlik", "Birlik")
 MAX_STUDENTS = 999
+BLOCK_ROWS = 5          # savollar 5 tadan blok; blok burchaklarida qora kvadratcha
+ANCHOR_SIZE = 6
 NAME_AREA = (100, 86, 392, 110)  # ism katagi (tepadan) — skanerda rasm qilib ko'rsatiladi
 
 INK = colors.HexColor("#1f2933")
@@ -97,13 +99,34 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     choices = choice_items(test["items"])
     columns, rows = _choice_grid(len(choices))
     column_width = (RIGHT - LEFT) / columns
-    for index, item in enumerate(choices):
-        column, row = divmod(index, rows)
+
+    # Blok belgilari: har ustundagi har 5 savollik blok burchaklarida qora kvadratcha (Chittak 7-versiya).
+    # Skaner har doirachani o'z blokining 4 belgisi orasida joylashtiradi — bukilgan qog'ozda ham aniq.
+    def row_y(row: int) -> float:
+        return H - (QUESTIONS_TOP + row * ROW_STEP)
+
+    for column in range(columns):
+        column_items = choices[column * rows:(column + 1) * rows]
+        if not column_items:
+            continue
         x0 = LEFT + column * column_width
-        y = H - (QUESTIONS_TOP + row * ROW_STEP)
-        for option in range(item["options"]):
-            bubbles.append({"page": 1, "kind": "single", "ref": item["label"], "label": item["label"],
-                            "letter": LETTERS[option], "x": x0 + 32 + option * LETTER_STEP, "y": y, "r": BUBBLE_R})
+        widest = max(item["options"] for item in column_items)
+        left_x, right_x = x0 + 32 - BUBBLE_R - 8, x0 + 32 + (widest - 1) * LETTER_STEP + BUBBLE_R + 8
+        count = len(column_items)
+        boundaries = [row_y(0) + ROW_STEP / 2]
+        boundaries += [(row_y(r - 1) + row_y(r)) / 2 for r in range(BLOCK_ROWS, count, BLOCK_ROWS)]
+        boundaries.append(row_y(count - 1) - ROW_STEP / 2)
+        for k, y in enumerate(boundaries):
+            for side, x in (("L", left_x), ("R", right_x)):
+                bubbles.append({"page": 1, "kind": "anchor", "ref": "anchor", "letter": f"c{column}b{k}{side}",
+                                "x": x, "y": y, "r": ANCHOR_SIZE / 2})
+        for row, item in enumerate(column_items):
+            block = row // BLOCK_ROWS
+            corners = [f"c{column}b{block}L", f"c{column}b{block}R", f"c{column}b{block + 1}R", f"c{column}b{block + 1}L"]
+            for option in range(item["options"]):
+                bubbles.append({"page": 1, "kind": "single", "ref": item["label"], "label": item["label"],
+                                "letter": LETTERS[option], "x": x0 + 32 + option * LETTER_STEP, "y": row_y(row),
+                                "r": BUBBLE_R, "block": corners})
     choices_bottom = QUESTIONS_TOP + (rows - 1) * ROW_STEP + 14
 
     written = []
@@ -142,6 +165,8 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
             _square(c, bubble["x"], bubble["y"], EDGE_SIZE)
         elif bubble["kind"] == "code" and code >> int(bubble["letter"]) & 1:
             _square(c, bubble["x"], bubble["y"], CODE_SIZE)
+        elif bubble["kind"] == "anchor":
+            _square(c, bubble["x"], bubble["y"], ANCHOR_SIZE)
 
     # Sarlavha (tepadagi chiziq — burchaklar orasi — bo'sh qolishi shart)
     c.setFillColor(ACCENT)
