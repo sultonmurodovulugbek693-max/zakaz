@@ -19,7 +19,7 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 
 import db
 import essay_ai
-from config import BOT_TOKEN
+from config import ADMIN_IDS, BOT_TOKEN
 from scoring import rasch_results, total_points
 from structure import (
     ESSAY_MAX,
@@ -47,9 +47,9 @@ HOOKS: dict = {}  # bot.py to'ldiradi: record_attempt, announce, send_pdf
 
 
 class ApiError(web.HTTPException):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, **extra):
         self.status_code = status
-        super().__init__(text=json.dumps({"error": message}, ensure_ascii=False), content_type="application/json")
+        super().__init__(text=json.dumps({"error": message, **extra}, ensure_ascii=False), content_type="application/json")
 
 
 def ok(data: dict | list) -> web.Response:
@@ -69,6 +69,22 @@ def current_user(request: web.Request) -> dict:
         raise ApiError(401, "Ilovani Telegram ichidan oching")
     name = " ".join(part for part in (user.first_name, user.last_name) if part) or "Foydalanuvchi"
     return {"id": user.id, "name": name, "username": user.username}
+
+
+async def missing_for(user: dict) -> list[dict]:
+    """Obuna bo'lmagan kanallar (admin va hook yo'q bo'lsa — bo'sh)."""
+    if user["id"] in ADMIN_IDS or "missing" not in HOOKS:
+        return []
+    return [{"title": c["title"], "url": c["url"]} for c in await HOOKS["missing"](user["id"])]
+
+
+async def auth(request: web.Request) -> dict:
+    """Imzo + majburiy obuna tekshiruvi."""
+    user = current_user(request)
+    missing = await missing_for(user)
+    if missing:
+        raise ApiError(403, "Avval kanallarga obuna bo'ling", subscribe=missing)
+    return user
 
 
 async def body(request: web.Request) -> dict:
@@ -102,6 +118,9 @@ def public_items(test: dict) -> list[dict]:
 async def bootstrap(request: web.Request) -> web.Response:
     user = current_user(request)
     await run(db.remember_user, user["id"], user["name"], user["username"])
+    missing = await missing_for(user)
+    if missing:
+        return ok({"user": user, "subscribe": missing})
     attempts = await run(db.attempts_of_user, user["id"])
     tests = await run(db.list_tests, user["id"], 50)
     teacher_tests = []
@@ -131,7 +150,7 @@ async def bootstrap(request: web.Request) -> web.Response:
 # ---------- O'quvchi ----------
 
 async def test_info(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test:
         raise ApiError(404, "Bunday kodli test topilmadi")
@@ -162,7 +181,7 @@ def clean_answers(test: dict, raw: dict) -> dict:
 
 
 async def submit(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     payload = await body(request)
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test:
@@ -199,7 +218,7 @@ def key_display(test: dict, key: dict) -> dict:
 
 
 async def result(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     attempt = await run(db.get_attempt, int(request.match_info["attempt_id"]))
     test = attempt and await run(db.get_test, attempt["test_id"])
     if not test:
@@ -269,7 +288,7 @@ def validate_key(items: list[dict], raw: dict) -> dict:
 
 
 async def create_test(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     payload = await body(request)
     title = " ".join(str(payload.get("title", "")).split())[:80]
     if len(title) < 2:
@@ -300,7 +319,7 @@ async def create_test(request: web.Request) -> web.Response:
 
 
 async def teacher_test(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     attempts = await run(db.list_attempts, test["id"])
     keys = await run(db.get_keys, test["id"])
@@ -338,7 +357,7 @@ async def teacher_test(request: web.Request) -> web.Response:
 
 
 async def announce(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     if test["closed"]:
         raise ApiError(409, "Natijalar allaqachon e'lon qilingan")
@@ -349,14 +368,14 @@ async def announce(request: web.Request) -> web.Response:
 
 
 async def reopen(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     await run(db.set_closed, test["id"], False)
     return ok({"ok": True})
 
 
 async def send_pdf(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     kind = (await body(request)).get("kind")
     if kind not in ("sheet", "key", "results"):
@@ -366,7 +385,7 @@ async def send_pdf(request: web.Request) -> web.Response:
 
 
 async def set_theme(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     theme = (await body(request)).get("theme")
     if theme not in THEMES:
@@ -376,7 +395,7 @@ async def set_theme(request: web.Request) -> web.Response:
 
 
 async def essay_detail(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     attempt, test = await _own_attempt(request, user)
     essay = await run(db.get_essay, attempt["id"])
     return ok({
@@ -397,7 +416,7 @@ async def _own_attempt(request: web.Request, user: dict) -> tuple[dict, dict]:
 
 
 async def essay_score(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     attempt, test = await _own_attempt(request, user)
     payload = await body(request)
     if payload.get("action") == "confirm":
@@ -422,7 +441,7 @@ async def essay_score(request: web.Request) -> web.Response:
 
 
 async def essays_confirm_all(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await auth(request)
     test = await own_test(request, user)
     attempts = await run(db.list_attempts, test["id"])
     essays = await run(db.essays_for_test, test["id"])

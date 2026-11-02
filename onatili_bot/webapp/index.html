@@ -299,6 +299,11 @@ async function api(path, data) {
   let res;
   try { res = await fetch(path, opts); } catch (e) { throw new Error("Internet aloqasi yo'q"); }
   const json = await res.json().catch(() => ({}));
+  if (res.status === 403 && json.subscribe) {  // majburiy obuna — kanallar ekraniga
+    S.boot = { subscribe: json.subscribe, user: (S.boot && S.boot.user) || { name: "" } };
+    S.stack = []; S.current = { view: "home", params: {} }; render();
+    throw new Error(json.error);
+  }
   if (!res.ok) throw new Error(json.error || "Xatolik yuz berdi");
   return json;
 }
@@ -401,6 +406,7 @@ const VIEWS = {};
 
 VIEWS.home = async () => {
   if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); } }
+  if (S.boot.subscribe) return subscribeGate(S.boot.subscribe);
   const b = S.boot, role = S.role;
   const first = (b.user.name || "").split(" ")[0];
   const attempts = b.attempts.map(a => `<button class="item" data-attempt="${a.id}" data-announced="${a.announced ? 1 : 0}">
@@ -441,6 +447,26 @@ VIEWS.home = async () => {
   const nw = document.getElementById("new"); if (nw) nw.onclick = () => go("create");
 };
 
+function subscribeGate(channels) {
+  try { tg.BackButton.hide(); } catch (e) {}
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><h1>Avval kanallarga obuna bo'ling</h1>
+      <span class="muted">Ilovadan foydalanish uchun quyidagi kanallarga obuna bo'lish shart.</span></div>
+    <div class="list">${channels.map((c, i) => `<button class="item" data-ch="${i}"><span class="ico">📢</span><span><b>${esc(c.title)}</b><small>Obuna bo'lish uchun bosing</small></span><span class="pill-tag wait">Obuna</span></button>`).join("")}</div>
+    <div class="sticky-bottom"><div><button class="btn block" id="checksub">✅ Obuna bo'ldim</button></div></div>
+  </div>`;
+  document.querySelectorAll("[data-ch]").forEach(x => x.onclick = () => {
+    const url = channels[+x.dataset.ch].url;
+    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  });
+  document.getElementById("checksub").onclick = async () => {
+    const btn = document.getElementById("checksub"); btn.disabled = true; btn.textContent = "Tekshirilmoqda…";
+    try { S.boot = await api("/api/bootstrap"); } catch (e) { toast(e.message); }
+    if (S.boot && S.boot.subscribe) { haptic("error"); toast("Hali hamma kanalga obuna bo'lmagansiz"); subscribeGate(S.boot.subscribe); }
+    else { haptic("success"); toast("✅ Rahmat! Xush kelibsiz"); render(); }
+  };
+}
+
 VIEWS.answer = async ({ code }) => {
   loading();
   let t; try { t = await api(`/api/test/${code}`); } catch (e) { return fail(e); }
@@ -465,8 +491,7 @@ VIEWS.answer = async ({ code }) => {
     ${t.fmt === "milliy" ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
         <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
-        <div class="counter" id="essay-count"></div>
-        <span class="muted small">Qo'lyozmani rasm qilib yubormoqchi bo'lsangiz — botdagi «✅ Javobni tekshirish» orqali yuboring.</span></div>` : ""}
+        <div class="counter" id="essay-count"></div></div>` : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="submit">Javoblarni yuborish</button></div></div>
   </div>`;
   const nameEl = document.getElementById("name"), essayEl = document.getElementById("essay");
@@ -707,7 +732,7 @@ async function essaySheet(attemptId, testId) {
     ${e.status === "pending" ? `<p class="muted">⏳ AI hali tekshirmoqda — birozdan keyin qayta oching.</p>` : ""}
     ${e.status === "failed" ? `<p class="muted">❗️ AI baholay olmadi: ${esc(e.error || "")}</p>` : ""}
     ${e.status === "none" ? `<p class="muted">➖ O'quvchi esse yubormagan.</p>` : ""}
-    ${e.text ? `<details><summary class="small"><b>Esse matni</b></summary><p style="white-space:pre-wrap;font-size:14px">${esc(e.text)}</p></details>` : e.photos ? `<p class="muted small">📷 Esse ${e.photos} ta rasm — chatda «✍️ Esseni baholash» orqali ko'ring.</p>` : ""}
+    ${e.text ? `<details><summary class="small"><b>Esse matni</b></summary><p style="white-space:pre-wrap;font-size:14px">${esc(e.text)}</p></details>` : e.photos ? `<p class="muted small">📷 Esse ${e.photos} ta rasm ko'rinishida yuborilgan.</p>` : ""}
     ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(e.ai_score)})</button>` : ""}
     ${e.status === "failed" ? `<button class="btn ghost block" data-act="retry">🔁 AI'da qayta tekshirish</button>` : ""}
     <div class="row"><input class="input" id="manual" inputmode="decimal" placeholder="O'z bahoyingiz: 0–24, masalan 18,5"><button class="btn ghost" data-act="score">Saqlash</button></div>

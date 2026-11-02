@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS essays (
 """
 
 
+# Majburiy obuna kanallari (admin bot ichidan qo'shadi)
+CHANNEL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS channels (
+    chat_id  INTEGER PRIMARY KEY,
+    title    TEXT NOT NULL,
+    url      TEXT NOT NULL,
+    added_by INTEGER,
+    added_at TEXT
+);
+"""
+
+
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -96,6 +108,7 @@ def init() -> None:
         if "theme" not in test_columns:  # Mini App natija kartasi dizayni
             conn.execute("ALTER TABLE tests ADD COLUMN theme TEXT")
         conn.executescript(ESSAY_SCHEMA)
+        conn.executescript(CHANNEL_SCHEMA)
 
 
 # ---------- Foydalanuvchilar ----------
@@ -324,3 +337,33 @@ def attempts_of_user(tg_id: int, limit: int = 50) -> list[dict]:
             (tg_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------- Majburiy obuna ----------
+
+def list_channels() -> list[dict]:
+    with connect() as conn:
+        return [dict(row) for row in conn.execute("SELECT * FROM channels ORDER BY added_at").fetchall()]
+
+
+def add_channel(chat_id: int, title: str, url: str, added_by: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO channels (chat_id, title, url, added_by, added_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, url = excluded.url",
+            (chat_id, title, url, added_by, _now()),
+        )
+
+
+def remove_channel(chat_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM channels WHERE chat_id = ?", (chat_id,))
+
+
+def stats() -> dict:
+    with connect() as conn:
+        return {
+            "users": conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+            "tests": conn.execute("SELECT COUNT(*) FROM tests").fetchone()[0],
+            "attempts": conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],
+        }
