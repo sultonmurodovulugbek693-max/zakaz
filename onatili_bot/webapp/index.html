@@ -88,6 +88,9 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .item .ico { width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; font-size: 20px; background: var(--accent-soft); }
 .item b { display: block; font-size: 15.5px; line-height: 1.25; }
 .item small { color: var(--muted); font-size: 12.5px; }
+.del-test { border: 0; background: transparent; font-size: 18px; width: 40px; height: 40px; border-radius: 12px; cursor: pointer; opacity: .65; transition: opacity .2s, background .2s; }
+.del-test:hover, .del-test:focus-visible { opacity: 1; background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.del-test:active { transform: scale(.92); }
 .pill-tag { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 99px; white-space: nowrap; }
 .pill-tag.wait { background: color-mix(in srgb, var(--warn) 18%, transparent); color: color-mix(in srgb, var(--warn) 80%, var(--ink)); }
 .pill-tag.done { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
@@ -434,10 +437,11 @@ VIEWS.home = async () => {
       <span class="ico">${a.announced ? "📊" : "⏳"}</span>
       <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
       <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
-  const tests = b.tests.map(t => `<button class="item" data-test="${t.id}">
-      <span class="ico">${t.closed ? "📢" : "📝"}</span>
-      <span><b>${esc(t.title)}</b><small>Kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small></span>
-      <span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></button>`).join("");
+  const tests = b.tests.map(t => `<div class="item test-item" data-test="${t.id}" role="button" tabindex="0">
+      <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
+      <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Oflayn" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
+        <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
+      <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><span class="hi">Salom, ${esc(first)} 👋</span>
       <h1>${role === "student" ? "Testni yeching, natijani kuting" : "Testlar va natijalar"}</h1></div>
@@ -464,7 +468,17 @@ VIEWS.home = async () => {
     code.onkeydown = e => { if (e.key === "Enter" && code.value.length === 5) go("answer", { code: code.value }); };
   }
   document.querySelectorAll("[data-attempt]").forEach(x => x.onclick = () => x.dataset.announced === "1" ? go("result", { id: x.dataset.attempt }) : toast("⏳ Natijalar hali e'lon qilinmagan"));
-  document.querySelectorAll("[data-test]").forEach(x => x.onclick = () => go("teacher", { id: x.dataset.test }));
+  document.querySelectorAll("[data-test]").forEach(x => x.onclick = e => { if (!e.target.closest(".del-test")) go("teacher", { id: x.dataset.test }); });
+  document.querySelectorAll("[data-del-test]").forEach(x => x.onclick = async e => {
+    e.stopPropagation();
+    if (!(await confirmBox(`«${x.dataset.title}» testini o'chirasizmi?\n\nBarcha natijalar, o'quvchilar ro'yxati va esselar ham o'chadi. Buni qaytarib bo'lmaydi.`))) return;
+    try {
+      await api(`/api/teacher/test/${x.dataset.delTest}/delete`, {});
+      haptic("success"); toast("🗑 Test o'chirildi");
+      const card = x.closest(".test-item"); card.style.transition = "opacity .25s, transform .25s"; card.style.opacity = "0"; card.style.transform = "translateX(30px)";
+      S.boot = null; setTimeout(render, 260);
+    } catch (err) { toast(err.message); haptic("error"); }
+  });
   const nw = document.getElementById("new"); if (nw) nw.onclick = () => go("create");
 };
 
@@ -683,7 +697,7 @@ VIEWS.create = async () => {
       if (st.mode === "offline") {  // oflayn: darhol o'quvchilar ro'yxatiga
         S.create = null; S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
         toast("✅ Test yaratildi — endi o'quvchilarni qo'shing");
-        return go("teacher", { id: res.id, tab: "students" });
+        return go("teacher", { id: res.id });
       }
       S.create = null; S.boot = null; haptic("success");
       S.stack = [];
@@ -716,7 +730,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   let d; try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); }
   const t = d.test, milliy = t.fmt === "milliy", n = d.attempts.length;
   const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
-  tab = tab || (offline && !n ? "students" : "people");
+  tab = tab || "people";
   const totals = d.attempts.map(a => milliy ? a.total : a.percent);
   const avg = n ? totals.reduce((x, y) => x + y, 0) / n : 0, max = n ? Math.max(...totals) : 0;
   const certified = d.attempts.filter(a => a.grade && a.grade !== "NC").length;
@@ -827,7 +841,9 @@ function rosterHTML(d) {
     <label class="btn ghost block" for="xlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
     <input type="file" id="xlsx" accept=".xlsx,.csv,.txt" hidden>
     <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida), variant ustuni ixtiyoriy (A, B, C, D). Har o'quvchiga ID beriladi: 001, 002, …</span></div>
-    <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div>Hali o'quvchi yo'q.<br>Ismlarni yuqoriga yozing — har biriga shaxsiy titul chiqadi.</div>`}</div>`;
+    <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div><b>Ro'yxat ixtiyoriy</b>
+      <span>Ro'yxat bo'lsa — har o'quvchiga ismi va ID'si bosilgan shaxsiy titul chiqadi.<br>
+      Bo'lmasa — «📄 Titullarni chiqarish»da bo'sh titullar chiqaring: o'quvchi ID'sini o'zi bo'yaydi yoki skanerlashda ismini yozasiz.</span></div>`}</div>`;
 }
 
 function bindRoster(d, id) {

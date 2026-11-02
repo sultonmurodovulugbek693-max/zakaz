@@ -382,6 +382,14 @@ async def announce(request: web.Request) -> web.Response:
     return ok({"ok": True, "sent": sent})
 
 
+async def delete_test(request: web.Request) -> web.Response:
+    """Testni butunlay o'chirish: variantlar, natijalar, esselar va o'quvchilar ro'yxati ham (CASCADE)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    await run(db.delete_test, test["id"])
+    return ok({"ok": True})
+
+
 async def reopen(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
@@ -784,6 +792,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/announce", announce)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/reopen", reopen)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/delete", delete_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/send", send_pdf)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
