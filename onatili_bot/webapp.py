@@ -9,7 +9,9 @@ bot.py dan HOOKS orqali beriladi — bu modul botni import qilmaydi.
 """
 
 import asyncio
+import base64
 import json
+import random
 import logging
 import time
 from pathlib import Path
@@ -19,6 +21,7 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 
 import db
 import essay_ai
+import sheet
 from config import ADMIN_IDS, BOT_TOKEN
 from scoring import rasch_results, total_points
 from structure import (
@@ -131,6 +134,7 @@ async def bootstrap(request: web.Request) -> web.Response:
             "id": test["id"], "code": test["code"], "title": test["title"], "fmt": test["fmt"],
             "format": format_title(test["fmt"], test["count"]), "closed": bool(test["closed"]),
             "students": len(test_attempts), "created_at": test["created_at"], "theme": test.get("theme") or "classic",
+            "mode": test.get("mode") or "online",
             "avg": round(sum(totals) / len(totals), 1) if totals else None,
             "max_points": max_points(test["items"], test["fmt"]),
         })
@@ -154,6 +158,8 @@ async def test_info(request: web.Request) -> web.Response:
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test:
         raise ApiError(404, "Bunday kodli test topilmadi")
+    if (test.get("mode") or "online") == "offline":
+        raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javobni o'qituvchingizga topshiring")
     previous = await run(db.find_attempt, test["id"], user["id"])
     keys = await run(db.get_keys, test["id"])
     return ok({
@@ -188,6 +194,8 @@ async def submit(request: web.Request) -> web.Response:
         raise ApiError(404, "Test topilmadi")
     if test["closed"]:
         raise ApiError(409, "Natijalar e'lon qilingan — javob qabul qilinmaydi")
+    if (test.get("mode") or "online") == "offline":
+        raise ApiError(409, "Bu test qog'ozda o'tkaziladi")
     keys = await run(db.get_keys, test["id"])
     variant = payload.get("variant") or next(iter(keys))
     if variant not in keys:
@@ -313,7 +321,10 @@ async def create_test(request: web.Request) -> web.Response:
     topic = str(payload.get("essay_topic") or "").strip()[:2000] or None
     test = await run(db.create_test, user["id"], title, fmt, count, items, keys, topic if fmt == "milliy" else None)
     await run(db.set_theme, test["id"], theme)
-    await HOOKS["send_pdf"](user["id"], test, "sheet")
+    mode = "offline" if payload.get("mode") == "offline" else "online"
+    await run(db.set_mode, test["id"], mode)
+    if mode == "online":
+        await HOOKS["send_pdf"](user["id"], test, "sheet")
     await HOOKS["send_pdf"](user["id"], test, "key")
     return ok({"ok": True, "id": test["id"], "code": test["code"]})
 
@@ -349,7 +360,9 @@ async def teacher_test(request: web.Request) -> web.Response:
         "test": {"id": test["id"], "code": test["code"], "title": test["title"], "fmt": test["fmt"],
                  "format": format_title(test["fmt"], test["count"]), "closed": bool(test["closed"]),
                  "theme": test.get("theme") or "classic", "variants": list(keys), "created_at": test["created_at"],
-                 "essay_topic": test.get("essay_topic"), "max_points": max_points(test["items"], test["fmt"])},
+                 "essay_topic": test.get("essay_topic"), "max_points": max_points(test["items"], test["fmt"]),
+                 "mode": test.get("mode") or "online"},
+        "students": [student_view(s) for s in await run(db.list_students, test["id"])],
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
         "ai": essay_ai.enabled(), "ai_provider": essay_ai.provider_name(),
@@ -454,6 +467,198 @@ async def essays_confirm_all(request: web.Request) -> web.Response:
     return ok({"ok": True, "count": count})
 
 
+# ---------- Oflayn test: o'quvchilar, titullar, skaner ----------
+
+def student_view(student: dict) -> dict:
+    return {"id": student["id"], "number": student["number"], "name": student["name"],
+            "variant": student["variant"], "scanned": bool(student["attempt_id"]), "attempt_id": student["attempt_id"]}
+
+
+def assign_variants(count: int, variants: list[str], mode: str, start: int = 0) -> list[str]:
+    """Variant taqsimlash: cycle — navbat bilan (A, B, C, A...), random — aralash, aks holda bitta variant."""
+    if mode in variants:
+        return [mode] * count
+    if mode == "random":
+        pool = [variants[(start + i) % len(variants)] for i in range(count)]
+        random.shuffle(pool)
+        return pool
+    return [variants[(start + i) % len(variants)] for i in range(count)]
+
+
+async def students_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    return ok({"students": [student_view(s) for s in await run(db.list_students, test["id"])],
+               "variants": list(await run(db.get_keys, test["id"]))})
+
+
+async def students_add(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    names = [" ".join(str(n).split())[:60] for n in (payload.get("names") or []) if str(n).strip()]
+    if not names:
+        raise ApiError(400, "Ism-familiyalarni yozing (har biri yangi qatorda)")
+    existing = await run(db.list_students, test["id"])
+    if len(existing) + len(names) > 2000:
+        raise ApiError(400, "Bitta testda ko'pi bilan 2000 o'quvchi")
+    variants = list(await run(db.get_keys, test["id"]))
+    chosen = assign_variants(len(names), variants, str(payload.get("mode") or "cycle"), start=len(existing))
+    students = await run(db.add_students, test["id"], names, chosen)
+    return ok({"students": [student_view(s) for s in students]})
+
+
+async def student_update(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    student_id = int(request.match_info["student_id"])
+    if not await run(db.get_student, test["id"], student_id):
+        raise ApiError(404, "O'quvchi topilmadi")
+    if payload.get("delete"):
+        await run(db.delete_student, test["id"], student_id)
+    else:
+        variant = payload.get("variant")
+        if variant is not None and variant not in await run(db.get_keys, test["id"]):
+            raise ApiError(400, "Variant noto'g'ri")
+        name = " ".join(str(payload["name"]).split())[:60] if payload.get("name") else None
+        await run(db.update_student, test["id"], student_id, name, variant)
+    return ok({"students": [student_view(s) for s in await run(db.list_students, test["id"])]})
+
+
+async def sheets(request: web.Request) -> web.Response:
+    """Titullar PDF'i chatga: har o'quvchiga shaxsiy titul + bo'sh titullar."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    blanks = max(0, min(200, int(payload.get("blanks") or 0)))
+    students = await run(db.list_students, test["id"])
+    if payload.get("only"):
+        students = [s for s in students if s["id"] in set(payload["only"])]
+    if not students and not blanks:
+        raise ApiError(400, "Avval o'quvchilarni qo'shing yoki bo'sh titullar sonini kiriting")
+    await HOOKS["send_sheets"](user["id"], test, students, blanks)
+    return ok({"ok": True, "pages": len(students) + blanks})
+
+
+async def read_photo(request: web.Request) -> bytes:
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Rasm yuborilmadi")
+    field = form.get("photo")
+    if field is None or not hasattr(field, "file"):
+        raise ApiError(400, "Rasm yuborilmadi")
+    data = field.file.read()
+    if len(data) > 12 * 1024 * 1024:
+        raise ApiError(400, "Rasm juda katta (12 MB dan kichik bo'lsin)")
+    return data
+
+
+def _png_data_url(png: bytes | None) -> str | None:
+    return "data:image/png;base64," + base64.b64encode(png).decode() if png else None
+
+
+async def scan(request: web.Request) -> web.Response:
+    """Titul surati → o'qilgan javoblar (TAKLIF: o'qituvchi tekshirib saqlaydi)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    data = await read_photo(request)
+    variants = list(await run(db.get_keys, test["id"]))
+    spec = sheet.layout(test, variants)
+
+    def work():
+        import cv2
+        import omr
+        page = omr.SheetPage(name_area=spec["name_area"])
+        prepared = omr.PreparedSheet(data, spec["bubbles"], 1, page)
+        result = omr.scan_answer_sheet(data, spec["bubbles"], 1, prepared, page)
+        written_png = None
+        if spec["written_area"]:
+            x1, y1, x2, y2 = (round(v * omr.SCALE) for v in spec["written_area"])
+            crop = prepared.warped[max(0, y1): y2, max(0, x1): x2]
+            ok_, png = cv2.imencode(".png", crop)
+            written_png = png.tobytes() if ok_ else None
+        return result, written_png
+
+    try:
+        result, written_png = await run(work)
+    except Exception as error:
+        message = str(error) if error.__class__.__name__ == "ScanError" else "Rasmni o'qib bo'lmadi — qaytadan suratga oling"
+        if error.__class__.__name__ != "ScanError":
+            logger.exception("Skaner xatosi")
+        raise ApiError(422, message)
+
+    number = sheet.decode_number(result["sheet_code"])
+    student = await run(db.get_student, test["id"], None, number) if number else None
+    variant = result["variant"] or (student["variant"] if student else None) or (variants[0] if len(variants) == 1 else None)
+    written, ai_note = {}, None
+    labels = [i["label"] for i in text_items(test["items"])]
+    if labels and written_png:
+        if essay_ai.enabled():
+            try:
+                written, _cost = await essay_ai.read_written(written_png, labels)
+            except essay_ai.AIError as error:
+                ai_note = f"AI yozma javoblarni o'qiy olmadi: {error}"
+        else:
+            ai_note = "AI o'chiq — yozma javoblarni rasmga qarab o'zingiz yozing"
+    return ok({
+        "student": student_view(student) if student else None,
+        "code_status": "ok" if number else ("blank" if result["sheet_code"] == 0 else "unclear"),
+        "variant": variant, "variant_read": result["variant"],
+        "questions": [{"label": q["label"], "chosen": q["chosen"], "status": q["status"]} for q in result["questions"]],
+        "written": written, "written_image": _png_data_url(written_png), "name_image": result["name_image"],
+        "ai_note": ai_note,
+    })
+
+
+async def scan_save(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    keys = await run(db.get_keys, test["id"])
+    variant = payload.get("variant")
+    if variant not in keys:
+        raise ApiError(400, "Variantni tanlang")
+    student = None
+    if payload.get("student_id"):
+        student = await run(db.get_student, test["id"], int(payload["student_id"]))
+        if not student:
+            raise ApiError(404, "O'quvchi topilmadi")
+        if student["attempt_id"]:
+            await run(db.delete_attempt, student["attempt_id"])  # qayta skanerlash — eski natija almashtiriladi
+        if student["variant"] != variant:
+            await run(db.update_student, test["id"], student["id"], None, variant)
+    else:
+        name = " ".join(str(payload.get("name") or "").split())[:60]
+        if len(name) < 3:
+            raise ApiError(400, "O'quvchi ismini yozing yoki ro'yxatdan tanlang")
+        student = (await run(db.add_students, test["id"], [name], [variant]))[-1]
+    answers = clean_answers(test, payload.get("answers") or {})
+    attempt = await HOOKS["record_attempt"](test, db.offline_tg_id(test["id"], student["number"]), student["name"],
+                                            variant, answers, None, [], 0.0, notify=False)
+    if attempt is None:
+        raise ApiError(409, "Bu o'quvchining natijasi allaqachon bor")
+    await run(db.link_student_attempt, student["id"], attempt["id"])
+    return ok({"ok": True, "attempt_id": attempt["id"], "name": student["name"],
+               "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
+               "correct": attempt["test_correct"] + attempt["written_correct"], "auto_total": attempt["auto_total"]})
+
+
+async def essay_photo(request: web.Request) -> web.Response:
+    """Oflayn esse varaqasi surati: bot orqali Telegram'ga saqlanadi va AI navbatiga qo'yiladi."""
+    user = await auth(request)
+    attempt, test = await _own_attempt(request, user)
+    data = await read_photo(request)
+    file_id = await HOOKS["store_photo"](user["id"], data, f"📝 Esse · {attempt['student_name']} · {test['title']}")
+    status = "pending" if essay_ai.enabled() else "manual"
+    if not await run(db.get_essay, attempt["id"]):
+        await run(db.create_essay, attempt["id"], None, [file_id], status)
+    else:
+        await run(db.set_essay_photos, attempt["id"], [file_id], status)
+    return ok({"ok": True, "status": status})
+
+
 # ---------- Server ----------
 
 async def index(request: web.Request) -> web.Response:
@@ -478,7 +683,7 @@ async def errors(request: web.Request, handler):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[errors], client_max_size=2 * 1024 * 1024)
+    app = web.Application(middlewares=[errors], client_max_size=14 * 1024 * 1024)
     app.router.add_get("/", index)
     app.router.add_get("/app", index)
     app.router.add_get("/health", health)
@@ -496,6 +701,13 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)
     app.router.add_post("/api/teacher/essay/{attempt_id:\\d+}", essay_score)
+    app.router.add_get("/api/teacher/test/{test_id:\\d+}/students", students_list)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/students", students_add)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/{student_id:\\d+}", student_update)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/save", scan_save)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/essay-photo", essay_photo)
     return app
 
 

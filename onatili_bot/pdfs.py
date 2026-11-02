@@ -198,7 +198,15 @@ ESSAY_RULES = [
 ]
 
 
-def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: float, test: dict) -> None:
+def draw_essay_page(c: canvas.Canvas, test: dict, student: dict | None = None) -> None:
+    """Esse varaqasi (oflayn titul to'plamida har o'quvchiga) — ismi va raqami bosilgan bo'lsa ko'rsatiladi."""
+    width, height = A4
+    _draw_essay_page(c, width, height, 14 * mm, test, student)
+    _footer(c, width, test)
+
+
+def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: float, test: dict,
+                     student: dict | None = None) -> None:
     """2-sahifa: esse varaqasi (rasmiy namunadagi talablar bilan)."""
     y = height - margin
     c.setFillColor(ACCENT)
@@ -213,6 +221,10 @@ def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: floa
     c.setLineWidth(0.6)
     c.line(margin + 17 * mm, y - 1, width - margin - 40 * mm, y - 1)
     c.drawRightString(width - margin, y, f"Test kodi: {test['code']}")
+    if student:
+        c.setFont("Sans-Bold", 11)
+        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  № {student['number']:03d}")
+        c.setFont("Sans-Bold", 10)
     y -= 8 * mm
     c.setFont("Sans", 8.5)
     for rule in ESSAY_RULES:

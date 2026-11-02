@@ -277,3 +277,42 @@ async def transcribe(images: list[tuple[bytes, str]]) -> tuple[str, float]:
     """Qo'lyozma rasmlarini matnga aylantiradi (o'quvchi tasdiqlashi uchun)."""
     out, usage = await _call(TRANSCRIBE_PROMPT, "Transcribe the essay.", images, None)
     return out.strip(), usage["cost"]
+
+
+# ---------- Tituldagi qo'lda yozilgan javoblar (36–44) ----------
+
+WRITTEN_PROMPT = (
+    "The image is part of a scanned Uzbek exam answer sheet. Each box is labelled on its left (36, 37, 38, 39, "
+    "40a, 40b, ... 44b) and contains a short handwritten answer in Uzbek (Latin script) — usually one or a few "
+    "words, or a sequence of punctuation marks such as : \" , \" . . Read each box exactly as written, keeping the "
+    "student's spelling and punctuation (do not correct it). Use ʻ for oʻ/gʻ. If a box is empty, return an empty "
+    "string; if a word is unreadable, write [?]. Return every label you are asked for."
+)
+
+
+def _written_schema(labels: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {"answers": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"label": {"type": "string", "enum": labels}, "text": {"type": "string"}},
+            "required": ["label", "text"], "additionalProperties": False,
+        }}},
+        "required": ["answers"], "additionalProperties": False,
+    }
+
+
+async def read_written(image_png: bytes, labels: list[str]) -> tuple[dict[str, str], float]:
+    """Titul rasmidagi yozma javob kataklari → {"36": "aziz", ...} (o'qituvchi tekshiradi)."""
+    out, usage = await _call(WRITTEN_PROMPT, "Read these boxes: " + ", ".join(labels),
+                             [(image_png, "image/png")], _written_schema(labels))
+    try:
+        items = json.loads(out).get("answers", [])
+    except (json.JSONDecodeError, AttributeError) as error:
+        raise AIError("AI javobini o'qib bo'lmadi", retry=False) from error
+    result = {}
+    for item in items:
+        label, text = str(item.get("label", "")), str(item.get("text", "")).strip()
+        if label in labels and label not in result:
+            result[label] = "" if text in ("[?]",) else text[:200]
+    return result, usage["cost"]

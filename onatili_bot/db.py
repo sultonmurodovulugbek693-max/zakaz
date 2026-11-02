@@ -73,6 +73,19 @@ CREATE TABLE IF NOT EXISTS essays (
 """
 
 
+# Oflayn test o'quvchilari: raqam titul kodida bosiladi, skaner varaq kimniki ekanini shundan taniydi
+STUDENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS students (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    test_id    INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+    number     INTEGER NOT NULL,
+    name       TEXT NOT NULL,
+    variant    TEXT NOT NULL,
+    attempt_id INTEGER REFERENCES attempts(id) ON DELETE SET NULL,
+    UNIQUE (test_id, number)
+);
+"""
+
 # Majburiy obuna kanallari (admin bot ichidan qo'shadi)
 CHANNEL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
@@ -107,6 +120,9 @@ def init() -> None:
             conn.execute("ALTER TABLE tests ADD COLUMN essay_topic TEXT")
         if "theme" not in test_columns:  # Mini App natija kartasi dizayni
             conn.execute("ALTER TABLE tests ADD COLUMN theme TEXT")
+        if "mode" not in test_columns:  # online — ilovada; offline — qog'oz titul + skaner
+            conn.execute("ALTER TABLE tests ADD COLUMN mode TEXT NOT NULL DEFAULT 'online'")
+        conn.executescript(STUDENT_SCHEMA)
         conn.executescript(ESSAY_SCHEMA)
         conn.executescript(CHANNEL_SCHEMA)
 
@@ -367,3 +383,71 @@ def stats() -> dict:
             "tests": conn.execute("SELECT COUNT(*) FROM tests").fetchone()[0],
             "attempts": conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],
         }
+
+
+# ---------- Oflayn test: o'quvchilar ----------
+
+def offline_tg_id(test_id: int, number: int) -> int:
+    """Telegram'siz o'quvchi uchun ichki ID (manfiy — xabar yuborilmaydi, attempts jadvalida takrorlanmaydi)."""
+    return -(test_id * 100000 + number)
+
+
+def list_students(test_id: int) -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM students WHERE test_id = ? ORDER BY number", (test_id,))]
+
+
+def get_student(test_id: int, student_id: int | None = None, number: int | None = None) -> dict | None:
+    with connect() as conn:
+        if student_id is not None:
+            row = conn.execute("SELECT * FROM students WHERE id = ? AND test_id = ?", (student_id, test_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM students WHERE number = ? AND test_id = ?", (number, test_id)).fetchone()
+    return dict(row) if row else None
+
+
+def add_students(test_id: int, names: list[str], variants: list[str]) -> list[dict]:
+    with connect() as conn:
+        start = conn.execute("SELECT COALESCE(MAX(number), 0) FROM students WHERE test_id = ?", (test_id,)).fetchone()[0]
+        for index, (name, variant) in enumerate(zip(names, variants), start=1):
+            conn.execute("INSERT INTO students (test_id, number, name, variant) VALUES (?, ?, ?, ?)",
+                         (test_id, start + index, name, variant))
+    return list_students(test_id)
+
+
+def update_student(test_id: int, student_id: int, name: str | None = None, variant: str | None = None) -> None:
+    with connect() as conn:
+        if name is not None:
+            conn.execute("UPDATE students SET name = ? WHERE id = ? AND test_id = ?", (name, student_id, test_id))
+        if variant is not None:
+            conn.execute("UPDATE students SET variant = ? WHERE id = ? AND test_id = ?", (variant, student_id, test_id))
+
+
+def delete_student(test_id: int, student_id: int) -> None:
+    with connect() as conn:
+        row = conn.execute("SELECT attempt_id FROM students WHERE id = ? AND test_id = ?", (student_id, test_id)).fetchone()
+        if row and row["attempt_id"]:
+            conn.execute("DELETE FROM attempts WHERE id = ?", (row["attempt_id"],))
+        conn.execute("DELETE FROM students WHERE id = ? AND test_id = ?", (student_id, test_id))
+
+
+def link_student_attempt(student_id: int, attempt_id: int | None) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE students SET attempt_id = ? WHERE id = ?", (attempt_id, student_id))
+
+
+def delete_attempt(attempt_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE students SET attempt_id = NULL WHERE attempt_id = ?", (attempt_id,))
+        conn.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,))
+
+
+def set_mode(test_id: int, mode: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET mode = ? WHERE id = ?", (mode, test_id))
+
+
+def set_essay_photos(attempt_id: int, photos: list[str], status: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essays SET photos = ?, status = ?, tries = 0, error = NULL WHERE attempt_id = ?",
+                     (json.dumps(photos), status, attempt_id))
