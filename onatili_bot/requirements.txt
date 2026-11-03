@@ -2,9 +2,7 @@ aiogram==3.31.0
 reportlab==5.0.1
 python-dotenv==1.2.4
 anthropic==2.3.0  # Claude bilan esse tekshirish (AI_PROVIDER=claude)
-opencv-python-headless==5.0.0.93  # titulni suratdan o'qish (OMR)
-numpy==2.5.4
 pillow==13.0.0
 psycopg[binary]==3.3.6  # PostgreSQL (DATABASE_URL berilganda)
 psycopg-pool==3.3.3
-openpyxl==3.1.5  # o'quvchilar ro'yxatini Excel'dan yuklash
+openpyxl==3.1.5  # natijalarni Excel'ga chiqarish

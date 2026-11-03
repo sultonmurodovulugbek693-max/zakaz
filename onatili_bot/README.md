@@ -12,7 +12,7 @@ Chittak (matemttest) uslubidagi Telegram bot, faqat Ona tili va adabiyot uchun.
 ## Imkoniyatlar
 - **O'qituvchi**: test yaratadi, A–D variant kalitlarini kiritadi. Yozma savolga 3 tagacha
   to'g'ri javob (sinonim): `chiroyli | go'zal | ko'rkam`. Tinish belgili javoblar (37-savol) ham tekshiriladi.
-- Bot test kodi, **titul PDF** (javoblar varaqasi + esse varaqasi) va **kalit PDF** beradi.
+- Bot test kodi va **kalit PDF** beradi. Titul yo'q — o'quvchilar javoblarni ilovada belgilaydi.
 - **O'quvchi**: kod → variant → ism → javoblar (yoki `12345*abcd...`). Ball darhol chiqadi.
 - **Natijalar PDF**: ball, Rasch bali, daraja, xato savollar. Esse bahosi 0–24 (0,5 qadam).
 - Test yakunlanganda har bir qatnashchiga Rasch bali, daraja va to'g'ri javoblar yuboriladi.

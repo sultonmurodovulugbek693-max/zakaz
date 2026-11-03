@@ -36,6 +36,7 @@ input, textarea { font: inherit; color: var(--ink); }
 .topbar + #app { padding-top: 4px; }
 .back { border: 0; background: var(--surface); color: var(--accent); font: 600 15px var(--font-body); padding: 9px 14px 9px 10px; border-radius: 12px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
 .back:active { transform: scale(.96); }
+#app.soft *, #app.soft *::before, #app.soft *::after { animation: none !important; transition: none !important; }
 .view { animation: viewIn .35s cubic-bezier(.2,.8,.2,1); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .view > *, .card > *, .list > * { min-width: 0; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(10px); } }
@@ -144,6 +145,39 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button { border: 0; background: var(--surface); border-radius: 99px; padding: 9px 14px; font-weight: 600; white-space: nowrap; cursor: pointer; color: var(--muted); }
 .tabs button.on { background: var(--ink); color: var(--surface); }
+/* Jonli kuzatuv */
+.live-row { grid-template-columns: 14px 1fr auto; }
+.live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.live-dot.active { background: var(--good); box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 60%, transparent); animation: pulse 1.6s infinite; }
+.live-dot.idle { background: var(--warn); }
+.live-dot.done { background: var(--accent); }
+@keyframes pulse { 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.pill-tag.live-on { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.live-row .track { display: block; }
+/* Test sahifasi: ixcham sarlavha, bo'limlar, qadamlar */
+.thead { display: grid; gap: 8px; }
+.thead .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.codechip { border: 0; background: var(--accent-soft); color: var(--accent); font: 700 13px var(--font-body); letter-spacing: .06em; padding: 4px 10px; border-radius: 99px; cursor: pointer; }
+.tabs.bar { background: var(--surface); padding: 4px; border-radius: 14px; gap: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.tabs.bar button { background: transparent; border-radius: 11px; padding: 9px 12px; font-size: 14px; flex: 1 0 auto; }
+.tabs.bar button.on { background: var(--accent); color: var(--accent-ink); }
+.tabs.bar .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: var(--warn); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+.steps { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; counter-reset: st; }
+.steps li { list-style: none; display: grid; gap: 6px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.2; }
+.steps li::before { counter-increment: st; content: counter(st); justify-self: center; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--line); color: var(--muted); }
+.steps li.done::before { content: "✓"; background: var(--accent); color: var(--accent-ink); }
+.steps li.now { color: var(--ink); font-weight: 600; }
+.steps li.now::before { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.steps { margin: 0; padding: 0; }
+.next { display: grid; gap: 10px; }
+.next p { margin: 0; }
+.next .bigcode { margin: 2px 0; text-align: center; }
+.strip { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-radius: var(--radius); padding: 12px 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.strip div { display: grid; gap: 2px; text-align: center; padding: 0 4px; }
+.strip div + div { border-left: 1px solid var(--line); }
+.strip b { font-family: var(--font-display); font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.strip span { font-size: 11.5px; color: var(--muted); line-height: 1.2; }
+.files { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .heat { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 6px; }
 .heat div { border-radius: 10px; padding: 7px 4px; text-align: center; font-size: 12px; line-height: 1.2; animation: viewIn .4s backwards; }
 .heat b { display: block; font-size: 13px; }
@@ -331,7 +365,7 @@ async function api(path, data) {
 function countUp(root = document) {
   root.querySelectorAll("[data-count]").forEach(el => {
     const to = parseFloat(el.dataset.count), suffix = el.dataset.suffix || "";
-    if (reduceMotion || isNaN(to)) { el.textContent = num(to) + suffix; return; }
+    if (reduceMotion || S.soft || isNaN(to)) { el.textContent = num(to) + suffix; return; }
     const start = performance.now(), dur = 1300, delay = +el.dataset.delay || 200;
     (function frame(now) {
       const p = Math.min(1, Math.max(0, (now - start - delay) / dur));
@@ -349,12 +383,22 @@ function go(view, params = {}, replace = false) {
   render();
 }
 function back() { if (S.stack.length) { S.current = S.stack.pop(); render(); } else { go("home", {}, true); } }
-function render() {
-  window.scrollTo(0, 0);
+// soft = true — shu sahifaning o'zini yangilash (amal, bo'lim almashtirish): eski ekran joyida turadi,
+// yuklanish kartalari, tepaga sakrash va kirish animatsiyalari bo'lmaydi
+async function render(soft = false) {
+  clearInterval(S.liveTimer); clearInterval(S.pingTimer);
+  const y = window.scrollY;
+  S.soft = soft; $app.classList.toggle("soft", soft);
+  if (!soft) window.scrollTo(0, 0);
   const { view, params } = S.current;
   showBack(S.stack.length > 0);
-  (VIEWS[view] || VIEWS.home)(params);
+  try { await (VIEWS[view] || VIEWS.home)(params); }
+  finally {
+    if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
+    S.soft = false;
+  }
 }
+const rerender = () => render(true);
 if (tg) { try { tg.BackButton.onClick(back); } catch (e) {} }
 document.getElementById("back").onclick = () => { haptic("light"); back(); };
 // Orqaga: sahifa tepasidagi tugma (har qurilmada ko'rinadi) + Telegram'ning o'z tugmasi (bor joyda)
@@ -362,7 +406,7 @@ function showBack(visible) {
   document.getElementById("topbar").hidden = !visible;
   try { visible ? tg.BackButton.show() : tg.BackButton.hide(); } catch (e) {}
 }
-function loading() { $app.innerHTML = `<div class="view"><div class="skeleton" style="height:40px;width:60%"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
+function loading() { if (S.soft && $app.firstElementChild) return; $app.innerHTML = `<div class="view"><div class="skeleton" style="height:40px;width:60%"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
 function fail(error) {
   $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">😕</div><b>${esc(error.message || error)}</b><button class="btn ghost" id="retry">Qayta urinish</button></div></div>`;
   document.getElementById("retry").onclick = () => render();
@@ -438,8 +482,8 @@ VIEWS.home = async () => {
       <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
       <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
   const tests = b.tests.map(t => `<div class="item test-item" data-test="${t.id}" role="button" tabindex="0">
-      <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
-      <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Oflayn" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
+      <span class="ico">📱</span>
+      <span><b>${esc(t.title)}</b><small>Kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
         <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
       <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
   $app.innerHTML = `<div class="view">
@@ -456,10 +500,10 @@ VIEWS.home = async () => {
       <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
     : `
       <button class="btn block" id="new">＋ Yangi test yaratish</button>
-      <div class="section-title"><h2>Testlarim</h2><span class="muted small">${b.tests.length} ta</span></div>
+      <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
       <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div>Hali test yaratmagansiz.</div>`}</div>`}
   </div>`;
-  document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { S.role = x.dataset.role; store("role", S.role); haptic("select"); render(); });
+  document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { S.role = x.dataset.role; store("role", S.role); haptic("select"); rerender(); });
   const code = document.getElementById("code");
   if (code) {
     const start = document.getElementById("start");
@@ -475,8 +519,17 @@ VIEWS.home = async () => {
     try {
       await api(`/api/teacher/test/${x.dataset.delTest}/delete`, {});
       haptic("success"); toast("🗑 Test o'chirildi");
-      const card = x.closest(".test-item"); card.style.transition = "opacity .25s, transform .25s"; card.style.opacity = "0"; card.style.transform = "translateX(30px)";
-      S.boot = null; setTimeout(render, 260);
+      // Ekranni qayta yuklamay, faqat kartani olib tashlaymiz
+      S.boot.tests = S.boot.tests.filter(t => String(t.id) !== x.dataset.delTest);
+      const card = x.closest(".test-item"), h = card.offsetHeight;
+      card.style.height = h + "px"; card.style.overflow = "hidden";
+      card.style.transition = "opacity .2s, transform .2s, height .25s .15s, padding .25s .15s, margin .25s .15s";
+      requestAnimationFrame(() => { card.style.opacity = "0"; card.style.transform = "translateX(30px)"; card.style.height = "0"; card.style.paddingTop = card.style.paddingBottom = "0"; card.style.marginTop = "-8px"; });
+      setTimeout(() => {
+        card.remove();
+        const count = document.getElementById("tests-count"); if (count) count.textContent = `${S.boot.tests.length} ta`;
+        if (!S.boot.tests.length) rerender();
+      }, 420);
     } catch (err) { toast(err.message); haptic("error"); }
   });
   const nw = document.getElementById("new"); if (nw) nw.onclick = () => go("create");
@@ -537,8 +590,19 @@ VIEWS.answer = async ({ code }) => {
     document.getElementById("prog-text").textContent = `Belgilandi: ${n} / ${choices.length}`;
     document.getElementById("prog-written").textContent = texts.length ? `Yozma: ${w} / ${texts.length}` : "";
     if (essayEl) { const words = essayEl.value.trim() ? essayEl.value.trim().split(/\s+/).length : 0; document.getElementById("essay-count").textContent = `${words} so'z · ${essayEl.value.length} belgi`; }
-    save();
+    save(); pingSoon();
   }
+  // O'qituvchining jonli ekrani uchun: nechta savol belgilangani (5 soniyada ko'pi bilan bir marta) + har 20 soniyada signal
+  let lastPing = 0, pingWait = null, sent = false;
+  const thisView = $app.firstElementChild;
+  function ping() {
+    if (sent || !$app.contains(thisView)) { clearInterval(S.pingTimer); return; }
+    lastPing = Date.now(); pingWait = null;
+    const answered = Object.keys(answers).length + Object.values(written).filter(x => x && x.trim()).length + (essayEl && essayEl.value.trim() ? 1 : 0);
+    api(`/api/test/${t.code}/ping`, { name: nameEl.value, answered, total: choices.length + texts.length + (essayEl ? 1 : 0) }).catch(() => {});
+  }
+  function pingSoon() { if (!pingWait) pingWait = setTimeout(ping, Math.max(0, 5000 - (Date.now() - lastPing))); }
+  S.pingTimer = setInterval(ping, 20000);
   bindBubbles(answers, progress);
   document.querySelectorAll(".wq").forEach(x => x.oninput = () => { written[x.dataset.q] = x.value; progress(); });
   document.querySelectorAll("[data-v]").forEach(x => x.onclick = () => { variant = x.dataset.v; document.querySelectorAll("[data-v]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); save(); });
@@ -556,6 +620,7 @@ VIEWS.answer = async ({ code }) => {
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
       await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay });
+      sent = true; clearInterval(S.pingTimer); clearTimeout(pingWait);
       store(draftKey, "{}"); S.boot = null; haptic("success");
       done({ title: t.title });
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish"; }
@@ -612,7 +677,7 @@ VIEWS.result = async ({ id }) => {
 };
 
 VIEWS.create = async () => {
-  const st = S.create || (S.create = { title: "", fmt: "milliy", mode: "online", count: 30, topic: "", theme: "classic", variants: ["A"], cur: "A", keys: { A: {} } });
+  const st = S.create || (S.create = { title: "", fmt: "milliy", count: 30, topic: "", theme: "classic", variants: ["A"], cur: "A", keys: { A: {} } });
   const items = itemsFor(st.fmt, st.count);
   const texts = items.filter(i => i.kind === "text");
   const key = st.keys[st.cur] || (st.keys[st.cur] = {});
@@ -623,10 +688,6 @@ VIEWS.create = async () => {
       <div class="field"><label>Turi</label><div class="chips">
         <button type="button" class="chip ${st.fmt === "milliy" ? "on" : ""}" data-fmt="milliy">🏅 Milliy sertifikat (45)</button>
         <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button></div></div>
-      <div class="field"><label>Qanday o'tkaziladi</label><div class="chips">
-        <button type="button" class="chip ${st.mode === "online" ? "on" : ""}" data-mode="online">📱 Onlayn — ilovada</button>
-        <button type="button" class="chip ${st.mode === "offline" ? "on" : ""}" data-mode="offline">📄 Oflayn — titul + skaner</button></div>
-        <span class="muted small">${st.mode === "offline" ? "O'quvchilarga shaxsiy titul chop etasiz, ular bo'yaydi, siz telefonda skanerlaysiz." : "O'quvchilar kodni kiritib, javoblarni ilovada belgilaydi."}</span></div>
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
@@ -672,39 +733,33 @@ VIEWS.create = async () => {
       del.closest(".syn-row").remove(); haptic("select"); refresh();
     });
   });
-  document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; st.variants = ["A"]; st.cur = "A"; haptic("select"); render(); });
-  document.querySelectorAll("[data-mode]").forEach(x => x.onclick = () => { collect(); st.mode = x.dataset.mode; haptic("select"); render(); });
-  const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); render(); };
-  document.querySelectorAll("[data-var]").forEach(x => x.onclick = () => { collect(); st.cur = x.dataset.var; render(); });
-  const add = document.querySelector("[data-add]"); if (add) add.onclick = () => { collect(); const v = "ABCD"[st.variants.length]; st.variants.push(v); st.keys[v] = {}; texts.forEach(i => { if (st.keys.A[i.label]) st.keys[v][i.label] = st.keys.A[i.label]; }); st.cur = v; render(); };
+  document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; st.variants = ["A"]; st.cur = "A"; haptic("select"); rerender(); });
+  const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
+  document.querySelectorAll("[data-var]").forEach(x => x.onclick = () => { collect(); st.cur = x.dataset.var; rerender(); });
+  const add = document.querySelector("[data-add]"); if (add) add.onclick = () => { collect(); const v = "ABCD"[st.variants.length]; st.variants.push(v); st.keys[v] = {}; texts.forEach(i => { if (st.keys.A[i.label]) st.keys[v][i.label] = st.keys.A[i.label]; }); st.cur = v; rerender(); };
   document.getElementById("apply").onclick = () => {
     const raw = document.getElementById("quick").value.toLowerCase().replace(/\s/g, "").replace(/[абвсдеф]/g, c => ({ "а": "a", "б": "b", "в": "b", "с": "c", "д": "d", "е": "e", "ф": "f" }[c]));
     const ch = items.filter(i => i.kind === "choice");
     if (/\d/.test(raw)) { (raw.match(/(\d+)([a-f])/g) || []).forEach(p => { const m = p.match(/(\d+)([a-f])/); key[m[1]] = m[2].toUpperCase(); }); }
     else { raw.split("").forEach((c, i) => { if (ch[i] && "abcdef".slice(0, ch[i].options).includes(c)) key[ch[i].label] = c.toUpperCase(); }); }
-    collect(); haptic("success"); render();
+    collect(); haptic("success"); rerender();
   };
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
     for (const v of st.variants) {
       const miss = items.filter(i => !st.keys[v][i.label]);
-      if (miss.length) { st.cur = v; render(); toast(`${v} variant: ${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} kaliti yo'q`); haptic("error"); return; }
+      if (miss.length) { st.cur = v; rerender(); toast(`${v} variant: ${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} kaliti yo'q`); haptic("error"); return; }
     }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
     try {
-      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, keys: st.keys });
-      if (st.mode === "offline") {  // oflayn: darhol o'quvchilar ro'yxatiga
-        S.create = null; S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
-        toast("✅ Test yaratildi — endi o'quvchilarni qo'shing");
-        return go("teacher", { id: res.id });
-      }
+      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, count: st.count, essay_topic: st.topic, theme: st.theme, keys: st.keys });
       S.create = null; S.boot = null; haptic("success");
       S.stack = [];
       $app.innerHTML = `<div class="view"><div class="card success">
         <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
         <h1>Test tayyor!</h1><p class="muted">O'quvchilarga shu kodni bering:</p><div class="bigcode">${res.code}</div>
-        <p class="muted small">📄 Titul va 🔑 kalit PDF'lari chatga yuborildi.</p>
+        <p class="muted small">🔑 Kalit PDF'i chatga yuborildi.</p>
         <div class="row"><button class="btn ghost" id="copy">Kodni nusxalash</button><button class="btn" id="open">Testni ochish</button></div></div></div>`;
       document.getElementById("copy").onclick = () => { navigator.clipboard.writeText(res.code).then(() => toast("Nusxalandi"), () => toast(res.code)); };
       document.getElementById("open").onclick = () => { S.current = { view: "home", params: {} }; go("teacher", { id: res.id }); };
@@ -727,10 +782,19 @@ function itemsFor(fmt, count) {
 
 VIEWS.teacher = async ({ id, tab }) => {
   loading();
-  let d; try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); }
+  // Bo'lim almashtirishda serverga qayta so'rov yo'q — bor ma'lumot ishlatiladi
+  let d = S.useCache && S.teacherCache && S.teacherCache.id == id ? S.teacherCache.d : null;
+  S.useCache = false;
+  if (d) {  // orqa fonda yangisini olamiz: o'zgargan bo'lsa (yangi javob kelgan) — jimgina yangilanadi
+    const view = S.current;
+    api(`/api/teacher/test/${id}`).then(fresh => {
+      if (S.current !== view || JSON.stringify(fresh) === JSON.stringify(S.teacherCache.d)) return;
+      S.teacherCache = { id, d: fresh }; S.useCache = true; rerender();
+    }).catch(() => {});
+  }
+  if (!d) { try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); } S.teacherCache = { id, d }; }
   const t = d.test, milliy = t.fmt === "milliy", n = d.attempts.length;
-  const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
-  tab = tab || "people";
+  tab = tab || "home";
   const totals = d.attempts.map(a => milliy ? a.total : a.percent);
   const avg = n ? totals.reduce((x, y) => x + y, 0) / n : 0, max = n ? Math.max(...totals) : 0;
   const certified = d.attempts.filter(a => a.grade && a.grade !== "NC").length;
@@ -747,28 +811,42 @@ VIEWS.teacher = async ({ id, tab }) => {
   const pending = d.attempts.filter(a => a.essay_status === "pending").length;
   const essayIcon = a => a.essay != null ? `✅ ${num(a.essay)}` : a.essay_status === "graded" ? `🤖 ${num(a.ai_score)}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
   const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay_status === "none" ? "esse yuborilmagan" : a.essay != null ? "tasdiqlangan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
+  // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
+  const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0);
+  const steps = [["Kodni berish", n > 0], ["Javoblar", n > 0], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]];
+  const nowStep = t.closed ? -1 : steps.findIndex(s => !s[1]);
+  const stepsHTML = `<ol class="steps">${steps.map(([label, done], i) => `<li class="${t.closed || done ? "done" : i === nowStep ? "now" : ""}">${label}</li>`).join("")}</ol>`;
+  let next;
+  if (t.closed) next = `<h2>📢 Natijalar e'lon qilindi</h2><p class="muted small">${n} ta o'quvchi natijasini oldi. Yangi javob qabul qilish uchun testni qayta oching.</p>
+      <div class="row"><button class="btn ghost" id="reopen" style="flex:1">🔓 Qayta ochish</button><button class="btn" data-send="results" style="flex:1">📊 Natijalar PDF</button></div>`;
+  else if (!n) next = `<h2>O'quvchilarga kodni bering</h2><p class="muted small">Ular botga shu kodni yozib testni boshlaydi.</p>
+      <div class="bigcode">${t.code}</div><button class="btn block" id="copy-code">Kodni nusxalash</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
+  else if (essaysLeft) next = `<h2>📝 Esselarni tekshiring</h2><p class="muted small">${suggested ? `${suggested} ta esseni AI baholadi — tasdiqlang.` : ""} ${pending ? `${pending} ta esse AI navbatida.` : ""}</p>
+      <button class="btn block" data-goto="essays">Esselarga o'tish</button>`;
+  else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
+      <button class="btn block" id="announce">📢 Natijalarni e'lon qilish</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
+  const strip = n ? `<div class="strip">
+      <div><b data-count="${n}" data-suffix="">${n}</b><span>Qatnashdi</span></div>
+      <div><b data-count="${avg}" data-suffix="${milliy ? "" : "%"}">${num(avg)}</b><span>O'rtacha</span></div>
+      <div><b data-count="${max}" data-suffix="${milliy ? "" : "%"}">${num(max)}</b><span>Eng yuqori</span></div>
+      <div><b data-count="${milliy ? certified : d.attempts.filter(a => a.percent >= 80).length}">0</b><span>${milliy ? "C+ daraja" : "80%+"}</span></div></div>` : "";
+  const files = `<div class="card"><h2>Fayllar</h2><div class="files">
+      <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
+      ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}</div>
+      <span class="muted small">Fayllar Telegram chatga yuboriladi.</span></div>
+    <div class="card"><h2>Foydali</h2><div class="list">
+      ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}
+      <button class="item" id="copy-test"><span class="ico">📋</span><span><b>Boshqa guruh uchun nusxa</b><small>Yangi kod, kalitlar o'sha — qayta kiritish shart emas</small></span></button></div></div>`;
+  const liveOn = !t.closed;
+  const tabsList = [["home", "🏠 Umumiy"], ...(liveOn ? [["live", "📡 Jonli"]] : []), ["people", `👥 Natijalar${n ? ` · ${n}` : ""}`], ["questions", "🧩 Tahlil"], ...(milliy ? [["essays", `📝 Esselar${suggested ? `<span class="badge">${suggested}</span>` : ""}`]] : []), ["design", "🎨 Dizayn"]];
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1>
-      <div class="row wrap"><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span class="muted small">${esc(t.format)} · ${t.variants.join(", ")}</span></div></div>
-    <div class="tiles">
-      <div class="tile"><b data-count="${n}" data-suffix="">${n}</b><span>Qatnashchilar</span></div>
-      <div class="tile"><b data-count="${avg}" data-suffix="${milliy ? "" : "%"}">${num(avg)}</b><span>O'rtacha ${milliy ? "ball" : "natija"}</span></div>
-      <div class="tile"><b data-count="${max}" data-suffix="${milliy ? "" : "%"}">${num(max)}</b><span>Eng yuqori</span></div>
-      <div class="tile"><b data-count="${milliy ? certified : d.attempts.filter(a => a.percent >= 80).length}">0</b><span>${milliy ? "Sertifikat (C+)" : "80% va yuqori"}</span></div>
-    </div>
-    ${gradeBar}
-    ${offline ? `<div class="card"><div class="row between"><h2>📄 Oflayn test</h2><span class="muted small">${scanned} / ${d.students.length} skanerlangan</span></div>
-      <div class="track"><i style="width:${d.students.length ? scanned / d.students.length * 100 : 0}%"></i></div>
-      <button class="btn block" id="scan">📷 Titullarni skanerlash</button>
-      <button class="btn ghost block" id="sheets">📄 Titullarni chiqarish (PDF)</button></div>` : ""}
-    <div class="card"><div class="row wrap">
-      ${t.closed ? `<button class="btn ghost sm" id="reopen">🔓 Qayta ochish</button>` : `<button class="btn sm" id="announce">📢 Natijalarni e'lon qilish</button>`}
-      <button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button>${offline ? "" : `<button class="btn ghost sm" data-send="sheet">📄 Titul</button>`}<button class="btn ghost sm" data-send="key">🔑 Kalit</button>
-    </div></div>
-    <div class="tabs">${offline ? `<button class="${tab === "students" ? "on" : ""}" data-tab="students">🗂 Ro'yxat · ${d.students.length}</button>` : ""}<button class="${tab === "people" ? "on" : ""}" data-tab="people">👥 Natijalar</button><button class="${tab === "questions" ? "on" : ""}" data-tab="questions">🧩 Savollar</button>${milliy ? `<button class="${tab === "essays" ? "on" : ""}" data-tab="essays">📝 Esselar${suggested ? ` · ${suggested}` : ""}</button>` : ""}<button class="${tab === "design" ? "on" : ""}" data-tab="design">🎨 Dizayn</button></div>
-    ${tab === "students" ? rosterHTML(d) : ""}
-    ${tab === "people" ? `<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
-    ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty">Natijalar yo'q</div>`) : ""}
+    <div class="thead"><h1>${esc(t.title)}</h1>
+      <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)} · ${t.variants.join(", ")}</span></div></div>
+    <div class="tabs bar">${tabsList.map(([k, label]) => `<button class="${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}</div>
+    ${tab === "home" ? `<div class="card next">${stepsHTML}${next}</div>${strip}${gradeBar}${files}` : ""}
+    ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
+    ${tab === "people" ? `${strip}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
+    ${tab === "questions" ? (n ? `${gradeBar}<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
     ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}</div><div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
@@ -780,7 +858,8 @@ VIEWS.teacher = async ({ id, tab }) => {
     countUp(el);
   }
   if (tab === "design") preview(t.theme);
-  document.querySelectorAll("[data-tab]").forEach(x => x.onclick = () => { S.current.params = { id, tab: x.dataset.tab }; haptic("select"); render(); });
+  if (tab === "live") { loadLive(t.id); S.liveTimer = setInterval(() => loadLive(t.id), 5000); }
+  document.querySelectorAll("[data-tab]").forEach(x => x.onclick = () => { S.current.params = { id, tab: x.dataset.tab }; S.useCache = true; haptic("select"); rerender(); });
   document.querySelectorAll("[data-res]").forEach(x => x.onclick = () => go("result", { id: x.dataset.res }));
   document.querySelectorAll("[data-essay]").forEach(x => x.onclick = () => essaySheet(x.dataset.essay, id));
   document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); } });
@@ -790,204 +869,71 @@ VIEWS.teacher = async ({ id, tab }) => {
     if (!n) { toast("Hali hech kim javob yubormagan"); return; }
     if (!(await confirmBox(`${n} ta o'quvchiga natijalar yuborilsinmi?${waiting ? `\n\n⚠️ ${waiting} ta esse hali tasdiqlanmagan.` : ""}\n\nJavob qabul qilish to'xtaydi.`))) return;
     an.disabled = true; an.textContent = "Yuborilmoqda…";
-    try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(`📢 ${res.sent} ta o'quvchiga yuborildi`); S.boot = null; render(); }
+    try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(`📢 ${res.sent} ta o'quvchiga yuborildi`); S.boot = null; rerender(); }
     catch (e) { toast(e.message); an.disabled = false; an.textContent = "📢 Natijalarni e'lon qilish"; }
   };
   const ro = document.getElementById("reopen");
-  if (ro) ro.onclick = async () => { if (!(await confirmBox("Testni qayta ochasizmi? Yangi javoblar qabul qilinadi."))) return; await api(`/api/teacher/test/${t.id}/reopen`, {}); S.boot = null; render(); };
-  if (offline) bindRoster(d, id);
-  const sc = document.getElementById("scan"); if (sc) sc.onclick = () => go("scan", { id });
-  const sh = document.getElementById("sheets"); if (sh) sh.onclick = () => sheetsModal(t, d.students);
+  if (ro) ro.onclick = async () => { if (!(await confirmBox("Testni qayta ochasizmi? Yangi javoblar qabul qilinadi."))) return; await api(`/api/teacher/test/${t.id}/reopen`, {}); S.boot = null; rerender(); };
+  const copyCode = () => navigator.clipboard.writeText(t.code).then(() => { toast("Kod nusxalandi"); haptic("success"); }, () => toast(t.code));
+  ["copy-code", "code-chip"].forEach(k => { const el = document.getElementById(k); if (el) el.onclick = copyCode; });
+  const rk = document.getElementById("ranking"); if (rk) rk.onclick = () => rankingModal(t, d.attempts, milliy);
+  const cp = document.getElementById("copy-test"); if (cp) cp.onclick = () => copyTestModal(t);
+  document.querySelectorAll("[data-goto]").forEach(x => x.onclick = () => { S.current.params = { id, tab: x.dataset.goto }; S.useCache = true; haptic("select"); rerender(); });
   const ca = document.getElementById("confirm-all");
-  if (ca) ca.onclick = async () => { try { const res = await api(`/api/teacher/test/${t.id}/essays/confirm-all`, {}); toast(`✅ ${res.count} ta tasdiqlandi`); haptic("success"); render(); } catch (e) { toast(e.message); } };
+  if (ca) ca.onclick = async () => { try { const res = await api(`/api/teacher/test/${t.id}/essays/confirm-all`, {}); toast(`✅ ${res.count} ta tasdiqlandi`); haptic("success"); rerender(); } catch (e) { toast(e.message); } };
 };
 
-// ---------- Oflayn test: ro'yxat, titullar, skaner ----------
-async function apiForm(path, form) {
-  let res;
-  try { res = await fetch(path, { method: "POST", headers: { "X-Init-Data": (tg && tg.initData) || "" }, body: form }); }
-  catch (e) { throw new Error("Internet aloqasi yo'q"); }
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || "Xatolik yuz berdi");
-  return json;
+// ---------- Jonli kuzatuv (onlayn test) ----------
+function ago(sec) { return sec < 60 ? "hozir" : sec < 3600 ? `${Math.floor(sec / 60)} daq` : `${Math.floor(sec / 3600)} soat ${Math.floor(sec % 3600 / 60)} daq`; }
+
+async function loadLive(testId) {
+  let r; try { r = await api(`/api/teacher/test/${testId}/live`); } catch (e) { return; }
+  const box = document.getElementById("live"); if (!box) { clearInterval(S.liveTimer); return; }
+  const order = { active: 0, idle: 1, done: 2 };
+  const people = r.people.sort((a, b) => order[a.status] - order[b.status] || (b.answered || 0) - (a.answered || 0));
+  const count = st => people.filter(p => p.status === st).length;
+  const rows = people.map(p => {
+    const share = p.total ? Math.round(p.answered / p.total * 100) : 0;
+    const tag = p.status === "done" ? `<span class="pill-tag done">✅ Topshirdi</span>`
+      : p.status === "active" ? `<span class="pill-tag live-on">● Yechmoqda</span>` : `<span class="pill-tag wait">⏸ ${ago(p.seen)} oldin</span>`;
+    return `<div class="item live-row" style="cursor:default"><span class="live-dot ${p.status}"></span>
+      <span><b>${esc(p.name)}</b><small>${p.total ? `${p.answered} / ${p.total} javob` : "bot orqali"}${p.started != null && p.status !== "done" ? ` · ${p.started < 60 ? "hozir boshladi" : `boshlaganiga ${ago(p.started)}`}` : ""}</small>
+        ${p.total && p.status !== "done" ? `<span class="track" style="margin-top:6px"><i style="width:${share}%"></i></span>` : ""}</span>${tag}</div>`;
+  }).join("");
+  box.innerHTML = `<div class="strip" style="grid-template-columns:repeat(3,1fr)">
+      <div><b>${count("active")}</b><span>Yechmoqda</span></div><div><b>${count("idle")}</b><span>Faol emas</span></div><div><b>${count("done")}</b><span>Topshirdi</span></div></div>
+    ${rows || `<div class="card empty"><div class="big">📡</div><b>Hali hech kim testni ochmadi</b><span>O'quvchi kodni kiritishi bilan shu yerda paydo bo'ladi. Ro'yxat har 5 soniyada yangilanadi.</span></div>`}
+    <span class="muted small" style="text-align:center">Har 5 soniyada yangilanadi · 1 daqiqa signal bo'lmasa — «faol emas»</span>`;
 }
 
-// Telefon surati katta (4–12 MB): yuborishdan oldin 2000 px gacha kichraytiriladi — sekin internetda ham tez
-function compressImage(file, max = 2000) {
-  return new Promise(resolve => {
-    const url = URL.createObjectURL(file), img = new Image();
-    img.onload = () => {
-      const k = Math.min(1, max / Math.max(img.width, img.height));
-      const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      c.toBlob(b => { URL.revokeObjectURL(url); resolve(b || file); }, "image/jpeg", 0.88);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
-  });
-}
-
-function rosterHTML(d) {
-  const vs = d.test.variants;
-  const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${String(s.number).padStart(3, "0")}</span>
-    <span><b>${esc(s.name)}</b><small>${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
-    <span class="row" style="gap:6px"><button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button><button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
-  return `<div class="card"><h2>O'quvchilarni qo'shish</h2>
-    <textarea class="input" id="names" rows="5" placeholder="Har bir o'quvchi yangi qatorda:\nAli Valiyev\nMadina Yusupova\n…"></textarea>
-    <div class="field"><label>Variantlar</label><div class="chips" id="vmode">
-      ${vs.length > 1 ? `<button type="button" class="chip on" data-vm="cycle">Navbat bilan (${vs.join(", ")})</button><button type="button" class="chip" data-vm="random">Aralash</button>` : ""}
-      ${vs.map((v, i) => `<button type="button" class="chip ${vs.length === 1 && !i ? "on" : ""}" data-vm="${v}">Hammasi ${v}</button>`).join("")}</div></div>
-    <button class="btn block" id="add-st">＋ Ro'yxatga qo'shish</button>
-    <label class="btn ghost block" for="xlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
-    <input type="file" id="xlsx" accept=".xlsx,.csv,.txt" hidden>
-    <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida), variant ustuni ixtiyoriy (A, B, C, D). Har o'quvchiga ID beriladi: 001, 002, …</span></div>
-    <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div><b>Ro'yxat ixtiyoriy</b>
-      <span>Ro'yxat bo'lsa — har o'quvchiga ismi va ID'si bosilgan shaxsiy titul chiqadi.<br>
-      Bo'lmasa — «📄 Titullarni chiqarish»da bo'sh titullar chiqaring: o'quvchi ID'sini o'zi bo'yaydi yoki skanerlashda ismini yozasiz.</span></div>`}</div>`;
-}
-
-function bindRoster(d, id) {
-  const vs = d.test.variants;
-  let vmode = vs.length > 1 ? "cycle" : vs[0];
-  document.querySelectorAll("[data-vm]").forEach(x => x.onclick = () => { vmode = x.dataset.vm; document.querySelectorAll("[data-vm]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); });
-  const add = document.getElementById("add-st");
-  if (add) add.onclick = async () => {
-    const names = document.getElementById("names").value.split("\n").map(x => x.trim()).filter(Boolean);
-    if (!names.length) { toast("Ismlarni yozing"); return; }
-    add.disabled = true;
-    try { await api(`/api/teacher/test/${id}/students`, { names, mode: vmode }); haptic("success"); toast(`✅ ${names.length} ta o'quvchi qo'shildi`); render(); }
-    catch (e) { toast(e.message); add.disabled = false; }
-  };
-  const xlsx = document.getElementById("xlsx");
-  if (xlsx) xlsx.onchange = async () => {
-    const file = xlsx.files[0]; if (!file) return;
-    const label = document.querySelector('label[for="xlsx"]'); label.textContent = "Yuklanmoqda…";
-    try {
-      const form = new FormData(); form.append("file", file, file.name); form.append("mode", vmode);
-      const r = await apiForm(`/api/teacher/test/${id}/students/import`, form);
-      haptic("success"); toast(`✅ ${r.added} ta o'quvchi qo'shildi${r.with_variant ? ` (${r.with_variant} tasining varianti fayldan)` : ""}`); render();
-    } catch (e) { toast(e.message); haptic("error"); label.textContent = "📥 Excel'dan yuklash (.xlsx, .csv)"; }
-    xlsx.value = "";
-  };
-  document.querySelectorAll("[data-var-of]").forEach(x => x.onclick = async () => {
-    const next = vs[(vs.indexOf(x.textContent.trim()) + 1) % vs.length];
-    try { await api(`/api/teacher/test/${id}/students/${x.dataset.varOf}`, { variant: next }); x.textContent = next; haptic("select"); }
-    catch (e) { toast(e.message); }
-  });
-  document.querySelectorAll("[data-del-st]").forEach(x => x.onclick = async () => {
-    if (!(await confirmBox("O'quvchini ro'yxatdan o'chirasizmi? Skanerlangan natijasi ham o'chadi."))) return;
-    try { await api(`/api/teacher/test/${id}/students/${x.dataset.delSt}`, { delete: true }); render(); } catch (e) { toast(e.message); }
-  });
-}
-
-function sheetsModal(t, students) {
+function openModal(title, inner) {
   const modal = document.createElement("div"); modal.className = "sheet-modal";
-  modal.innerHTML = `<div role="dialog" aria-label="Titullar">
-    <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
-    <p class="muted small" style="margin:0">Har bir o'quvchiga ismi, raqami va varianti bosilgan shaxsiy titul${t.fmt === "milliy" ? " va esse varaqasi" : ""}. Skaner varaq kimniki ekanini o'zi taniydi.</p>
-    <div class="field"><label for="blanks">Qo'shimcha bo'sh titullar (ro'yxatda yo'qlar uchun)</label><input class="input" id="blanks" inputmode="numeric" value="${students.length ? 0 : 30}"></div>
-    <button class="btn block" id="make">PDF'ni chatga yuborish (${students.length} ta shaxsiy)</button></div>`;
+  modal.innerHTML = `<div role="dialog" aria-label="${esc(title)}"><div class="row between"><h2>${title}</h2><button class="btn plain" data-close>Yopish</button></div>${inner}</div>`;
   document.body.appendChild(modal);
   modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
-  modal.querySelector("#make").onclick = async () => {
-    const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { const r = await api(`/api/teacher/test/${t.id}/sheets`, { blanks: parseInt(modal.querySelector("#blanks").value) || 0 }); haptic("success"); toast(`📨 ${r.pages} ta titul chatga yuborildi`); modal.remove(); }
-    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "PDF'ni chatga yuborish"; }
-  };
+  return modal;
 }
 
-VIEWS.scan = async ({ id }) => {
-  loading();
-  let d; try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); }
-  const t = d.test, milliy = t.fmt === "milliy";
-  const items = milliy ? itemsFor("milliy", 45) : [];  // oddiy testda savollar skaner natijasidan olinadi
-  const scanned = d.students.filter(s => s.scanned).length;
-  $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small">${scanned} / ${d.students.length} skanerlangan</span></div>
-    <div class="card" id="capture">
-      <label class="btn block" for="photo" style="padding:22px">📷 Titulni suratga olish</label>
-      <input type="file" id="photo" accept="image/*" capture="environment" hidden>
-      <span class="muted small">Varaqni tekis joyga qo'ying, 4 burchakdagi qora kvadrat kadrda to'liq ko'rinsin, soya tushmasin.</span>
-    </div>
-    <div id="review"></div>
-  </div>`;
-  const input = document.getElementById("photo");
-  input.onchange = async () => {
-    const file = input.files[0]; if (!file) return;
-    const review = document.getElementById("review");
-    review.innerHTML = `<div class="card empty"><div class="big">🔍</div><b>Skanerlanmoqda…</b><span>Bir necha soniya</span></div>`;
-    try {
-      const form = new FormData(); form.append("photo", await compressImage(file), "titul.jpg");
-      const r = await apiForm(`/api/teacher/test/${id}/scan`, form);
-      haptic("success"); showReview(r, d, items, review);
-    } catch (e) {
-      haptic("error");
-      review.innerHTML = `<div class="card empty"><div class="big">📷</div><b>${esc(e.message)}</b><span>Qaytadan suratga oling.</span></div>`;
-    }
-    input.value = "";
-  };
-};
+// Guruhga tashlash uchun tayyor matn: o'rinlar, ball, daraja
+function rankingModal(t, attempts, milliy) {
+  const medals = ["🥇", "🥈", "🥉"];
+  const lines = attempts.slice(0, 10).map((a, i) => `${medals[i] || `${i + 1}.`} ${a.name} — ${milliy ? `${num(a.total)} ball${a.grade ? ` · ${a.grade}` : ""}` : `${num(a.percent)}%`}`);
+  const avg = attempts.reduce((s, a) => s + (milliy ? a.total : a.percent), 0) / (attempts.length || 1);
+  const text = `🏆 «${t.title}» natijalari\n\n${lines.join("\n")}\n\n👥 Qatnashchilar: ${attempts.length} · O'rtacha: ${num(avg)}${milliy ? " ball" : "%"}\n#mock #onatili`;
+  const modal = openModal("🏆 Reyting matni", `<textarea class="input" rows="12" readonly>${esc(text)}</textarea>
+    <button class="btn block" id="copy-rank">Nusxalash</button><span class="muted small">Nusxalab, guruh yoki kanalga tashlang.</span>`);
+  modal.querySelector("#copy-rank").onclick = () => navigator.clipboard.writeText(text).then(() => { toast("Nusxalandi"); haptic("success"); modal.remove(); },
+    () => { const ta = modal.querySelector("textarea"); ta.focus(); ta.select(); toast("Matnni belgilab nusxalang"); });
+}
 
-function showReview(r, d, allItems, box) {
-  const t = d.test, milliy = t.fmt === "milliy";
-  const qs = r.questions, answers = {}, warn = new Set();
-  qs.forEach(q => { if (q.chosen) answers[q.label] = q.chosen; if (q.status === "multiple" || q.status === "unsure") warn.add(q.label); });
-  const items = milliy ? allItems : qs.map(q => ({ label: q.label, kind: "choice", options: 4 }));
-  const texts = items.filter(i => i.kind === "text");
-  let variant = r.variant;
-  const free = d.students.filter(s => !s.scanned);
-  const who = r.student
-    ? `<div class="row between"><span><b>№ ${String(r.student.number).padStart(3, "0")} · ${esc(r.student.name)}</b><br><small class="muted">${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
-       ${r.student.scanned ? `<span class="pill-tag wait">⚠️ Avval skanerlangan — saqlasangiz almashtiriladi</span>` : ""}`
-    : `${r.name_image ? `<img src="${r.name_image}" alt="Ism katagi" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
-       <span class="muted small">${r.id_source === "unknown" ? `⚠️ ID ${String(r.id_read).padStart(3, "0")} o'qildi, lekin ro'yxatda bunday o'quvchi yo'q — tanlang yoki ismini yozing`
-         : r.id_status === "unclear" ? "⚠️ ID doirachalari noaniq bo'yalgan — o'quvchini tanlang"
-         : r.code_status === "blank" ? "Bo'sh titul, ID bo'yalmagan — o'quvchini tanlang yoki ismini yozing" : "Titul kodi o'qilmadi — o'quvchini tanlang"}</span>
-       ${free.length ? `<select class="input" id="pick"><option value="">— Ro'yxatdan tanlang —</option>${free.map(s => `<option value="${s.id}">№ ${s.number} · ${esc(s.name)}</option>`).join("")}</select>` : ""}
-       <input class="input" id="newname" placeholder="yoki yangi o'quvchi ismi">`;
-  box.innerHTML = `
-    <div class="card">${who}
-      <div class="field"><label>Variant ${r.variant_read ? "" : "<span class='muted'>(titulda bo'yalmagan — tanlang)</span>"}</label><div class="chips">${t.variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-sv="${v}">${v}</button>`).join("")}</div></div></div>
-    ${warn.size ? `<div class="card small" style="border:1.5px solid var(--warn)">⚠️ <b>${warn.size} ta savolni tekshiring</b> (ikkita bo'yalgan yoki xira): ${[...warn].join(", ")}</div>` : `<div class="card small">✅ Barcha doirachalar aniq o'qildi</div>`}
-    <div class="section-title"><h2>Test javoblari</h2><span class="muted small">kerak bo'lsa bosib tuzating</span></div>
-    ${bubbleSheet(items, answers)}
-    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2><span class="muted small">${r.written && Object.keys(r.written).length ? "AI o'qidi — tekshiring" : ""}</span></div>
-      <div class="card">${r.written_image ? `<img src="${r.written_image}" alt="Yozma kataklar" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
-      ${r.ai_note ? `<span class="muted small">${esc(r.ai_note)}</span>` : ""}
-      ${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" value="${esc((r.written || {})[i.label] || "")}" placeholder="Javob" autocomplete="off"></div>`).join("")}</div>` : ""}
-    <button class="btn block" id="save-scan">💾 Saqlash</button>`;
-  warn.forEach(l => { const row = box.querySelector(`.qrow[data-q="${l}"]`); if (row) row.style.boxShadow = "inset 3px 0 0 var(--warn)"; });
-  bindBubbles(answers);
-  box.querySelectorAll("[data-sv]").forEach(x => x.onclick = () => { variant = x.dataset.sv; box.querySelectorAll("[data-sv]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); });
-  box.querySelector("#save-scan").onclick = async () => {
-    const payload = { variant, answers: { ...answers } };
-    box.querySelectorAll(".wq").forEach(x => { if (x.value.trim()) payload.answers[x.dataset.q] = x.value.trim(); });
-    if (r.student) payload.student_id = r.student.id;
-    else {
-      const pick = box.querySelector("#pick"), nn = box.querySelector("#newname");
-      if (pick && pick.value) payload.student_id = +pick.value; else payload.name = nn ? nn.value.trim() : "";
-      if (!payload.student_id && (!payload.name || payload.name.length < 3)) { toast("O'quvchini tanlang yoki ismini yozing"); haptic("error"); return; }
-    }
-    if (!variant) { toast("Variantni tanlang"); haptic("error"); return; }
-    const btn = box.querySelector("#save-scan"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
-    try {
-      const res = await api(`/api/teacher/test/${t.id}/scan/save`, payload);
-      haptic("success");
-      d.students = (await api(`/api/teacher/test/${t.id}/students`)).students;
-      box.innerHTML = `<div class="card success" style="padding:20px 10px">
-        <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
-        <h2>${esc(res.name)}</h2><p class="muted" style="margin:0">${milliy ? `${num(res.points)} / ${num(res.max_points)} ball (essesiz)` : `${res.correct} / ${res.auto_total} to'g'ri`}</p>
-        ${milliy ? `<label class="btn ghost block" for="essay-photo">📝 Esse varaqasini suratga olish</label><input type="file" id="essay-photo" accept="image/*" capture="environment" hidden>` : ""}
-        <label class="btn block" for="photo">📷 Keyingi titul</label></div>`;
-      const ep = box.querySelector("#essay-photo");
-      if (ep) ep.onchange = async () => {
-        const f = ep.files[0]; if (!f) return;
-        const lbl = box.querySelector('label[for="essay-photo"]'); lbl.textContent = "Yuklanmoqda…";
-        try { const form = new FormData(); form.append("photo", await compressImage(f, 2400), "essay.jpg"); const er = await apiForm(`/api/teacher/attempt/${res.attempt_id}/essay-photo`, form); lbl.textContent = er.status === "pending" ? "✅ Esse AI navbatida" : "✅ Esse saqlandi"; haptic("success"); }
-        catch (e) { toast(e.message); lbl.textContent = "📝 Esse varaqasini suratga olish"; }
-      };
-      S.boot = null;
-    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "💾 Saqlash"; }
+function copyTestModal(t) {
+  const modal = openModal("📋 Testdan nusxa", `<p class="muted small" style="margin:0">Kalitlar, variantlar, esse mavzusi va dizayn ko'chiriladi. Natijalar va ro'yxat ko'chirilmaydi.</p>
+    <div class="field"><label for="copy-title">Yangi test nomi</label><input class="input" id="copy-title" value="${esc(t.title)} — 2-guruh" maxlength="80"></div>
+    <button class="btn block" id="make-copy">Nusxa yaratish</button>`);
+  modal.querySelector("#make-copy").onclick = async e => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Yaratilmoqda…";
+    try { const r = await api(`/api/teacher/test/${t.id}/copy`, { title: modal.querySelector("#copy-title").value }); haptic("success"); toast(`✅ Yangi kod: ${r.code}`); modal.remove(); S.boot = null; go("teacher", { id: r.id }); }
+    catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Nusxa yaratish"; }
   };
 }
 
@@ -1013,7 +959,7 @@ async function essaySheet(attemptId, testId) {
   modal.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const action = b.dataset.act, payload = { action };
     if (action === "score") payload.score = document.getElementById("manual").value;
-    try { await api(`/api/teacher/essay/${attemptId}`, payload); haptic("success"); toast(action === "retry" ? "🔁 Navbatga qo'yildi" : "✅ Saqlandi"); close(); render(); }
+    try { await api(`/api/teacher/essay/${attemptId}`, payload); haptic("success"); toast(action === "retry" ? "🔁 Navbatga qo'yildi" : "✅ Saqlandi"); close(); rerender(); }
     catch (err) { toast(err.message); haptic("error"); }
   });
 }
