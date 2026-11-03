@@ -72,7 +72,14 @@ def _choice_grid(count: int) -> tuple[int, int]:
 
 
 def layout(test: dict, variant_names: list[str]) -> dict:
-    """Varaqdagi barcha elementlarning joyi: {"bubbles", "written", "written_area", "name_area", "bottom"}."""
+    """
+    Varaqdagi barcha elementlarning joyi: {"bubbles", "written", "written_area", "name_area", "page"}.
+    page — titul o'lchami (omr.SheetPage maydonlari); standart A4 titulda None.
+    Ixcham / EvalBee / DTM ko'rinishlari — sheet_styles.py da.
+    """
+    import sheet_styles
+    if sheet_styles.style_of(test) != "standard":
+        return sheet_styles.layout(test, variant_names)
     bubbles: list[dict] = []
 
     step = (H - 2 * CORNER) / (EDGE_MARKS + 1)
@@ -146,7 +153,7 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     else:
         bottom, written_area = choices_bottom, None
     return {"bubbles": bubbles, "written": written, "written_area": written_area, "name_area": NAME_AREA,
-            "choices_columns": (columns, rows, column_width), "bottom": bottom}
+            "page": None, "choices_columns": (columns, rows, column_width), "bottom": bottom}
 
 
 def _square(c: canvas.Canvas, x: float, y: float, size: float) -> None:
@@ -314,6 +321,15 @@ def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blank
     c = canvas.Canvas(buffer, pagesize=A4)
     c.setTitle(f"Titullar — {test['title']}")
     pages = [*students, *([None] * blanks)] or [None]
+    import sheet_styles
+    if sheet_styles.style_of(test) != "standard":
+        sheet_styles.draw_sheets(c, test, variant_names, pages)
+        if test["fmt"] == "milliy":  # esse varaqalari — titullardan keyin, xuddi shu tartibda
+            for student in pages:
+                pdfs.draw_essay_page(c, test, student)
+                c.showPage()
+        c.save()
+        return buffer.getvalue()
     for student in pages:
         draw_answer_page(c, test, variant_names, student)
         c.showPage()

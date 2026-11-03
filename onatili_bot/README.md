@@ -17,6 +17,20 @@ Chittak (matemttest) uslubidagi Telegram bot, faqat Ona tili va adabiyot uchun.
 - **Natijalar PDF**: ball, Rasch bali, daraja, xato savollar. Esse bahosi 0–24 (0,5 qadam).
 - Test yakunlanganda har bir qatnashchiga Rasch bali, daraja va to'g'ri javoblar yuboriladi.
 
+## Titul ko'rinishlari (Chittak titullaridan)
+- **Standart** — A4, ism, ID, test va yozma javob kataklari (yozmani AI o'qiydi, kalit bilan solishtiriladi)
+- **Ixcham** — faqat doirachalar, bitta A4 ga 2–3 ta titul
+- **EvalBee** — ism/imtihon/sana qutisi, 5 savollik bloklar
+- **DTM** — EvalBee to'ri, ustunlar tepasida sarlavha
+Yozma javoblar faqat standart titulda o'qiladi (AI_PROVIDER + kalit kerak).
+
+## Skaner ilovasi (APK)
+- Flutter ilova repo ildizida (`lib/main.dart`). Yig'ish:
+  `flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=APP_URL=https://zakaz-9s4l.onrender.com/`
+  so'ng `build/app/outputs/flutter-apk/app-release.apk` → `onatili_bot/downloads/onatili-skaner.apk` (bot `/download` da beradi).
+- Ilovada faqat skaner: Telegram orqali kirish (bot tasdiqlaydi), ochiq titulli testlar, natija botga ham yuboriladi.
+- Mini App'da titul testida «Skanerlash» → «Skaner ilovasida ochish»: ilova shu testda, qayta kirishsiz ochiladi.
+
 ## Ishga tushirish
 ```
 python -m venv .venv

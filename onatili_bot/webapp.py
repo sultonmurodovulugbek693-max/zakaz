@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import random
+import secrets
 import logging
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 import db
 import essay_ai
 import sheet
+import sheet_styles
 from config import ADMIN_IDS, BOT_TOKEN
 from scoring import rasch_results, total_points
 from structure import (
@@ -59,7 +61,14 @@ def ok(data: dict | list) -> web.Response:
     return web.json_response(data, dumps=lambda value: json.dumps(value, ensure_ascii=False))
 
 
-def current_user(request: web.Request) -> dict:
+async def current_user(request: web.Request) -> dict:
+    """Telegram Mini App'da — initData imzosi; APK ilovada — bot orqali olingan sessiya (X-App-Session)."""
+    session = request.headers.get("X-App-Session", "")
+    if session and not request.headers.get("X-Init-Data"):
+        user = await run(db.session_user, session)
+        if not user:
+            raise ApiError(401, "Qaytadan Telegram orqali kiring", relogin=True)
+        return user
     raw = request.headers.get("X-Init-Data", "")
     try:
         data = safe_parse_webapp_init_data(BOT_TOKEN, raw)
@@ -74,6 +83,10 @@ def current_user(request: web.Request) -> dict:
     return {"id": user.id, "name": name, "username": user.username}
 
 
+def from_app(request: web.Request) -> bool:
+    return bool(request.headers.get("X-App-Session")) and not request.headers.get("X-Init-Data")
+
+
 async def missing_for(user: dict) -> list[dict]:
     """Obuna bo'lmagan kanallar (admin va hook yo'q bo'lsa — bo'sh)."""
     if user["id"] in ADMIN_IDS or "missing" not in HOOKS:
@@ -83,7 +96,7 @@ async def missing_for(user: dict) -> list[dict]:
 
 async def auth(request: web.Request) -> dict:
     """Imzo + majburiy obuna tekshiruvi."""
-    user = current_user(request)
+    user = await current_user(request)
     missing = await missing_for(user)
     if missing:
         raise ApiError(403, "Avval kanallarga obuna bo'ling", subscribe=missing)
@@ -119,7 +132,7 @@ def public_items(test: dict) -> list[dict]:
 # ---------- Umumiy ----------
 
 async def bootstrap(request: web.Request) -> web.Response:
-    user = current_user(request)
+    user = await current_user(request)
     await run(db.remember_user, user["id"], user["name"], user["username"])
     missing = await missing_for(user)
     if missing:
@@ -140,6 +153,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         })
     return ok({
         "user": user,
+        "role": await run(db.get_role, user["id"]),
         "last_name": await run(db.last_name_used, user["id"]),
         "attempts": [{
             "id": a["id"], "code": a["code"], "title": a["title"], "fmt": a["fmt"], "variant": a["variant"],
@@ -462,7 +476,9 @@ async def teacher_test(request: web.Request) -> web.Response:
                  "format": format_title(test["fmt"], test["count"]), "closed": bool(test["closed"]),
                  "theme": test.get("theme") or "classic", "variants": list(keys), "created_at": test["created_at"],
                  "essay_topic": test.get("essay_topic"), "max_points": max_points(test["items"], test["fmt"]),
-                 "channels": public_channels(test["channels"]), "mode": test.get("mode") or "online"},
+                 "channels": public_channels(test["channels"]), "mode": test.get("mode") or "online",
+                 "sheet_style": sheet_styles.style_of(test)},
+        "sheet_styles": sheet_styles.STYLES,
         "students": [student_view(s) for s in await run(db.list_students, test["id"])],
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
@@ -719,6 +735,16 @@ async def sheets(request: web.Request) -> web.Response:
     test = await own_test(request, user)
     payload = await body(request)
     blanks = max(0, min(200, int(payload.get("blanks") or 0)))
+    style = payload.get("style")
+    if style is not None:
+        if style not in sheet_styles.STYLES:
+            raise ApiError(400, "Titul ko'rinishi noto'g'ri")
+        try:  # savollar shu ko'rinishga sig'adimi
+            sheet.layout({**test, "sheet_style": style}, list(await run(db.get_keys, test["id"])))
+        except ValueError as error:
+            raise ApiError(400, str(error))
+        await run(db.set_sheet_style, test["id"], style)
+        test = {**test, "sheet_style": style}
     students = await run(db.list_students, test["id"])
     if payload.get("only"):
         students = [s for s in students if s["id"] in set(payload["only"])]
@@ -746,6 +772,16 @@ def _png_data_url(png: bytes | None) -> str | None:
     return "data:image/png;base64," + base64.b64encode(png).decode() if png else None
 
 
+async def scan_layout(request: web.Request) -> web.Response:
+    """Titul tuzilishi (doirachalar, chet belgilari joyi) — jonli skaner kadrlarni telefonning o'zida o'qiydi."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    variants = list(await run(db.get_keys, test["id"]))
+    spec = sheet.layout(test, variants)
+    return ok({"bubbles": spec["bubbles"], "variants": variants, "sheet_page": spec["page"],
+               "style": sheet_styles.style_of(test)})
+
+
 async def scan(request: web.Request) -> web.Response:
     """
     Titul surati → o'qilgan javoblar (TAKLIF: o'qituvchi tekshirib saqlaydi).
@@ -763,7 +799,7 @@ async def scan(request: web.Request) -> web.Response:
     def work():
         import cv2
         import omr
-        page = omr.SheetPage(name_area=spec["name_area"])
+        page = omr.SheetPage(**spec["page"]) if spec["page"] else omr.SheetPage(name_area=spec["name_area"])
         prepared = omr.PreparedSheet(data, spec["bubbles"], 1, page)
         result = omr.scan_answer_sheet(data, spec["bubbles"], 1, prepared, page)
         written_png = None
@@ -845,6 +881,12 @@ async def scan_save(request: web.Request) -> web.Response:
     if attempt is None:
         raise ApiError(409, "Bu o'quvchining natijasi allaqachon bor")
     await run(db.link_student_attempt, student["id"], attempt["id"])
+    if from_app(request) and "scan_notice" in HOOKS:
+        try:  # APK'dan skanerlandi — natija bot chatiga ham boradi
+            await HOOKS["scan_notice"](user["id"], test, student["name"], total_points(attempt),
+                                       max_points(test["items"], test["fmt"]))
+        except Exception:
+            logger.warning("Skaner xabarini botga yuborib bo'lmadi", exc_info=True)
     return ok({"ok": True, "attempt_id": attempt["id"], "name": student["name"],
                "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
                "correct": attempt["test_correct"] + attempt["written_correct"], "auto_total": attempt["auto_total"]})
@@ -862,6 +904,93 @@ async def essay_photo(request: web.Request) -> web.Response:
     else:
         await run(db.set_essay_photos, attempt["id"], [file_id], status)
     return ok({"ok": True, "status": status})
+
+
+# ---------- APK ilova: Telegram orqali kirish ----------
+
+APK_PATH = Path(__file__).resolve().parent / "downloads" / "onatili-skaner.apk"
+APP_SCHEME, APP_PACKAGE = "onatiliskaner", "uz.onatili.skaner"
+
+
+async def set_role(request: web.Request) -> web.Response:
+    """O'quvchi / O'qituvchi tanlovi — keyingi kirishda shu ekran ochiladi (har qurilmada)."""
+    user = await current_user(request)
+    role = (await body(request)).get("role")
+    if role not in ("student", "teacher"):
+        raise ApiError(400, "Noto'g'ri rol")
+    await run(db.remember_user, user["id"], user["name"], user["username"])
+    await run(db.set_role, user["id"], role)
+    return ok({"ok": True})
+
+
+def site_url(request: web.Request) -> str:
+    from config import WEBAPP_URL
+    return WEBAPP_URL or f"{request.scheme}://{request.host}"
+
+
+async def app_link(request: web.Request) -> web.Response:
+    """Mini App'dagi «Skanerlash» → APK: bir martalik kirish kaliti bilan havola (ilovada qayta kirish shart emas)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    token, session = secrets.token_hex(16), secrets.token_hex(24)
+    await run(db.create_handoff, token, user["id"], session)
+    return ok({"url": f"{site_url(request)}/open?t={test['id']}&login={token}", "download": f"{site_url(request)}/download",
+               "has_apk": APK_PATH.exists()})
+
+
+async def open_app(request: web.Request) -> web.Response:
+    """Brauzerda ochiladi: APK o'rnatilgan bo'lsa — uni shu testning skanerida ochadi, bo'lmasa — yuklab olish."""
+    test_id = request.query.get("t", "")
+    token = request.query.get("login", "")
+    if not test_id.isdigit() or not all(c in "0123456789abcdef" for c in token):
+        raise web.HTTPBadRequest(text="Havola noto'g'ri")
+    base = site_url(request)
+    query = f"t={test_id}&login={token}"
+    fallback = f"{base}/download"
+    intent = (f"intent://open?{query}#Intent;scheme={APP_SCHEME};package={APP_PACKAGE};"
+              f"S.browser_fallback_url={fallback};end")
+    html = f"""<!DOCTYPE html><html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Skaner ilovasi</title>
+<style>body{{font-family:system-ui,sans-serif;background:#f4faf6;color:#1f2933;display:grid;place-items:center;min-height:100vh;margin:0}}
+main{{max-width:360px;padding:28px;text-align:center}}a{{display:block;padding:15px;border-radius:14px;margin:12px 0;text-decoration:none;font-weight:700}}
+.p{{background:#1d6f42;color:#fff}}.g{{border:2px solid #1d6f42;color:#1d6f42}}p{{color:#5d6b66}}</style></head>
+<body><main><div style="font-size:56px">📷</div><h2>Ona tili · Skaner</h2>
+<p>Skaner ilovasi ochilmoqda… Ochilmasa, avval ilovani o'rnating.</p>
+<a class="p" href="{intent}">📲 Ilovada ochish</a><a class="g" href="{fallback}">⬇️ Ilovani yuklab olish (APK)</a>
+<p style="font-size:13px">O'rnatgach, Telegram'dagi botga qayting va «Skanerlash»ni yana bosing.</p></main>
+<script>location.href = {json.dumps(intent)};</script></body></html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def download_apk(_request: web.Request) -> web.StreamResponse:
+    if not APK_PATH.exists():
+        raise web.HTTPNotFound(text="APK hali yuklanmagan")
+    return web.FileResponse(APK_PATH, headers={
+        "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": 'attachment; filename="onatili-skaner.apk"',
+    })
+
+async def app_login(_request: web.Request) -> web.Response:
+    """Ilova kirish havolasini so'raydi: t.me/<bot>?start=app_<token> — bot bosilganda tasdiqlaydi."""
+    token = secrets.token_hex(16)
+    await run(db.create_login, token)
+    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
+    return ok({"token": token, "url": f"https://t.me/{username}?start=app_{token}", "bot": username})
+
+
+async def app_login_status(request: web.Request) -> web.Response:
+    session = await run(db.take_login, request.match_info["token"])
+    if not session:
+        return ok({"ready": False})
+    user = await run(db.session_user, session)
+    return ok({"ready": True, "session": session, "user": user})
+
+
+async def app_logout(request: web.Request) -> web.Response:
+    session = request.headers.get("X-App-Session", "")
+    if session:
+        await run(db.delete_session, session)
+    return ok({"ok": True})
 
 
 # ---------- Server ----------
@@ -894,6 +1023,13 @@ def create_app() -> web.Application:
     app.router.add_get("/health", health)
     app.router.add_static("/static/", STATIC_DIR)
     app.router.add_get("/api/bootstrap", bootstrap)
+    app.router.add_post("/api/app/login", app_login)
+    app.router.add_get("/api/app/login/{token:[0-9a-f]{32}}", app_login_status)
+    app.router.add_post("/api/app/logout", app_logout)
+    app.router.add_post("/api/role", set_role)
+    app.router.add_post("/api/teacher/test/{test_id:\d+}/app-link", app_link)
+    app.router.add_get("/open", open_app)
+    app.router.add_get("/download", download_apk)
     app.router.add_get("/api/test/{code:\\d{5}}", test_info)
     app.router.add_post("/api/test/{code:\\d{5}}/submit", submit)
     app.router.add_post("/api/test/{code:\\d{5}}/ping", ping)
@@ -918,6 +1054,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/import", students_import)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
+    app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/save", scan_save)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/essay-photo", essay_photo)
     return app

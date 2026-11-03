@@ -15,6 +15,7 @@ import asyncio
 import html
 import logging
 import os
+import secrets
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -99,7 +100,22 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = message.from_user
     await asyncio.to_thread(db.remember_user, user.id, user.full_name, user.username)
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) == 2 and args[1].startswith("app_"):
+        await confirm_app_login(message, args[1][4:])
+        return
     await send_welcome(message, user)
+
+
+async def confirm_app_login(message: Message, token: str) -> None:
+    """APK ilovadagi «Telegram orqali kirish»: shu Telegram akkaunt bilan ilovaga kiriladi."""
+    session = secrets.token_hex(24)
+    confirmed = await asyncio.to_thread(db.confirm_login, token, message.from_user.id, session)
+    if confirmed:
+        await message.answer("✅ <b>Ilovaga kirdingiz</b>\nSkaner ilovasiga qayting — testlaringiz o'sha yerda.\n\n"
+                             "<i>Agar siz kirmagan bo'lsangiz, bu xabarga e'tibor bermang.</i>")
+    else:
+        await message.answer("⌛️ Kirish havolasi eskirgan yoki ishlatilgan. Ilovada «Telegram orqali kirish»ni qayta bosing.")
 
 
 async def send_welcome(message: Message, user) -> None:
@@ -325,6 +341,12 @@ async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], 
     await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
 
 
+async def scan_notice(bot: Bot, chat_id: int, test: dict, name: str, points: float, max_points: float) -> None:
+    """APK skanerida saqlangan natija — o'qituvchining bot chatiga."""
+    await bot.send_message(chat_id, f"📷 <b>Skaner</b> · {esc(test['title'])} (kod {test['code']})\n"
+                                    f"👤 {esc(name)} — <b>{fmt_num(points)}</b> / {fmt_num(max_points)} ball")
+
+
 async def store_photo(bot: Bot, chat_id: int, data: bytes, caption: str) -> str:
     """Rasmni o'qituvchi chatiga yuboradi va Telegram file_id'ini qaytaradi (rasm Telegram'da saqlanadi)."""
     message = await bot.send_photo(chat_id, BufferedInputFile(data, filename="essay.jpg"), caption=caption[:1000])
@@ -522,6 +544,15 @@ dp.callback_query.outer_middleware(SubscriptionGate())
 
 # ---------- Ishga tushirish ----------
 
+_BOT_USERNAME: list[str] = []
+
+
+async def bot_username(bot: Bot) -> str:
+    if not _BOT_USERNAME:
+        _BOT_USERNAME.append((await bot.get_me()).username)
+    return _BOT_USERNAME[0]
+
+
 async def main() -> None:
     if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here":
         raise SystemExit("BOT_TOKEN topilmadi: .env faylida BOT_TOKEN=... ni BotFather tokeni bilan to'ldiring.")
@@ -534,6 +565,8 @@ async def main() -> None:
         record_attempt=lambda *args, **kwargs: record_attempt(bot, *args, **kwargs),
         send_sheets=lambda chat_id, test, students, blanks: send_sheets(bot, chat_id, test, students, blanks),
         store_photo=lambda chat_id, data, caption: store_photo(bot, chat_id, data, caption),
+        scan_notice=lambda chat_id, *args: scan_notice(bot, chat_id, *args),
+        bot_username=lambda: bot_username(bot),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),

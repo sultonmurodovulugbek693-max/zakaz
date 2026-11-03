@@ -128,6 +128,14 @@ SCHEMA = [
         added_by {BIG},
         added_at TEXT
     )""",
+    # Ilovaga (APK) Telegram orqali kirish: kind = login (bot tasdiqlashini kutadi) | session (kirilgan)
+    f"""CREATE TABLE IF NOT EXISTS app_tokens (
+        token   TEXT PRIMARY KEY,
+        kind    TEXT NOT NULL,
+        tg_id   {BIG},
+        session TEXT,
+        created {FLOAT} NOT NULL
+    )""",
 ]
 
 # Eski bazalar uchun keyin qo'shilgan ustunlar
@@ -137,6 +145,8 @@ MIGRATIONS = [
     ("tests", "theme", "TEXT"),
     ("tests", "mode", "TEXT NOT NULL DEFAULT 'online'"),
     ("tests", "channels", "TEXT"),
+    ("tests", "sheet_style", "TEXT"),
+    ("users", "role", "TEXT"),  # oxirgi tanlangan ekran: student | teacher  # titul ko'rinishi: standard | compact | evalbee | dtm
 ]
 
 
@@ -226,6 +236,23 @@ def remember_user(tg_id: int, full_name: str, username: str | None) -> None:
         )
 
 
+def get_role(tg_id: int) -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT role FROM users WHERE tg_id = ?", (tg_id,)).fetchone()
+    return row["role"] if row else None
+
+
+def set_role(tg_id: int, role: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE users SET role = ? WHERE tg_id = ?", (role, tg_id))
+
+
+def create_handoff(token: str, tg_id: int, session: str) -> None:
+    """Mini App'dan APK'ga o'tish: allaqachon tasdiqlangan kirish (Telegram imzosi bilan kelgan foydalanuvchi)."""
+    create_login(token)
+    confirm_login(token, tg_id, session)
+
+
 def last_name_used(tg_id: int) -> str | None:
     with connect() as conn:
         row = conn.execute("SELECT last_name_used FROM users WHERE tg_id = ?", (tg_id,)).fetchone()
@@ -235,6 +262,56 @@ def last_name_used(tg_id: int) -> str | None:
 def set_last_name_used(tg_id: int, name: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE users SET last_name_used = ? WHERE tg_id = ?", (name, tg_id))
+
+
+# ---------- Ilovaga kirish (APK) ----------
+
+LOGIN_TTL = 10 * 60          # kirish havolasi 10 daqiqa amal qiladi
+SESSION_TTL = 180 * 24 * 3600  # ilovadagi sessiya ~6 oy
+
+
+def create_login(token: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM app_tokens WHERE kind = 'login' AND created < ?", (time.time() - LOGIN_TTL,))
+        conn.execute("INSERT INTO app_tokens (token, kind, created) VALUES (?, 'login', ?)", (token, time.time()))
+
+
+def confirm_login(token: str, tg_id: int, session: str) -> bool:
+    """Bot /start app_<token> ni oldi: kirish tasdiqlanadi va sessiya yaratiladi."""
+    with connect() as conn:
+        row = conn.execute("SELECT created, tg_id FROM app_tokens WHERE token = ? AND kind = 'login'",
+                           (token,)).fetchone()
+        if not row or row["tg_id"] is not None or time.time() - row["created"] > LOGIN_TTL:
+            return False
+        conn.execute("UPDATE app_tokens SET tg_id = ?, session = ? WHERE token = ?", (tg_id, session, token))
+        conn.execute("INSERT INTO app_tokens (token, kind, tg_id, created) VALUES (?, 'session', ?, ?)",
+                     (session, tg_id, time.time()))
+    return True
+
+
+def take_login(token: str) -> str | None:
+    """Ilova kutayotgan kirish: tasdiqlangan bo'lsa sessiya tokeni (bir marta beriladi)."""
+    with connect() as conn:
+        row = conn.execute("SELECT session FROM app_tokens WHERE token = ? AND kind = 'login'", (token,)).fetchone()
+        if row and row["session"]:
+            conn.execute("DELETE FROM app_tokens WHERE token = ?", (token,))
+            return row["session"]
+    return None
+
+
+def session_user(session: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT s.tg_id, s.created, u.full_name, u.username FROM app_tokens s "
+            "LEFT JOIN users u ON u.tg_id = s.tg_id WHERE s.token = ? AND s.kind = 'session'", (session,)).fetchone()
+    if not row or time.time() - row["created"] > SESSION_TTL:
+        return None
+    return {"id": row["tg_id"], "name": row["full_name"] or "Foydalanuvchi", "username": row["username"]}
+
+
+def delete_session(session: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM app_tokens WHERE token = ? AND kind = 'session'", (session,))
 
 
 # ---------- Testlar ----------
@@ -449,6 +526,11 @@ def set_test_channels(test_id: int, channels: list[dict]) -> None:
     """Testning majburiy kanallari: [{"chat_id", "title", "url"}] — o'quvchi obuna bo'lmaguncha testni ocholmaydi."""
     with connect() as conn:
         conn.execute("UPDATE tests SET channels = ? WHERE id = ?", (json.dumps(channels, ensure_ascii=False), test_id))
+
+
+def set_sheet_style(test_id: int, style: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET sheet_style = ? WHERE id = ?", (style, test_id))
 
 
 def set_mode(test_id: int, mode: str) -> None:

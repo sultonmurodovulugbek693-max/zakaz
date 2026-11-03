@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Ona tili · Test</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/static/omr.js?v=2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
@@ -361,8 +362,21 @@ function toast(text) { const t = document.getElementById("toast"); t.textContent
 function confirmBox(text) { return new Promise(res => { if (tg && tg.showConfirm) { try { tg.showConfirm(text, ok => res(!!ok)); return; } catch (e) {} } res(window.confirm(text)); }); }
 function store(key, value) { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (e) { return null; } }
 
+// APK ilova (Telegram'dan tashqarida): bot orqali olingan sessiya bilan ishlaydi — faqat skaner
+const APP = /OnatiliApp/.test(navigator.userAgent) || new URLSearchParams(location.search).has("app");
+function authHeaders() {
+  if (tg && tg.initData) return { "X-Init-Data": tg.initData };
+  const session = store("appSession");
+  return session ? { "X-App-Session": session } : { "X-Init-Data": "" };
+}
+function relogin(json) {
+  if (!APP || !json.relogin) return;
+  try { localStorage.removeItem("appSession"); } catch (e) {}
+  S.boot = null; S.stack = []; S.current = { view: "appLogin", params: {} }; render();
+}
+
 async function api(path, data) {
-  const opts = { headers: { "X-Init-Data": (tg && tg.initData) || "" } };
+  const opts = { headers: authHeaders() };
   if (data !== undefined) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
   let res;
   try { res = await fetch(path, opts); } catch (e) { throw new Error("Internet aloqasi yo'q"); }
@@ -372,6 +386,7 @@ async function api(path, data) {
     S.stack = []; S.current = { view: "home", params: {} }; render();
     throw new Error(json.error);
   }
+  if (res.status === 401) relogin(json);
   if (!res.ok) { const err = new Error(json.error || "Xatolik yuz berdi"); err.data = json; throw err; }
   return json;
 }
@@ -409,7 +424,8 @@ async function render(soft = false) {
   if (!soft) window.scrollTo(0, 0);
   const { view, params } = S.current;
   showBack(S.stack.length > 0);
-  try { await (VIEWS[view] || VIEWS.home)(params); }
+  const home = APP && !(tg && tg.initData) ? VIEWS.appHome : VIEWS.home;
+  try { await (view === "home" ? home : VIEWS[view] || home)(params); }
   finally {
     if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
     S.soft = false;
@@ -423,6 +439,13 @@ function showBack(visible) {
   document.getElementById("topbar").hidden = !visible;
   try { visible ? tg.BackButton.show() : tg.BackButton.hide(); } catch (e) {}
 }
+// Flutter ilovadagi Android «orqaga» tugmasi: ochiq oyna yoki oldingi sahifa bo'lsa — yopadi (true)
+window.appBack = () => {
+  const modal = document.querySelector(".sheet-modal");
+  if (modal) { modal.remove(); return true; }
+  if (S.stack.length) { back(); return true; }
+  return false;
+};
 function loading() { if (S.soft && $app.firstElementChild) return; $app.innerHTML = `<div class="view"><div class="skeleton" style="height:40px;width:60%"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
 function fail(error) {
   $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">😕</div><b>${esc(error.message || error)}</b><button class="btn ghost" id="retry">Qayta urinish</button></div></div>`;
@@ -489,9 +512,31 @@ function bindBubbles(answers, onChange) {
 // ---------- Ko'rinishlar ----------
 const VIEWS = {};
 
+function setRole(role) {
+  S.role = role; store("role", role); haptic("select");
+  if (S.boot) S.boot.role = role;
+  api("/api/role", { role }).catch(() => {});  // keyingi kirishda ham (boshqa qurilmada ham) shu ekran
+}
+function rolePicker() {
+  showBack(false);
+  const first = ((S.boot && S.boot.user.name) || "").split(" ")[0];
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><span class="hi">Salom, ${esc(first)} 👋</span><h1>Kim sifatida kirasiz?</h1>
+      <span class="muted small">Tanlovingiz eslab qolinadi — keyingi safar to'g'ridan-to'g'ri shu ekran ochiladi. Keyin tepadan almashtirish mumkin.</span></div>
+    <button class="card item" data-pick="student" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">🎓</span><span><b style="font-size:20px">O'quvchi</b><small>Test kodini kiritib yechaman, natijamni olaman</small></span></button>
+    <button class="card item" data-pick="teacher" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">👩‍🏫</span><span><b style="font-size:20px">O'qituvchi</b><small>Test yarataman (Rasch mock yoki oddiy), titul yoki onlayn o'tkazaman</small></span></button>
+  </div>`;
+  document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => { setRole(el.dataset.pick); render(); });
+}
+
 VIEWS.home = async () => {
   if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); } }
   if (S.boot.subscribe) return subscribeGate(S.boot.subscribe);
+  // Rol: oxirgi tanlov (telefonda yoki serverda saqlangan); birinchi kirishda — tanlash ekrani
+  if (!store("role")) {
+    if (!S.boot.role) return rolePicker();
+    S.role = S.boot.role; store("role", S.role);
+  }
   const b = S.boot, role = S.role;
   const first = (b.user.name || "").split(" ")[0];
   const attempts = b.attempts.map(a => `<button class="item" data-attempt="${a.id}" data-announced="${a.announced ? 1 : 0}">
@@ -520,7 +565,7 @@ VIEWS.home = async () => {
       <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
       <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div>Hali test yaratmagansiz.</div>`}</div>`}
   </div>`;
-  document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { S.role = x.dataset.role; store("role", S.role); haptic("select"); rerender(); });
+  document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
   const code = document.getElementById("code");
   if (code) {
     const start = document.getElementById("start");
@@ -730,7 +775,7 @@ VIEWS.create = async () => {
     <div class="card">
       <div class="field"><label for="title">Test nomi</label><input class="input" id="title" value="${esc(st.title)}" placeholder="Masalan: Mock №3 · 11-sinf"></div>
       <div class="field"><label>Turi</label><div class="chips">
-        <button type="button" class="chip ${st.fmt === "milliy" ? "on" : ""}" data-fmt="milliy">🏅 Milliy sertifikat (45)</button>
+        <button type="button" class="chip ${st.fmt === "milliy" ? "on" : ""}" data-fmt="milliy">🏅 Rasch · Milliy mock (45)</button>
         <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button></div></div>
       <div class="field"><label>Qanday o'tkaziladi</label><div class="chips">
         <button type="button" class="chip ${st.mode !== "offline" ? "on" : ""}" data-mode="online">📱 Onlayn — ilovada</button>
@@ -979,7 +1024,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const ro = document.getElementById("reopen");
   if (ro) ro.onclick = async () => { if (!(await confirmBox("Testni qayta ochasizmi? Yangi javoblar qabul qilinadi."))) return; await api(`/api/teacher/test/${t.id}/reopen`, {}); S.boot = null; rerender(); };
   if (offline && tab === "students") bindRoster(d, id);
-  document.querySelectorAll("#scan").forEach(el => el.onclick = () => go("scan", { id }));
+  document.querySelectorAll("#scan").forEach(el => el.onclick = () => (tg && tg.initData ? appScanModal(t) : go("scan", { id })));
   ["sheets", "sheets2"].forEach(k => { const el = document.getElementById(k); if (el) el.onclick = () => sheetsModal(t, d.students); });
   const copyCode = () => navigator.clipboard.writeText(t.code).then(() => { toast("Kod nusxalandi"); haptic("success"); }, () => toast(t.code));
   ["copy-code", "code-chip"].forEach(k => { const el = document.getElementById(k); if (el) el.onclick = copyCode; });
@@ -1047,9 +1092,10 @@ function copyTestModal(t) {
 // ---------- Oflayn test: ro'yxat, titullar, skaner ----------
 async function apiForm(path, form) {
   let res;
-  try { res = await fetch(path, { method: "POST", headers: { "X-Init-Data": (tg && tg.initData) || "" }, body: form }); }
+  try { res = await fetch(path, { method: "POST", headers: authHeaders(), body: form }); }
   catch (e) { throw new Error("Internet aloqasi yo'q"); }
   const json = await res.json().catch(() => ({}));
+  if (res.status === 401) relogin(json);
   if (!res.ok) throw new Error(json.error || "Xatolik yuz berdi");
   return json;
 }
@@ -1122,18 +1168,60 @@ function bindRoster(d, id) {
   });
 }
 
+// Telegram ichida «Skanerlash»: skaner ilovasi (APK) shu testda, o'qituvchi akkaunti bilan ochiladi
+function appScanModal(t) {
+  const modal = document.createElement("div"); modal.className = "sheet-modal";
+  modal.innerHTML = `<div role="dialog" aria-label="Skaner">
+    <div class="row between"><h2>📷 Titullarni skanerlash</h2><button class="btn plain" data-close>Yopish</button></div>
+    <p class="muted small" style="margin:0">Skaner ilovasida kamera tezroq va barqaror ishlaydi. Ilova shu test bilan ochiladi — qayta kirish shart emas. Har natija bot chatiga ham keladi.</p>
+    <button class="btn block" id="open-app" style="padding:16px">📲 Skaner ilovasida ochish</button>
+    <button class="btn ghost block" id="here">Shu yerda skanerlash</button>
+    <span class="muted small">Ilova o'rnatilmagan bo'lsa — ochilgan sahifada «⬇️ Yuklab olish»ni bosing (Android).</span></div>`;
+  document.body.appendChild(modal);
+  modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
+  modal.querySelector("#here").onclick = () => { modal.remove(); go("scan", { id: t.id }); };
+  modal.querySelector("#open-app").onclick = async () => {
+    const btn = modal.querySelector("#open-app"); btn.disabled = true;
+    try {
+      const r = await api(`/api/teacher/test/${t.id}/app-link`, {});
+      try { tg.openLink(r.url); } catch (e) { location.href = r.url; }
+      haptic("success"); modal.remove();
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  };
+}
+
+// Titul ko'rinishlari (Chittak titullaridan): skaner chop etilgan ko'rinishni testdan biladi
+const SHEET_STYLES = [
+  ["standard", "Standart", "A4: ism katagi, ID, test va yozma javob kataklari (yozmani AI o'qiydi)."],
+  ["compact", "Ixcham", "Faqat doirachalar — bitta A4 ga 2–3 ta titul, qirqib tarqatiladi. Qog'oz tejaladi."],
+  ["evalbee", "EvalBee", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
+  ["dtm", "DTM", "EvalBee to'ri, har ustun tepasida fan va savollar oralig'i — DTM blankasiga o'xshash."],
+];
 function sheetsModal(t, students) {
   const modal = document.createElement("div"); modal.className = "sheet-modal";
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
     <p class="muted small" style="margin:0">Har bir o'quvchiga ismi, raqami va varianti bosilgan shaxsiy titul${t.fmt === "milliy" ? " va esse varaqasi" : ""}. Skaner varaq kimniki ekanini o'zi taniydi.</p>
+    <div class="field"><label>Titul ko'rinishi</label>
+      <div class="chips" id="styles">${SHEET_STYLES.map(([key, name, hint]) => `<button type="button" class="chip ${key === (t.sheet_style || "standard") ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
+      <span class="muted small" id="style-hint"></span></div>
     <div class="field"><label for="blanks">Qo'shimcha bo'sh titullar (ro'yxatda yo'qlar uchun)</label><input class="input" id="blanks" inputmode="numeric" value="${students.length ? 0 : 30}"></div>
     <button class="btn block" id="make">PDF'ni chatga yuborish (${students.length} ta shaxsiy)</button></div>`;
   document.body.appendChild(modal);
   modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
+  let style = t.sheet_style || "standard";
+  const hint = () => {
+    const [, , text] = SHEET_STYLES.find(([key]) => key === style);
+    modal.querySelector("#style-hint").textContent = text + (style !== "standard" && t.fmt === "milliy" ? " Yozma javoblar (36–44) titulda yo'q — skanerdan keyin qo'lda kiritasiz." : "");
+  };
+  hint();
+  modal.querySelectorAll("[data-style]").forEach(b => b.onclick = () => {
+    style = b.dataset.style; haptic("select");
+    modal.querySelectorAll("[data-style]").forEach(x => x.classList.toggle("on", x === b)); hint();
+  });
   modal.querySelector("#make").onclick = async () => {
     const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { const r = await api(`/api/teacher/test/${t.id}/sheets`, { blanks: parseInt(modal.querySelector("#blanks").value) || 0 }); haptic("success"); toast(`📨 ${r.pages} ta titul chatga yuborildi`); modal.remove(); }
+    try { const r = await api(`/api/teacher/test/${t.id}/sheets`, { blanks: parseInt(modal.querySelector("#blanks").value) || 0, style }); t.sheet_style = style; haptic("success"); toast(`📨 ${r.pages} ta titul chatga yuborildi`); modal.remove(); }
     catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "PDF'ni chatga yuborish"; }
   };
 }
@@ -1143,6 +1231,7 @@ function sheetsModal(t, students) {
 // Kamera bo'lmasa yoki ruxsat berilmasa — oddiy suratga olish (zaxira).
 function stopCamera() {
   if (S.camera) { S.camera.getTracks().forEach(tr => tr.stop()); S.camera = null; }
+  if (S.stopWorker) { S.stopWorker(); S.stopWorker = null; }
   S.scanLoop = null;
 }
 
@@ -1156,7 +1245,9 @@ function frameBlob(video, max = 1600) {
 
 VIEWS.scan = async ({ id }) => {
   loading();
-  let d; try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); }
+  let d, layout = null;
+  try { [d, layout] = await Promise.all([api(`/api/teacher/test/${id}`), api(`/api/teacher/test/${id}/scan/layout`).catch(() => null)]); }
+  catch (e) { return fail(e); }
   const t = d.test, milliy = t.fmt === "milliy";
   const items = milliy ? itemsFor("milliy", 45) : [];  // oddiy testda savollar skaner natijasidan olinadi
   const count = () => `${d.students.filter(s => s.scanned).length} / ${d.students.length} skanerlangan`;
@@ -1185,11 +1276,11 @@ VIEWS.scan = async ({ id }) => {
   const drawQuad = corners => quad.setAttribute("points", corners ? corners.map(p => p.join(",")).join(" ") : "");
 
   // Topilgan kadr: oddiy testda jonli natija tayyor; milliyda yozma javoblarni AI o'qishi uchun shu kadr qayta yuboriladi
-  async function captured(r, frame) {
+  async function captured(r, frame, final = false) {
     stopLoop(); haptic("success");
     still.src = frame.url; still.hidden = false; video.hidden = true; cam.classList.add("got");
-    setStatus(milliy ? "✅ Topildi — yozma javoblar o'qilmoqda…" : "✅ Titul o'qildi", "ok");
-    if (milliy) {
+    setStatus(milliy && !final ? "✅ Topildi — yozma javoblar o'qilmoqda…" : "✅ Titul o'qildi — pastda tekshiring", "ok");
+    if (milliy && !final) {
       try { const form = new FormData(); form.append("photo", frame.blob, "titul.jpg"); r = await apiForm(`/api/teacher/test/${id}/scan`, form); }
       catch (e) { toast(e.message); }
       if (!document.body.contains(review)) return;  // kutayotganda boshqa sahifaga o'tildi
@@ -1208,8 +1299,62 @@ VIEWS.scan = async ({ id }) => {
 
   let loopToken = 0;
   function stopLoop() { loopToken++; S.scanLoop = null; }
-  // waitSwap — «Keyingi titul»dan keyin: kamera oldida hali eski varaq turadi, u kadrdan chiqmaguncha qayta ushlanmaydi
+
+  // Kadrlar telefonning o'zida o'qiladi (omr.js, Chittak skaneri): ramka darhol chiziladi, internet kerak emas.
+  // Ketma-ket ikki kadr bir xil o'qilsa — varaq qimirlamay turibdi: shu kadr bir marta serverga yuboriladi
+  // (yakuniy o'qish, ism katagi, yozma javoblar AI'da). Telefon buni qo'llamasa — server sikli (startServerLoop)
+  const local = layout && typeof analyzeFrame === "function";
+  // Titul o'lchami: standart — A4; ixcham — A4 ning 1/3 yoki 1/2 qismi; EvalBee/DTM — o'z bo'yi
+  if (local) { SHEET_PAGE = sheetPageOf(layout); READ_SCALE = SHEET_PAGE.readScale; }
+  let worker = local ? createScanWorker() : null;
+  if (worker) worker.postMessage({ layout, page: 1, sheetPage: SHEET_PAGE });
+  S.stopWorker = () => stopWorker();
+  const stopWorker = () => { if (worker) { worker.terminate(); URL.revokeObjectURL(worker.url); worker = null; } };
+  const signature = r => r.sheet_number ? `#${r.sheet_number}` : r.questions.map(q => q.chosen || "-").join("");
+  const analyze = () => new Promise(resolve => {
+    if (!worker) { try { resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, { edgeMarks: true, layout, page: 1 })); } catch (e) { resolve(null); } return; }
+    const w = worker;
+    w.onmessage = ({ data }) => resolve(data.error ? null : data);
+    createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: false }, [bitmap]))
+      .catch(() => { stopWorker(); resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, { edgeMarks: true, layout, page: 1 })); });
+  });
+
   async function startLoop(waitSwap = false) {
+    if (!local) return startServerLoop(waitSwap);
+    const my = ++loopToken; S.scanLoop = my;
+    let last = null;
+    setStatus(waitSwap ? "Keyingi titulni qo'ying" : "Titulni ramkaga to'liq sig'diring");
+    while (my === loopToken && S.camera && document.body.contains(video)) {
+      if (!video.videoWidth) { await new Promise(r => setTimeout(r, 200)); continue; }
+      const started = performance.now();
+      const a = await analyze();
+      if (my !== loopToken) return;
+      const corners = a && a.corners;
+      drawQuad(corners ? corners.map(c => [c.x / a.width, c.y / a.height]) : null);
+      if (!corners) { waitSwap = false; last = null; setStatus("Titulni ramkaga to'liq sig'diring"); }
+      else if (waitSwap) setStatus("Keyingi titulni qo'ying");
+      else if (!a.read) { last = null; setStatus("Telefonni qimirlatmang…"); }
+      else {
+        const sig = signature(a.read.result);
+        if (sig === last) {  // barqaror — ushlaymiz
+          const frame = await frameBlob(video);
+          if (my !== loopToken) return;
+          setStatus("✅ Topildi — tekshirilmoqda…", "ok");
+          try {
+            const form = new FormData(); form.append("photo", frame.blob, "titul.jpg");
+            const r = await apiForm(`/api/teacher/test/${id}/scan`, form);
+            return captured(r, frame, true);
+          } catch (e) { setStatus(e.message, "bad"); last = null; await new Promise(r => setTimeout(r, 1200)); continue; }
+        }
+        last = sig; setStatus("Telefonni qimirlatmang…");
+      }
+      // Sekin telefon qizib ketmasin: o'qish qancha vaqt olgan bo'lsa, shuncha dam
+      await new Promise(r => setTimeout(r, Math.max(60, (performance.now() - started) * 0.8)));
+    }
+  }
+  // Zaxira: har kadr serverda o'qiladi (?live=1).
+  // waitSwap — «Keyingi titul»dan keyin: kamera oldida hali eski varaq turadi, u kadrdan chiqmaguncha qayta ushlanmaydi
+  async function startServerLoop(waitSwap = false) {
     const my = ++loopToken; S.scanLoop = my;
     setStatus(waitSwap ? "Keyingi titulni qo'ying" : "Titulni ramkaga to'liq sig'diring");
     while (my === loopToken && S.camera && document.body.contains(video)) {
@@ -1361,11 +1506,93 @@ async function essaySheet(attemptId, testId) {
   });
 }
 
+// ---------- APK ilova: Telegram orqali kirish va skaner ----------
+VIEWS.appLogin = async () => {
+  showBack(false);
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><h1>Titul skaneri</h1>
+      <span class="muted">O'qituvchilar uchun: ochiq testlaringiz titullarini kamerada tekshiring — natijalar botga tushadi.</span></div>
+    <div class="card"><b>Kirish</b>
+      <span class="muted small">Tugmani bosing — Telegram'da bot ochiladi. U yerda «Start»ni bosing va ilovaga qayting.</span>
+      <button class="btn block" id="tg-login" style="padding:16px">✈️ Telegram orqali kirish</button>
+      <span class="muted small" id="login-status"></span></div>
+  </div>`;
+  const status = document.getElementById("login-status");
+  document.getElementById("tg-login").onclick = async () => {
+    let r;
+    try { r = await api("/api/app/login", {}); } catch (e) { return toast(e.message); }
+    S.loginToken = r.token;
+    status.textContent = "⏳ Botda «Start»ni bosing, so'ng shu yerga qayting…";
+    location.href = r.url;  // ilova t.me havolasini Telegram'da ochadi
+    pollLogin(r.token);
+  };
+  if (S.loginToken) pollLogin(S.loginToken);
+};
+
+async function pollLogin(token) {
+  const my = S.loginPoll = (S.loginPoll || 0) + 1;
+  for (let i = 0; i < 300 && my === S.loginPoll && S.loginToken === token; i++) {
+    try {
+      const r = await api(`/api/app/login/${token}`);
+      if (r.ready) {
+        store("appSession", r.session); S.loginToken = null; S.boot = null; haptic("success");
+        toast(`✅ Xush kelibsiz, ${(r.user && r.user.name) || ""}`);
+        S.stack = []; S.current = { view: "home", params: {} }; return render();
+      }
+    } catch (e) {}
+    await new Promise(res => setTimeout(res, 2000));
+  }
+}
+// Telegram'dan qaytganda darhol tekshirish
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S.loginToken) pollLogin(S.loginToken); });
+
+// Mini App'dagi «Skaner ilovasida ochish»dan kelinganda: ?login=<kalit>&t=<test>
+async function appStart(q) {
+  S.current = { view: "home", params: {} };
+  const token = q.get("login");
+  if (token) {
+    loading();
+    try { const r = await api(`/api/app/login/${token}`); if (r.ready) { store("appSession", r.session); S.boot = null; } } catch (e) {}
+    history.replaceState(null, "", location.pathname + "?app=1");
+  }
+  if (q.get("t") && store("appSession")) { S.stack = [{ view: "home", params: {} }]; S.current = { view: "scan", params: { id: q.get("t") } }; }
+  render();
+}
+window.appOpen = url => appStart(new URL(url, location.href).searchParams);  // ilova ochiq turganda kelgan havola
+
+VIEWS.appHome = async () => {
+  if (!store("appSession")) return VIEWS.appLogin();
+  loading();
+  try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); }
+  if (S.boot.subscribe) return subscribeGate(S.boot.subscribe);
+  const b = S.boot, first = (b.user.name || "").split(" ")[0];
+  const open = b.tests.filter(t => !t.closed && t.mode === "offline");
+  const list = open.map(t => `<button class="item" data-scan="${t.id}">
+      <span class="ico">📄</span>
+      <span><b>${esc(t.title)}</b><small>Kod ${t.code} · ${esc(t.format)} · 👥 ${t.students} ta tekshirilgan</small></span>
+      <span class="pill-tag wait">📷 Skaner</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><span class="hi">Salom, ${esc(first)} 👋</span>
+      <h1>Ochiq testlar</h1><span class="muted small">Testni tanlang va titullarni kamerada tekshiring. Har natija botdagi chatingizga ham yuboriladi.</span></div>
+    <div class="list">${list || `<div class="card empty"><div class="big">📭</div><b>Ochiq titulli test yo'q</b><span>Botda test yarating («Titul» rejimi) — u shu yerda chiqadi.</span></div>`}</div>
+    <div class="row"><button class="btn ghost" id="refresh">🔄 Yangilash</button><button class="btn plain" id="logout">Chiqish</button></div>
+  </div>`;
+  document.querySelectorAll("[data-scan]").forEach(el => el.onclick = () => go("scan", { id: el.dataset.scan }));
+  document.getElementById("refresh").onclick = () => render();
+  document.getElementById("logout").onclick = async () => {
+    if (!(await confirmBox("Ilovadan chiqasizmi?"))) return;
+    try { await api("/api/app/logout", {}); } catch (e) {}
+    try { localStorage.removeItem("appSession"); } catch (e) {}
+    S.boot = null; render();
+  };
+};
+
 // ---------- Ishga tushirish ----------
 (function init() {
   if (tg) {
     try { tg.ready(); tg.expand(); if (tg.colorScheme === "dark") document.documentElement.classList.add("dark"); tg.onEvent("themeChanged", () => document.documentElement.classList.toggle("dark", tg.colorScheme === "dark")); } catch (e) {}
   }
+  if ((!tg || !tg.initData) && APP) { appStart(new URLSearchParams(location.search)); return; }
   if (!tg || !tg.initData) {
     $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">📱</div><b>Ilovani Telegram ichida oching</b><span>Botdagi «Ochish» tugmasini bosing.</span></div></div>`;
     return;
