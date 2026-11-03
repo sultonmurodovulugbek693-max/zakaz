@@ -39,6 +39,7 @@ import db
 import excel
 import essay_ai
 import pdfs
+import sheet
 import subscription
 import webapp
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
@@ -314,8 +315,31 @@ async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
                             protect_content=kind == "key")
 
 
+async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], blanks: int) -> None:
+    """Oflayn test: har o'quvchiga shaxsiy titul (ismi, raqami, varianti) + bo'sh titullar — bitta PDF."""
+    keys = await asyncio.to_thread(db.get_keys, test["id"])
+    content = await asyncio.to_thread(sheet.sheets_pdf, test, list(keys), students, blanks)
+    caption = (f"📄 <b>Titullar</b> · {esc(test['title'])}\n"
+               f"👥 {len(students)} ta shaxsiy" + (f" + {blanks} ta bo'sh" if blanks else "") +
+               "\nChop eting va tarqating. Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
+    await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
+
+
+async def store_photo(bot: Bot, chat_id: int, data: bytes, caption: str) -> str:
+    """Rasmni o'qituvchi chatiga yuboradi va Telegram file_id'ini qaytaradi (rasm Telegram'da saqlanadi)."""
+    message = await bot.send_photo(chat_id, BufferedInputFile(data, filename="essay.jpg"), caption=caption[:1000])
+    return message.photo[-1].file_id
+
+
+async def test_channels_missing(bot: Bot, user_id: int, channels: list[dict], recheck: bool) -> list[dict]:
+    """Testning majburiy kanallari; «Obuna bo'ldim» bosilganda (recheck) kesh tozalanadi."""
+    if recheck:
+        subscription.forget_member(user_id)
+    return await subscription.missing_in(bot, user_id, channels)
+
+
 async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: str, answers: dict,
-                         essay_text: str | None, photos: list[str], essay_cost: float) -> dict | None:
+                         essay_text: str | None, photos: list[str], essay_cost: float, notify: bool = True) -> dict | None:
     """Javoblarni tekshirib saqlaydi, esseni navbatga qo'yadi, o'qituvchiga xabar beradi. Takroriy bo'lsa — None."""
     keys = await asyncio.to_thread(db.get_keys, test["id"])
     key = keys.get(variant) or next(iter(keys.values()))
@@ -334,12 +358,14 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
         f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
         else f"{correct}/{result['auto_total']} ({fmt_num(percent(correct, result['auto_total']))}%)"
     )
+    if not notify:  # skanerlashda o'qituvchi natijani ekranda ko'rib turadi
+        return attempt
     count = len(await asyncio.to_thread(db.list_attempts, test["id"]))
     try:
         await bot.send_message(
             test["owner_id"],
             f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
-            f"👤 {esc(name)} · {variant} variant — <b>{summary}</b>\n"
+            f"👤 {esc(name)}{f' · {variant} variant' if len(keys) > 1 else ''} — <b>{summary}</b>\n"
             f"👥 Jami topshirdi: <b>{count}</b> ta",
             reply_markup=app_markup("📱 Testni ochish", t=test["id"]),
         )
@@ -348,8 +374,8 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     return attempt
 
 
-def result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None) -> str:
-    lines = [f"👤 <b>{esc(attempt['student_name'])}</b> · {attempt['variant']} variant"]
+def result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None, multi_variant: bool = False) -> str:
+    lines = [f"👤 <b>{esc(attempt['student_name'])}</b>" + (f" · {attempt['variant']} variant" if multi_variant else "")]
     if test["fmt"] == "milliy":
         top = max_points(test["items"], test["fmt"])
         lines.append(f"🧩 Test: <b>{attempt['test_correct']}</b>/{len(choice_items(test['items']))} · "
@@ -371,15 +397,16 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
     test["closed"] = 1
     attempts = await asyncio.to_thread(db.list_attempts, test["id"])
     rasch = await asyncio.to_thread(rasch_results, test, attempts) if test["fmt"] == "milliy" else {}
+    multi_variant = len(await asyncio.to_thread(db.get_keys, test["id"])) > 1
     sent = 0
     for attempt in attempts:
-        if attempt["tg_id"] < 0:  # eski oflayn (qog'ozdagi) natija — Telegram'i yo'q
+        if attempt["tg_id"] < 0:  # oflayn (qog'ozdagi) o'quvchi — Telegram'i yo'q
             continue
         try:
             await bot.send_message(
                 attempt["tg_id"],
                 f"📢 <b>Natijalar e'lon qilindi</b> · {esc(test['title'])}\n{LINE}\n"
-                f"{result_text(attempt, test, rasch.get(attempt['id']))}\n\n"
+                f"{result_text(attempt, test, rasch.get(attempt['id']), multi_variant)}\n\n"
                 "Har bir savol tahlili, to'g'ri javoblar va natija kartasi — ilovada 👇",
                 reply_markup=app_markup("📱 Natija kartasini ochish", r=attempt["id"]),
             )
@@ -505,10 +532,14 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     webapp.HOOKS.update(
         record_attempt=lambda *args, **kwargs: record_attempt(bot, *args, **kwargs),
+        send_sheets=lambda chat_id, test, students, blanks: send_sheets(bot, chat_id, test, students, blanks),
+        store_photo=lambda chat_id, data, caption: store_photo(bot, chat_id, data, caption),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),
         missing=lambda user_id: subscription.missing_channels(bot, user_id),
+        missing_in=lambda user_id, channels, recheck=False: test_channels_missing(bot, user_id, channels, recheck),
+        resolve_channel=lambda ref: subscription.resolve_channel(bot, ref),
     )
     port = os.getenv("PORT")
     if port:  # avval port — Render uni darhol ko'rsin

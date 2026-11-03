@@ -51,6 +51,37 @@ async def missing_channels(bot: Bot, user_id: int) -> list[dict]:
     return missing
 
 
+_member_cache: dict[tuple[int, int], tuple[float, bool]] = {}
+
+
+async def missing_in(bot: Bot, user_id: int, channels: list[dict]) -> list[dict]:
+    """Testning o'z kanallari (o'qituvchi qo'shgan) — foydalanuvchi obuna bo'lmaganlari."""
+    missing = []
+    for channel in channels:
+        key = (channel["chat_id"], user_id)
+        cached = _member_cache.get(key)
+        if cached and cached[0] > time.monotonic():
+            is_member = cached[1]
+        else:
+            try:
+                member = await bot.get_chat_member(channel["chat_id"], user_id)
+                status = member.status.value if hasattr(member.status, "value") else str(member.status)
+                is_member = status in MEMBER_STATUSES and not (status == "restricted" and not getattr(member, "is_member", True))
+            except Exception as error:  # bot adminlikdan olingan — o'quvchini bloklamaymiz
+                logger.warning("Test kanali %s tekshirilmadi: %s", channel["chat_id"], error)
+                is_member = True
+            _member_cache[key] = (time.monotonic() + (OK_TTL if is_member else FAIL_TTL), is_member)
+        if not is_member:
+            missing.append(channel)
+    return missing
+
+
+def forget_member(user_id: int) -> None:
+    """«Obuna bo'ldim» bosilganda — shu foydalanuvchi uchun test kanallari qayta tekshiriladi."""
+    for key in [k for k in _member_cache if k[1] == user_id]:
+        _member_cache.pop(key, None)
+
+
 async def resolve_channel(bot: Bot, ref: str | int) -> dict:
     """
     Admin yuborgan kanalni (@username, t.me havola, -100... ID) tekshiradi va saqlashga tayyorlaydi.

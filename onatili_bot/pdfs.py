@@ -1,4 +1,4 @@
-"""PDF fayllar: javoblar kaliti va natijalar jadvali."""
+"""PDF fayllar: esse varaqasi, javoblar kaliti va natijalar jadvali."""
 
 import io
 from datetime import datetime
@@ -47,6 +47,79 @@ STYLES = {
     "analysis": ParagraphStyle("analysis", fontName="Sans", fontSize=8.5, leading=11, alignment=TA_CENTER,
                                textColor=INK),
 }
+
+
+# ---------- Esse varaqasi (titul bilan birga chop etiladi) ----------
+
+def _footer(c: canvas.Canvas, width: float, test: dict) -> None:
+    c.setFont("Sans", 7)
+    c.setFillColor(GRID)
+    c.drawCentredString(width / 2, 8 * mm, f"Ona tili test boti · test kodi {test['code']} · varaqni o'qituvchiga topshiring")
+    c.setFillColor(INK)
+
+
+ESSAY_RULES = [
+    "I. Kirish — 2–3 jumla; berilgan vaziyat matnini aynan ko'chirmang.",
+    "II. Asosiy qism — kamida 3 ta xatboshi: tomonlarning qarashlari va shaxsiy fikringiz, hayotiy misollar bilan.",
+    "III. Xulosa — 2–3 jumla, asosiy qismdagi fikrlarni umumlashtiring.",
+    "Publitsistik uslubda, adabiy til me'yorlariga amal qilib yozing. Reja tuzilmaydi, epigraf qo'yilmaydi.",
+]
+
+
+def draw_essay_page(c: canvas.Canvas, test: dict, student: dict | None = None) -> None:
+    """Esse varaqasi (oflayn titul to'plamida har o'quvchiga) — ismi va raqami bosilgan bo'lsa ko'rsatiladi."""
+    width, height = A4
+    _draw_essay_page(c, width, height, 14 * mm, test, student)
+    _footer(c, width, test)
+
+
+def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: float, test: dict,
+                     student: dict | None = None) -> None:
+    """2-sahifa: esse varaqasi (rasmiy namunadagi talablar bilan)."""
+    y = height - margin
+    c.setFillColor(ACCENT)
+    c.rect(margin, y - 10 * mm, width - 2 * margin, 10 * mm, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Sans-Bold", 12.5)
+    c.drawCentredString(width / 2, y - 7 * mm, f"45. ESSE VARAQASI ({ESSAY_MAX} ball)")
+    y -= 16 * mm
+    c.setFillColor(INK)
+    c.setFont("Sans-Bold", 10)
+    c.drawString(margin, y, "F.I.Sh.:")
+    c.setLineWidth(0.6)
+    c.line(margin + 17 * mm, y - 1, width - margin - 40 * mm, y - 1)
+    c.drawRightString(width - margin, y, f"Test kodi: {test['code']}")
+    if student:
+        c.setFont("Sans-Bold", 11)
+        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  ID {student['number']:03d}")
+        c.setFont("Sans-Bold", 10)
+    y -= 7 * mm
+    topic = (test.get("essay_topic") or "").strip()
+    if topic:
+        # O'qituvchi kiritgan esse mavzusi (45-savol vaziyati) — ramka ichida
+        style = ParagraphStyle("topic", fontName="Sans", fontSize=10.5, leading=14.5, textColor=INK)
+        para = Paragraph("<b>Mavzu:</b> " + _esc(topic).replace("\n", "<br/>"), style)
+        box_width = width - 2 * margin
+        _, text_height = para.wrap(box_width - 8 * mm, 200 * mm)
+        box_height = text_height + 6 * mm
+        c.setFillColor(LIGHT)
+        c.setStrokeColor(ACCENT)
+        c.setLineWidth(0.8)
+        c.roundRect(margin, y - box_height, box_width, box_height, 2 * mm, stroke=1, fill=1)
+        para.drawOn(c, margin + 4 * mm, y - box_height + 3 * mm)
+        y -= box_height + 5 * mm
+    else:
+        c.setFont("Sans-Bold", 10)
+        c.drawString(margin, y - 2, "Mavzu:")
+        c.setStrokeColor(GRID)
+        c.line(margin + 16 * mm, y - 3, width - margin, y - 3)
+        y -= 10 * mm
+    y -= 1 * mm
+    c.setStrokeColor(GRID)
+    c.setLineWidth(0.5)
+    while y > 16 * mm:
+        c.line(margin, y, width - margin, y)
+        y -= 8 * mm
 
 
 # ---------- Javoblar kaliti ----------

@@ -1,5 +1,5 @@
 """
-Baza: testlar, variantlar (kalitlar), natijalar, esselar, jonli holat, kanallar.
+Baza: testlar, variantlar (kalitlar), natijalar, esselar, oflayn o'quvchilar, jonli holat, kanallar.
 
 Ikki rejim:
   • DATABASE_URL (postgresql://...) berilgan bo'lsa — PostgreSQL. Productionda SHU kerak:
@@ -56,7 +56,9 @@ SCHEMA = [
         closed      INTEGER NOT NULL DEFAULT 0,
         created_at  TEXT,
         essay_topic TEXT,
-        theme       TEXT
+        theme       TEXT,
+        mode        TEXT NOT NULL DEFAULT 'online',
+        channels    TEXT
     )""",
     f"""CREATE TABLE IF NOT EXISTS variants (
         test_id {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
@@ -97,6 +99,16 @@ SCHEMA = [
         created_at TEXT,
         graded_at  TEXT
     )""",
+    # Oflayn test o'quvchilari: raqam titul kodida bosiladi, skaner varaq kimniki ekanini shundan taniydi
+    f"""CREATE TABLE IF NOT EXISTS students (
+        id         {ID},
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        number     INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        variant    TEXT NOT NULL,
+        attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
+        UNIQUE (test_id, number)
+    )""",
     # Onlayn test jonli holati: kim ochgan, nechta belgilagan, oxirgi faolligi (unix soniya)
     f"""CREATE TABLE IF NOT EXISTS live (
         test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
@@ -123,6 +135,8 @@ MIGRATIONS = [
     ("attempts", "points", f"{FLOAT} NOT NULL DEFAULT 0"),
     ("tests", "essay_topic", "TEXT"),
     ("tests", "theme", "TEXT"),
+    ("tests", "mode", "TEXT NOT NULL DEFAULT 'online'"),
+    ("tests", "channels", "TEXT"),
 ]
 
 
@@ -230,6 +244,7 @@ def _test_dict(row) -> dict | None:
         return None
     test = dict(row)
     test["items"] = json.loads(test["items"])
+    test["channels"] = json.loads(test.get("channels") or "[]")
     return test
 
 
@@ -430,6 +445,23 @@ def retry_essay(attempt_id: int) -> None:
 
 # ---------- Mini App ----------
 
+def set_test_channels(test_id: int, channels: list[dict]) -> None:
+    """Testning majburiy kanallari: [{"chat_id", "title", "url"}] — o'quvchi obuna bo'lmaguncha testni ocholmaydi."""
+    with connect() as conn:
+        conn.execute("UPDATE tests SET channels = ? WHERE id = ?", (json.dumps(channels, ensure_ascii=False), test_id))
+
+
+def set_mode(test_id: int, mode: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET mode = ? WHERE id = ?", (mode, test_id))
+
+
+def set_essay_photos(attempt_id: int, photos: list[str], status: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essays SET photos = ?, status = ?, tries = 0, error = NULL WHERE attempt_id = ?",
+                     (json.dumps(photos), status, attempt_id))
+
+
 def set_theme(test_id: int, theme: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE tests SET theme = ? WHERE id = ?", (theme, test_id))
@@ -473,3 +505,62 @@ def stats() -> dict:
             name: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
             for name, table in (("users", "users"), ("tests", "tests"), ("attempts", "attempts"))
         }
+
+
+# ---------- Oflayn test: o'quvchilar ----------
+
+def offline_tg_id(test_id: int, number: int) -> int:
+    """Telegram'siz o'quvchi uchun ichki ID (manfiy — xabar yuborilmaydi, attempts jadvalida takrorlanmaydi)."""
+    return -(test_id * 100000 + number)
+
+
+def list_students(test_id: int) -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM students WHERE test_id = ? ORDER BY number",
+                                              (test_id,)).fetchall()]
+
+
+def get_student(test_id: int, student_id: int | None = None, number: int | None = None) -> dict | None:
+    with connect() as conn:
+        if student_id is not None:
+            row = conn.execute("SELECT * FROM students WHERE id = ? AND test_id = ?", (student_id, test_id)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM students WHERE number = ? AND test_id = ?", (number, test_id)).fetchone()
+    return _row(row)
+
+
+def add_students(test_id: int, names: list[str], variants: list[str]) -> list[dict]:
+    with connect() as conn:
+        start = conn.execute("SELECT COALESCE(MAX(number), 0) AS n FROM students WHERE test_id = ?",
+                             (test_id,)).fetchone()["n"]
+        for index, (name, variant) in enumerate(zip(names, variants), start=1):
+            conn.execute("INSERT INTO students (test_id, number, name, variant) VALUES (?, ?, ?, ?)",
+                         (test_id, start + index, name, variant))
+    return list_students(test_id)
+
+
+def update_student(test_id: int, student_id: int, name: str | None = None, variant: str | None = None) -> None:
+    with connect() as conn:
+        if name is not None:
+            conn.execute("UPDATE students SET name = ? WHERE id = ? AND test_id = ?", (name, student_id, test_id))
+        if variant is not None:
+            conn.execute("UPDATE students SET variant = ? WHERE id = ? AND test_id = ?", (variant, student_id, test_id))
+
+
+def delete_student(test_id: int, student_id: int) -> None:
+    with connect() as conn:
+        row = conn.execute("SELECT attempt_id FROM students WHERE id = ? AND test_id = ?", (student_id, test_id)).fetchone()
+        if row and row["attempt_id"]:
+            conn.execute("DELETE FROM attempts WHERE id = ?", (row["attempt_id"],))
+        conn.execute("DELETE FROM students WHERE id = ? AND test_id = ?", (student_id, test_id))
+
+
+def link_student_attempt(student_id: int, attempt_id: int | None) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE students SET attempt_id = ? WHERE id = ?", (attempt_id, student_id))
+
+
+def delete_attempt(attempt_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE students SET attempt_id = NULL WHERE attempt_id = ?", (attempt_id,))
+        conn.execute("DELETE FROM attempts WHERE id = ?", (attempt_id,))
