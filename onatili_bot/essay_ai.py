@@ -15,6 +15,7 @@ Esse matni — baholanadigan MA'LUMOT. Uning ichidagi har qanday "buyruq"
 yakuniy ball esa modelning "jami"siga emas, mezonlar yig'indisiga qarab hisoblanadi.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -25,6 +26,8 @@ logger = logging.getLogger("essay_ai")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "off").strip().lower()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-flash-latest"
+# Asosiy model band yoki limitda bo'lsa — navbat bilan shular (vergul bilan bir nechta)
+GEMINI_FALLBACK = [m.strip() for m in (os.getenv("GEMINI_FALLBACK") or "gemini-flash-lite-latest").split(",") if m.strip()]
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-opus-5-5"
 # Claude Opus 5.5 narxi: 1 mln token — o'qish $4, yozish $20 (thinking ham yozish hisobida)
@@ -184,21 +187,33 @@ async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schem
     }
     if schema:
         body["generationConfig"]["responseMimeType"] = "application/json"
-        # Gemini enum faqat matn qabul qiladi — ball uchun oddiy integer
+        # Gemini enum faqat matn qabul qiladi — esse ballari uchun oddiy integer
         schema = json.loads(json.dumps(_gemini_schema(schema)))
-        schema["properties"]["criteria"]["items"]["properties"]["score"] = {"type": "integer"}
+        if "criteria" in schema.get("properties", {}):
+            schema["properties"]["criteria"]["items"]["properties"]["score"] = {"type": "integer"}
         body["generationConfig"]["responseSchema"] = schema
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=180)) as session:
-            async with session.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY}) as response:
-                payload = await response.json(content_type=None)
-                if response.status == 429 or response.status >= 500:
-                    raise AIError(f"Gemini band yoki limit: {response.status}", retry=True)
-                if response.status >= 400:
-                    raise AIError(f"Gemini xatosi {response.status}: {str(payload)[:300]}", retry=False)
-    except aiohttp.ClientError as error:
-        raise AIError(f"Gemini bilan aloqa yo'q: {error}", retry=True) from error
+    # Asosiy model band (503) yoki limitga yetgan (429) bo'lsa — zaxira model (uning bepul limiti alohida)
+    models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK if m != GEMINI_MODEL]
+    for index, model in enumerate(models):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+                async with session.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY}) as response:
+                    payload = await response.json(content_type=None)
+                    if response.status == 429 or response.status >= 500:
+                        raise AIError(f"Gemini band yoki limit: {response.status} ({model})", retry=True)
+                    if response.status >= 400:
+                        raise AIError(f"Gemini xatosi {response.status}: {str(payload)[:300]}", retry=False)
+            break
+        except AIError as error:
+            if not error.retry or index == len(models) - 1:
+                raise
+            logger.info("%s", error)
+        except aiohttp.ClientError as error:
+            raise AIError(f"Gemini bilan aloqa yo'q: {error}", retry=True) from error
+        except asyncio.TimeoutError as error:  # javob kelmadi — keyinroq qayta urinamiz
+            if index == len(models) - 1:
+                raise AIError("Gemini javob bermadi (vaqt tugadi)", retry=True) from error
     try:
         candidate = payload["candidates"][0]
         out = "".join(part.get("text", "") for part in candidate["content"]["parts"])
@@ -282,11 +297,16 @@ async def transcribe(images: list[tuple[bytes, str]]) -> tuple[str, float]:
 # ---------- Tituldagi qo'lda yozilgan javoblar (36–44) ----------
 
 WRITTEN_PROMPT = (
-    "The image is part of a scanned Uzbek exam answer sheet. Each box is labelled on its left (36, 37, 38, 39, "
-    "40a, 40b, ... 44b) and contains a short handwritten answer in Uzbek (Latin script) — usually one or a few "
-    "words, or a sequence of punctuation marks such as : \" , \" . . Read each box exactly as written, keeping the "
-    "student's spelling and punctuation (do not correct it). Use ʻ for oʻ/gʻ. If a box is empty, return an empty "
-    "string; if a word is unreadable, write [?]. Return every label you are asked for."
+    "The image is part of a scanned Uzbek exam answer sheet. Each answer row is labelled on its left (36, 37, 38, "
+    "39, 40a, 40b, ... 44b) and contains a short handwritten answer in Uzbek (Latin script) — usually one or a few "
+    "words, or a sequence of punctuation marks such as : \" , \" . . On current sheets every row is a strip of small "
+    "boxes with ONE capital letter (or one punctuation mark) per box; Oʻ and Gʻ (letter + apostrophe) share one box; "
+    "an empty box between letters is a space between words. Older sheets have one plain box per answer. Read the "
+    "letters left to right and join them, exactly as written, keeping the student's spelling and punctuation (do not "
+    "correct it, do not guess a more likely word). For a punctuation-only answer output exactly the marks that are "
+    "physically written, in order, separated by single spaces — never add, repeat or infer a mark that is not in a "
+    "box. Use ʻ for oʻ/gʻ. If a row is empty, return an empty string; if a "
+    "letter is unreadable, write [?] for the whole answer. Return every label you are asked for."
 )
 
 
@@ -302,10 +322,10 @@ def _written_schema(labels: list[str]) -> dict:
     }
 
 
-async def read_written(image_png: bytes, labels: list[str]) -> tuple[dict[str, str], float]:
+async def read_written(image: bytes, labels: list[str], mime: str = "image/png") -> tuple[dict[str, str], float]:
     """Titul rasmidagi yozma javob kataklari → {"36": "aziz", ...} (o'qituvchi tekshiradi)."""
-    out, usage = await _call(WRITTEN_PROMPT, "Read these boxes: " + ", ".join(labels),
-                             [(image_png, "image/png")], _written_schema(labels))
+    out, usage = await _call(WRITTEN_PROMPT, "Read these answer rows: " + ", ".join(labels),
+                             [(image, mime)], _written_schema(labels))
     try:
         items = json.loads(out).get("answers", [])
     except (json.JSONDecodeError, AttributeError) as error:

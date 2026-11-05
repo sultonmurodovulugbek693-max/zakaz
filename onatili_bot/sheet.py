@@ -43,6 +43,7 @@ MAX_STUDENTS = 999
 BLOCK_ROWS = 5          # savollar 5 tadan blok; blok burchaklarida qora kvadratcha
 ANCHOR_SIZE = 6
 NAME_AREA = (100, 86, 392, 110)  # ism katagi (tepadan) — skanerda rasm qilib ko'rsatiladi
+WRITTEN_CELL_W, WRITTEN_CELL_H, WRITTEN_LABEL_W = 14.5, 22, 30  # yozma javobning harf kataklari
 
 INK = colors.HexColor("#1f2933")
 ACCENT = colors.HexColor("#1d6f42")
@@ -136,18 +137,21 @@ def layout(test: dict, variant_names: list[str]) -> dict:
                                 "r": BUBBLE_R, "block": corners})
     choices_bottom = QUESTIONS_TOP + (rows - 1) * ROW_STEP + 14
 
+    # Yozma javoblar: har javob — bir qator harf kataklari (har katakka bitta bosh harf).
+    # Alohida kataklardagi bosma harflarni AI yaxlit qo'lyozmadan ancha aniq o'qiydi
     written = []
     texts = text_items(test["items"])
     written_top = choices_bottom + 34
     if texts:
         text_rows = math.ceil(len(texts) / 2)
-        box_h, box_gap = 27, 5
+        box_h, box_gap = WRITTEN_CELL_H, 6
         half = (RIGHT - LEFT - 12) / 2
+        cells = int((half - WRITTEN_LABEL_W) // WRITTEN_CELL_W)
         for index, item in enumerate(texts):
             column, row = divmod(index, text_rows)
             x = LEFT + column * (half + 12)
             top = written_top + row * (box_h + box_gap)
-            written.append({"label": item["label"], "x": x, "top": top, "w": half, "h": box_h})
+            written.append({"label": item["label"], "x": x, "top": top, "w": half, "h": box_h, "cells": cells})
         bottom = written_top + text_rows * (box_h + box_gap)
         written_area = (LEFT - 4, written_top - 4, RIGHT + 4, bottom + 2)
     else:
@@ -277,13 +281,22 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
         first, last = spec["written"][0]["label"], spec["written"][-1]["label"]
         c.setFont("Sans-Bold", 9.5)
         c.setFillColor(ACCENT)
-        c.drawString(LEFT, H - spec["written"][0]["top"] + 8, f"{first.rstrip('ab')}–{last.rstrip('ab')} · yozma javoblar (aniq, bosma harflarda yozing)")
+        c.drawString(LEFT, H - spec["written"][0]["top"] + 18, f"{first.rstrip('ab')}–{last.rstrip('ab')} · yozma javoblar")
+        c.setFillColor(INK)
+        c.setFont("Sans", 7.5)
+        c.drawString(LEFT, H - spec["written"][0]["top"] + 7,
+                     "Har katakka bitta BOSH harf (masalan: K I T O B). O' va G' — bitta katakka. "
+                     "So'zlar orasida bitta katak bo'sh. Tinish belgisi ham alohida katakka.")
         c.setStrokeColor(GRID)
+        c.setLineWidth(0.7)
         for box in spec["written"]:
             c.setFillColor(INK)
             c.setFont("Sans-Bold", 9)
-            c.drawString(box["x"] + 4, H - box["top"] - box["h"] / 2 - 3, box["label"])
-            c.rect(box["x"] + 28, H - box["top"] - box["h"], box["w"] - 28, box["h"], stroke=1, fill=0)
+            c.drawString(box["x"] + 2, H - box["top"] - box["h"] / 2 - 3, box["label"])
+            bottom = H - box["top"] - box["h"]
+            for cell in range(box["cells"]):
+                c.rect(box["x"] + WRITTEN_LABEL_W + cell * WRITTEN_CELL_W, bottom, WRITTEN_CELL_W, box["h"],
+                       stroke=1, fill=0)
 
     c.setFillColor(INK)
     c.setFont("Sans", 8)

@@ -12,6 +12,7 @@ Ishga tushirish:  python bot.py
 """
 
 import asyncio
+import base64
 import html
 import logging
 import os
@@ -473,7 +474,10 @@ async def download_photos(bot: Bot, file_ids: list[str]) -> list[tuple[bytes, st
 
 
 async def essay_worker(bot: Bot) -> None:
-    """Navbatdagi esselarni birma-bir AI'da baholaydi. Xato bo'lsa — keyinroq qayta urinadi, esse yo'qolmaydi."""
+    """
+    AI navbati: avval skanerlangan titullarning yozma javoblari (tez, kichik rasm), keyin esselar.
+    Xato bo'lsa — keyinroq qayta urinadi, hech narsa yo'qolmaydi.
+    """
     if not essay_ai.enabled():
         logger.info("AI esse tekshiruvi o'chiq (AI_PROVIDER=%s)", essay_ai.AI_PROVIDER)
         return
@@ -481,6 +485,13 @@ async def essay_worker(bot: Bot) -> None:
     delay = 10
     while True:
         try:
+            jobs = await asyncio.to_thread(db.pending_written, 10)
+            for job in jobs:
+                await read_written_one(bot, job)
+                await asyncio.sleep(1)
+            if jobs:  # navbatda yana titul bo'lishi mumkin — esselardan oldin shularni tugatamiz
+                delay = 10
+                continue
             for essay in await asyncio.to_thread(db.pending_essays, 5):
                 await grade_one(bot, essay)
                 await asyncio.sleep(2)
@@ -492,6 +503,73 @@ async def essay_worker(bot: Bot) -> None:
             logger.exception("Esse navbatida xato")
             delay = min(delay * 2, 600)
         await asyncio.sleep(delay)
+
+
+WRITTEN_MAX_TRIES = 5
+
+
+async def read_written_one(bot: Bot, job: dict) -> None:
+    """Skanerlangan titulning yozma kataklarini o'qiydi va natijani qayta hisoblaydi."""
+    attempt = await asyncio.to_thread(db.get_attempt, job["attempt_id"])
+    test = await asyncio.to_thread(db.get_test, job["test_id"])
+    labels = [item["label"] for item in text_items(test["items"])] if test else []
+    if not attempt or not labels or not job["image"]:
+        await asyncio.to_thread(db.written_failed, job["attempt_id"], "Titul yoki rasm topilmadi", True)
+        return
+    try:
+        written, _cost = await essay_ai.read_written(base64.b64decode(job["image"]), labels, job["mime"])
+    except essay_ai.AIError as error:
+        give_up = not error.retry or job["tries"] + 1 >= WRITTEN_MAX_TRIES
+        await asyncio.to_thread(db.written_failed, job["attempt_id"], str(error), give_up)
+        if give_up:
+            await written_notice(bot, test)
+        if error.retry and not give_up:
+            raise  # limit/tarmoq — butun navbat biroz kutadi
+        return
+    # O'qituvchi skanerda o'zi yozgan javob AI'nikidan ustun
+    answers = dict(attempt["answers"])
+    for label, text in written.items():
+        if text and not answers.get(label):
+            answers[label] = text
+    keys = await asyncio.to_thread(db.get_keys, test["id"])
+    key = keys.get(attempt["variant"]) or next(iter(keys.values()))
+    await asyncio.to_thread(db.update_attempt_result, attempt["id"], answers, grade(test["items"], key, answers))
+    await asyncio.to_thread(db.written_done, attempt["id"], written)
+    logger.info("Yozma javoblar o'qildi: attempt=%s (%s ta)", attempt["id"], sum(1 for v in written.values() if v))
+    await written_notice(bot, test)
+
+
+async def written_notice(bot: Bot, test: dict) -> None:
+    """Testning yozma javob navbati tugadi — o'qituvchiga bitta umumiy xabar."""
+    counts = await asyncio.to_thread(db.take_written_notice, test["id"])
+    if not counts:
+        return
+    done, failed = counts.get("done", 0), counts.get("failed", 0)
+    text = (f"✍️ <b>{esc(test['title'])}</b> · kod {test['code']}\n"
+            f"Yozma javoblar AI'da o'qildi: <b>{done}</b> ta titul.")
+    if failed:
+        text += f"\n⚠️ {failed} ta titulni AI o'qiy olmadi — ularni qayta skanerlang yoki javobini qo'lda kiriting."
+    text += "\nNatijalarni tekshirib, e'lon qilishingiz mumkin."
+    try:
+        await bot.send_message(test["owner_id"], text, reply_markup=app_markup("📱 Testni ochish", t=test["id"]))
+    except Exception:
+        logger.warning("Yozma javoblar haqida xabar yuborilmadi")
+
+
+async def scan_batch_notice(bot: Bot, chat_id: int, test: dict, saved: int, written: int, essays: int,
+                            failed: int) -> None:
+    """Oflayn skaner telefondagi titullarni yubordi — bot chatiga umumiy xabar."""
+    lines = [f"📥 <b>Skaner</b> · {esc(test['title'])} (kod {test['code']})",
+             f"✅ Qabul qilindi: <b>{saved}</b> ta titul"]
+    if essays:
+        lines.append(f"📝 Esse varaqalari: {essays} ta — AI navbatida")
+    if written:
+        lines.append(f"✍️ Yozma javoblar AI'da o'qilmoqda ({written} ta) — tugagach xabar beraman")
+    if failed:
+        lines.append(f"⚠️ {failed} tasi yuborilmadi — ilovada qayta «Yuborish»ni bosing")
+    attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+    lines.append(f"👥 Jami natijalar: <b>{len(attempts)}</b> ta")
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=app_markup("📱 Testni ochish", t=test["id"]))
 
 
 async def grade_one(bot: Bot, essay: dict) -> None:
@@ -566,6 +644,7 @@ async def main() -> None:
         send_sheets=lambda chat_id, test, students, blanks: send_sheets(bot, chat_id, test, students, blanks),
         store_photo=lambda chat_id, data, caption: store_photo(bot, chat_id, data, caption),
         scan_notice=lambda chat_id, *args: scan_notice(bot, chat_id, *args),
+        scan_batch_notice=lambda chat_id, *args: scan_batch_notice(bot, chat_id, *args),
         bot_username=lambda: bot_username(bot),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),

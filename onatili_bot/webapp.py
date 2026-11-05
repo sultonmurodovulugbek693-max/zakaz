@@ -778,8 +778,11 @@ async def scan_layout(request: web.Request) -> web.Response:
     test = await own_test(request, user)
     variants = list(await run(db.get_keys, test["id"]))
     spec = sheet.layout(test, variants)
+    # written_area / name_area — telefon tekislangan varaqdan shu qismlarni kesib oladi (oflayn skaner)
     return ok({"bubbles": spec["bubbles"], "variants": variants, "sheet_page": spec["page"],
-               "style": sheet_styles.style_of(test)})
+               "style": sheet_styles.style_of(test), "written_area": spec.get("written_area"),
+               "name_area": spec.get("name_area"), "written_labels": [i["label"] for i in text_items(test["items"])],
+               "ai": essay_ai.enabled()})
 
 
 async def scan(request: web.Request) -> web.Response:
@@ -853,10 +856,8 @@ async def scan(request: web.Request) -> web.Response:
     })
 
 
-async def scan_save(request: web.Request) -> web.Response:
-    user = await auth(request)
-    test = await own_test(request, user)
-    payload = await body(request)
+async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
+    """Skanerlangan titul natijasini saqlaydi → (attempt, student). Qayta skanerlansa — eski natija almashtiriladi."""
     keys = await run(db.get_keys, test["id"])
     variant = payload.get("variant")
     if variant not in keys:
@@ -881,6 +882,14 @@ async def scan_save(request: web.Request) -> web.Response:
     if attempt is None:
         raise ApiError(409, "Bu o'quvchining natijasi allaqachon bor")
     await run(db.link_student_attempt, student["id"], attempt["id"])
+    return attempt, student
+
+
+async def scan_save(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    attempt, student = await save_scanned(test, payload)
     if from_app(request) and "scan_notice" in HOOKS:
         try:  # APK'dan skanerlandi — natija bot chatiga ham boradi
             await HOOKS["scan_notice"](user["id"], test, student["name"], total_points(attempt),
@@ -892,18 +901,104 @@ async def scan_save(request: web.Request) -> web.Response:
                "correct": attempt["test_correct"] + attempt["written_correct"], "auto_total": attempt["auto_total"]})
 
 
+async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]) -> str:
+    """Esse varaqasi suratlari: bot orqali Telegram'ga saqlanadi va AI navbatiga qo'yiladi → esse holati."""
+    file_ids = []
+    for index, data in enumerate(pages, 1):
+        page = f" · {index}-bet" if len(pages) > 1 else ""
+        file_ids.append(await HOOKS["store_photo"](user["id"], data,
+                                                   f"📝 Esse · {attempt['student_name']}{page} · {test['title']}"))
+    status = "pending" if essay_ai.enabled() else "manual"
+    if not await run(db.get_essay, attempt["id"]):
+        await run(db.create_essay, attempt["id"], None, file_ids, status)
+    else:
+        await run(db.set_essay_photos, attempt["id"], file_ids, status)
+    return status
+
+
 async def essay_photo(request: web.Request) -> web.Response:
     """Oflayn esse varaqasi surati: bot orqali Telegram'ga saqlanadi va AI navbatiga qo'yiladi."""
     user = await auth(request)
     attempt, test = await _own_attempt(request, user)
     data = await read_photo(request)
-    file_id = await HOOKS["store_photo"](user["id"], data, f"📝 Esse · {attempt['student_name']} · {test['title']}")
-    status = "pending" if essay_ai.enabled() else "manual"
-    if not await run(db.get_essay, attempt["id"]):
-        await run(db.create_essay, attempt["id"], None, [file_id], status)
-    else:
-        await run(db.set_essay_photos, attempt["id"], [file_id], status)
-    return ok({"ok": True, "status": status})
+    return ok({"ok": True, "status": await attach_essay(user, test, attempt, [data])})
+
+
+# ---------- Oflayn skaner: telefonda saqlangan titullar bittada yuboriladi ----------
+
+# Telefon bir titulni ikki marta yubormasin (tarmoq uzilib, javob kelmay qolsa): uid → javob
+_UPLOADED: dict[str, dict] = {}
+_STUDENT_OF: dict[str, int] = {}
+UPLOAD_PART_MAX = 6 * 1024 * 1024
+
+
+async def scan_upload(request: web.Request) -> web.Response:
+    """
+    Telefonda skanerlangan bitta titul: data — JSON (uid, student_id yoki name, variant, answers),
+    written — yozma kataklar rasmi (AI fonda o'qiydi), essay — esse varaqasi suratlari (bir nechta bo'lishi mumkin).
+    """
+    user = await auth(request)
+    test = await own_test(request, user)
+    try:
+        form = await request.post()
+        payload = json.loads(form.get("data") or "{}")
+    except Exception:
+        raise ApiError(400, "Ma'lumot noto'g'ri yuborildi")
+    if not isinstance(payload, dict):
+        raise ApiError(400, "Ma'lumot noto'g'ri yuborildi")
+    uid = str(payload.get("uid") or "")[:64]
+    if uid and uid in _UPLOADED:
+        return ok(_UPLOADED[uid])
+    if uid in _STUDENT_OF:  # oldingi urinishda o'quvchi yaratilgan, keyin xato bo'lgan — ikkinchi nusxa ochilmasin
+        payload = {**payload, "student_id": _STUDENT_OF[uid], "name": None}
+
+    def part(field) -> bytes | None:
+        if field is None or not hasattr(field, "file"):
+            return None
+        data = field.file.read()
+        if len(data) > UPLOAD_PART_MAX:
+            raise ApiError(400, "Rasm juda katta")
+        return data or None
+
+    written = part(form.get("written"))
+    essays = [data for data in (part(f) for f in form.getall("essay", [])) if data]
+    attempt, student = await save_scanned(test, payload)
+    if uid:
+        _STUDENT_OF[uid] = student["id"]
+    labels = [i["label"] for i in text_items(test["items"])]
+    # O'qituvchi hamma yozma javobni o'zi kiritgan bo'lsa — AI kerak emas
+    need_ai = [label for label in labels if not (payload.get("answers") or {}).get(label)]
+    queued = False
+    if written and need_ai and essay_ai.enabled():
+        await run(db.create_written_job, attempt["id"], test["id"], base64.b64encode(written).decode(),
+                  str(payload.get("written_mime") or "image/jpeg")[:20])
+        queued = True
+    essay_status = await attach_essay(user, test, attempt, essays) if essays else None
+    response = {"ok": True, "attempt_id": attempt["id"], "student_id": student["id"], "name": student["name"],
+                "written_queued": queued, "essay_status": essay_status,
+                "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"])}
+    if uid:
+        if len(_UPLOADED) > 5000:
+            _UPLOADED.clear()
+            _STUDENT_OF.clear()
+        _UPLOADED[uid] = response
+    return ok(response)
+
+
+async def scan_upload_done(request: web.Request) -> web.Response:
+    """Telefondagi titullar yuborib bo'lindi — bot chatiga bitta umumiy xabar."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    count = lambda key: max(0, min(10000, int(payload.get(key) or 0)))
+    status = await run(db.written_status, test["id"])
+    if "scan_batch_notice" in HOOKS and count("saved"):
+        try:
+            await HOOKS["scan_batch_notice"](user["id"], test, count("saved"), count("written"), count("essays"),
+                                             count("failed"))
+        except Exception:
+            logger.warning("Skaner xabarini botga yuborib bo'lmadi", exc_info=True)
+    return ok({"ok": True, "written": status, "ai": essay_ai.enabled()})
 
 
 # ---------- APK ilova: Telegram orqali kirish ----------
@@ -1056,6 +1151,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/save", scan_save)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/upload", scan_upload)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/upload/done", scan_upload_done)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/essay-photo", essay_photo)
     return app
 

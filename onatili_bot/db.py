@@ -128,6 +128,20 @@ SCHEMA = [
         added_by {BIG},
         added_at TEXT
     )""",
+    # Oflayn skaner: titulning yozma javob kataklari rasmi (base64) — AI fonda o'qiydi va natijani qayta hisoblaydi.
+    # status: pending — navbatda; done — o'qildi; failed — o'qib bo'lmadi. notified — o'qituvchiga xabar ketganmi
+    f"""CREATE TABLE IF NOT EXISTS written_jobs (
+        attempt_id {BIG} PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        image      TEXT,
+        mime       TEXT NOT NULL DEFAULT 'image/jpeg',
+        status     TEXT NOT NULL DEFAULT 'pending',
+        tries      INTEGER NOT NULL DEFAULT 0,
+        error      TEXT,
+        result     TEXT,
+        notified   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT
+    )""",
     # Ilovaga (APK) Telegram orqali kirish: kind = login (bot tasdiqlashini kutadi) | session (kirilgan)
     f"""CREATE TABLE IF NOT EXISTS app_tokens (
         token   TEXT PRIMARY KEY,
@@ -405,6 +419,17 @@ def save_attempt(test_id: int, tg_id: int, student_name: str, variant: str, answ
     return _attempt_dict(row)
 
 
+def update_attempt_result(attempt_id: int, answers: dict, result: dict) -> None:
+    """Javoblar o'zgardi (masalan, AI yozma javoblarni o'qidi) — natija qayta hisoblangan holda saqlanadi."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE attempts SET answers = ?, test_correct = ?, written_correct = ?, auto_total = ?, wrong = ?, "
+            "points = ? WHERE id = ?",
+            (json.dumps(answers, ensure_ascii=False), result["test_correct"], result["written_correct"],
+             result["auto_total"], json.dumps(result["wrong"]), result["points"], attempt_id),
+        )
+
+
 def get_attempt(attempt_id: int) -> dict | None:
     with connect() as conn:
         return _attempt_dict(conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone())
@@ -513,6 +538,70 @@ def essay_failed(attempt_id: int, error: str, give_up: bool) -> None:
 def add_essay_cost(attempt_id: int, cost: float) -> None:
     with connect() as conn:
         conn.execute("UPDATE essays SET cost = cost + ? WHERE attempt_id = ?", (cost, attempt_id))
+
+
+def create_written_job(attempt_id: int, test_id: int, image_b64: str, mime: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM written_jobs WHERE attempt_id = ?", (attempt_id,))
+        conn.execute(
+            "INSERT INTO written_jobs (attempt_id, test_id, image, mime, created_at) VALUES (?, ?, ?, ?, ?)",
+            (attempt_id, test_id, image_b64, mime, _now()),
+        )
+
+
+def pending_written(limit: int = 5) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM written_jobs WHERE status = 'pending' ORDER BY created_at, attempt_id LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def written_done(attempt_id: int, result: dict) -> None:
+    """O'qildi — rasm endi kerak emas (baza to'lib ketmasin)."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE written_jobs SET status = 'done', image = NULL, error = NULL, result = ? WHERE attempt_id = ?",
+            (json.dumps(result, ensure_ascii=False), attempt_id),
+        )
+
+
+def written_failed(attempt_id: int, error: str, give_up: bool) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE written_jobs SET tries = tries + 1, error = ?, "
+            "status = CASE WHEN ? = 1 THEN 'failed' ELSE status END, "
+            "image = CASE WHEN ? = 1 THEN NULL ELSE image END WHERE attempt_id = ?",
+            (error[:500], int(give_up), int(give_up), attempt_id),
+        )
+
+
+def written_status(test_id: int) -> dict:
+    """Testning yozma javob navbati: {"pending": n, "done": n, "failed": n}."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM written_jobs WHERE test_id = ? GROUP BY status", (test_id,)
+        ).fetchall()
+    counts = {"pending": 0, "done": 0, "failed": 0}
+    counts.update({row["status"]: row["n"] for row in rows})
+    return counts
+
+
+def take_written_notice(test_id: int) -> dict | None:
+    """Navbat bo'shagan bo'lsa — hali xabar qilinmagan natijalar soni (va ular "xabar qilingan" bo'ladi)."""
+    with connect() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) AS n FROM written_jobs WHERE test_id = ? AND status = 'pending'", (test_id,)
+        ).fetchone()["n"]
+        if pending:
+            return None
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM written_jobs WHERE test_id = ? AND notified = 0 GROUP BY status",
+            (test_id,),
+        ).fetchall()
+        conn.execute("UPDATE written_jobs SET notified = 1 WHERE test_id = ? AND notified = 0", (test_id,))
+    counts = {row["status"]: row["n"] for row in rows}
+    return counts if counts else None
 
 
 def retry_essay(attempt_id: int) -> None:
