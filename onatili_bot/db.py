@@ -598,6 +598,52 @@ def purge_written_images(days: int = 45) -> int:
         return cursor.rowcount or 0
 
 
+# ---------- Zaxira nusxa (backup) ----------
+
+# Tiklash tartibi muhim: avval bog'lanadigan jadvallar. app_tokens (kirish sessiyalari — maxfiy) va
+# live (vaqtinchalik) nusxaga kirmaydi; yozma kataklar rasmlari ham (hajmi katta, natija o'zi saqlangan)
+BACKUP_TABLES = {
+    "users": "*",
+    "channels": "*",
+    "tests": "*",
+    "variants": "*",
+    "attempts": "*",
+    "essays": "*",
+    "students": "*",
+    "written_jobs": "attempt_id, test_id, mime, status, tries, error, result, notified, created_at",
+}
+SERIAL_TABLES = ("tests", "attempts", "essays", "students")
+
+
+def export_tables() -> dict[str, list[dict]]:
+    with connect() as conn:
+        return {table: [dict(row) for row in conn.execute(f"SELECT {columns} FROM {table}").fetchall()]
+                for table, columns in BACKUP_TABLES.items()}
+
+
+def import_tables(data: dict[str, list[dict]], force: bool = False) -> dict[str, int]:
+    """Zaxira nusxadan tiklash — bo'sh bazaga (force=True bo'lsa, mavjud yozuvlar ustiga qo'shmaydi, o'tkazib yuboradi)."""
+    counts = {}
+    with connect() as conn:
+        if not force and conn.execute("SELECT COUNT(*) AS n FROM tests").fetchone()["n"]:
+            raise ValueError("Baza bo'sh emas — tiklash faqat yangi (bo'sh) bazaga. Majburan: --force")
+        for table in BACKUP_TABLES:
+            rows = data.get(table) or []
+            for row in rows:
+                columns = list(row)
+                conn.execute(
+                    f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)}) "
+                    "ON CONFLICT DO NOTHING",
+                    [row[c] for c in columns],
+                )
+            counts[table] = len(rows)
+        if POSTGRES:  # avtomatik raqamlar tiklangan eng katta id'dan davom etsin
+            for table in SERIAL_TABLES:
+                conn.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                             f"COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)")
+    return counts
+
+
 def retry_written(attempt_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE written_jobs SET status = 'pending', tries = 0, error = NULL, notified = 0 "

@@ -52,6 +52,22 @@ yozma javoblar va esseni AI tekshiradi.
 - `AI_PROVIDER=claude` — Anthropic Claude (pullik, sifati yuqoriroq).
 - AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.
 
+## Xizmat ishlari (o'zi bajariladi)
+- **Uyg'oq tutish**: Render'ning bepul tarifida server 15 daqiqa so'rovsiz qolsa uxlaydi va bot javob
+  bermay qo'yadi. Bot har 10 daqiqada o'z manziliga murojaat qiladi (`KEEP_ALIVE=0` — o'chirish).
+- **Kunlik zaxira nusxa**: har kuni 03:00 (Toshkent) baza nusxasi `ADMIN_IDS` dagi adminlarga fayl bo'lib
+  keladi. Hozir olish: botga `/backup`. Tiklash (yangi bazaga): `python restore.py onatili_….json.gz`
+- **Xatolar haqida xabar**: botda xato chiqsa yoki AI 1 soatdan beri ishlamasa — adminga Telegram'da
+  xabar keladi (ko'pi bilan 5 daqiqada bir marta).
+- Yozma kataklar rasmlari 45 kundan keyin o'zi o'chadi (natijalar qoladi).
+
+## Testlar
+Kod o'zgartirilgandan keyin hammasi joyidaligini tekshirish (internet va AI kerak emas):
+```
+cd tests
+..\.venv\Scripts\python -m unittest
+```
+
 ## Botni o'z hisoblariga ulash (yangi egasi uchun)
 Barcha kalit va parollar **kodda emas**, faqat sozlamalarda (`.env` yoki Render → Environment).
 Botni boshqa odamga topshirganda har birini **yangisiga almashtiring**:
@@ -59,7 +75,7 @@ Botni boshqa odamga topshirganda har birini **yangisiga almashtiring**:
 | Sozlama | Qayerdan olinadi |
 |---|---|
 | `BOT_TOKEN` | Telegram @BotFather → yangi bot (yoki eski botni `/mybots` → Transfer ownership) |
-| `ADMIN_IDS` | Yangi egasining Telegram ID'si |
+| `ADMIN_IDS` | Yangi egasining Telegram ID'si (botga `/myid` yozing) — nusxa va xato xabarlari shunga keladi |
 | `DATABASE_URL` | PostgreSQL (masalan Neon.tech, bepul) — natijalar shu yerda saqlanadi |
 | `AI_PROVIDER`, `GEMINI_API_KEY` | O'z Google akkauntidan AI Studio kaliti |
 | `WEBAPP_URL` | Render'da shart emas (o'zi aniqlaydi) |

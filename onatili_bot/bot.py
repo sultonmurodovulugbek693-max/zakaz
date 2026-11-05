@@ -41,6 +41,7 @@ from aiogram.types import (
 import db
 import excel
 import essay_ai
+import ops
 import pdfs
 import sheet
 import subscription
@@ -121,22 +122,30 @@ async def confirm_app_login(message: Message, token: str) -> None:
 
 
 async def send_welcome(message: Message, user) -> None:
-    # Eski versiyadagi pastki tugmalar klaviaturasi qolib ketgan bo'lsa — olib tashlanadi
-    try:
-        note = await message.answer("⏳", reply_markup=ReplyKeyboardRemove())
-        await message.bot.delete_message(note.chat.id, note.message_id)
-    except Exception:
-        pass  # muhim emas — salomlashish baribir chiqadi
+    # Salomlashish xabarining o'zi eski versiyadagi pastki tugmalarni (klaviatura) olib tashlaydi.
+    # Alohida xabar bilan olib tashlab, uni o'chirib bo'lmaydi — Telegram eski tugmalarni qaytarib ko'rsatadi
     await message.answer(
         "📚 <b>Ona tili · Test</b>\n"
         f"{LINE}\n"
         f"Assalomu alaykum, {esc(user.first_name)}! 👋\n\n"
         "Milliy sertifikat uslubidagi mock testlar ilovasi:\n"
         "🧑‍🎓 <b>O'quvchi</b> — kodni kiritadi, javoblarni belgilaydi, natija kartasini oladi\n"
-        "👩‍🏫 <b>O'qituvchi</b> — test yaratadi, natijalar va esselarni kuzatadi, e'lon qiladi\n\n"
-        + ("Boshlash uchun tugmani bosing 👇" if app_url() else "⚠️ Ilova hali sozlanmagan (WEBAPP_URL)."),
-        reply_markup=app_markup(),
+        "👩‍🏫 <b>O'qituvchi</b> — test yaratadi, natijalar va esselarni kuzatadi, e'lon qiladi",
+        reply_markup=ReplyKeyboardRemove(),
     )
+    await message.answer("Boshlash uchun tugmani bosing 👇" if app_url() else "⚠️ Ilova hali sozlanmagan (WEBAPP_URL).",
+                         reply_markup=app_markup())
+
+
+@dp.message(Command("backup"))
+async def cmd_backup(message: Message) -> None:
+    """Admin: baza nusxasini hozir olish (har kuni 03:00 da o'zi ham keladi)."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    note = await message.answer("💾 Nusxa tayyorlanmoqda…")
+    sent = await ops.send_backup(message.bot, [message.chat.id])
+    await note.edit_text("✅ Nusxa yuborildi" if sent else "❌ Nusxani yuborib bo'lmadi — Render → Logs")
 
 
 @dp.message(Command("myid"))
@@ -483,7 +492,7 @@ async def essay_worker(bot: Bot) -> None:
         logger.info("AI esse tekshiruvi o'chiq (AI_PROVIDER=%s)", essay_ai.AI_PROVIDER)
         return
     logger.info("AI esse tekshiruvi yoqildi: %s", essay_ai.provider_name())
-    delay, purged_at = 10, 0.0
+    delay, purged_at, down_since, alerted = 10, 0.0, None, False
     while True:
         try:
             if time.time() - purged_at > 6 * 3600:  # eski yozma kataklar rasmlari — kuniga bir necha marta tozalanadi
@@ -500,10 +509,14 @@ async def essay_worker(bot: Bot) -> None:
             for essay in await asyncio.to_thread(db.pending_essays, 5):
                 await grade_one(bot, essay)
                 await asyncio.sleep(2)
-            delay = 10
+            delay, down_since, alerted = 10, None, False
         except essay_ai.AIError as error:  # limit yoki tarmoq — kutib turamiz
             logger.warning("AI vaqtincha ishlamayapti: %s", error)
             delay = min(delay * 2, 600)
+            down_since = down_since or time.time()
+            if not alerted and time.time() - down_since > 3600:  # 1 soatdan beri — adminga xabar
+                alerted = True
+                logger.error("AI 1 soatdan beri ishlamayapti (yozma javoblar va esselar navbatda kutyapti): %s", error)
         except Exception:
             logger.exception("Esse navbatida xato")
             delay = min(delay * 2, 600)
@@ -601,8 +614,11 @@ async def grade_one(bot: Bot, essay: dict) -> None:
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("📱 Hamma ish ilovada — tugmani bosing 👇" if app_url() else "/start ni bosing",
-                         reply_markup=app_markup())
+    # Eski pastki tugmalardan biri bosilgan bo'lishi mumkin — tugmalar shu xabar bilan olib tashlanadi
+    await message.answer("📱 Hamma ish ilovada — pastdagi «Ochish» tugmasi yoki quyidagi tugma orqali.",
+                         reply_markup=ReplyKeyboardRemove())
+    if app_url():
+        await message.answer("👇", reply_markup=app_markup())
 
 
 @dp.callback_query()
@@ -676,11 +692,18 @@ async def main() -> None:
     else:
         logger.warning("WEBAPP_URL (https) yo'q — Mini App tugmasi o'rnatilmadi")
     logger.info("Bot ishga tushdi")
-    worker = asyncio.create_task(essay_worker(bot))  # AI esse navbati
+    tasks = [
+        asyncio.create_task(essay_worker(bot)),   # AI navbati: yozma javoblar va esselar
+        asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
+        asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
+    ]
+    if url := ops.keep_alive_url():  # Render bepul tarifida server uxlab qolmasin
+        tasks.append(asyncio.create_task(ops.keep_alive(url)))
     try:
         await dp.start_polling(bot)
     finally:
-        worker.cancel()
+        for task in tasks:
+            task.cancel()
 
 
 if __name__ == "__main__":
