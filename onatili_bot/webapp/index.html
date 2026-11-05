@@ -68,6 +68,28 @@ h2 { font-family: var(--font-display); font-size: 17px; margin: 0; font-weight: 
 .sticky-bottom > div { max-width: 640px; margin: 0 auto; }
 
 /* Segment */
+.home-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 4px 2px 0; }
+.home-hello { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.home-hello h1 { margin: 2px 0 0; font-size: 21px; }
+.role-chip { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 7px 12px 7px 9px; font-size: 13px; cursor: pointer; transition: border-color .2s, transform .15s; }
+.role-chip i { font-style: normal; color: var(--muted); }
+.role-chip:active { transform: scale(.96); }
+.role-chip:hover, .role-chip:focus-visible { border-color: var(--accent); }
+.acts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.act { display: grid; gap: 6px; align-content: start; min-width: 0; text-align: left; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); padding: 16px 14px 14px; cursor: pointer; transition: transform .15s, border-color .2s; min-height: 150px; font: inherit; }
+.act:active { transform: scale(.97); }
+.act:hover, .act:focus-visible { border-color: var(--accent); }
+.act > b { font-size: 16px; font-weight: 700; }
+.act > small { color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.act > em { font-style: normal; font-weight: 700; font-size: 13px; color: var(--accent); margin-top: auto; }
+.act-ico { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-size: 22px; background: var(--accent-soft); }
+.act.alt .act-ico { background: color-mix(in srgb, var(--warn) 20%, transparent); }
+.act.alt > em { color: color-mix(in srgb, var(--warn) 75%, var(--ink)); }
+.home-strip { grid-template-columns: repeat(3, 1fr); }
+.code-card h2 { margin: 0; }
+.item.test-item { border-left: 4px solid transparent; }
+.item.test-item.is-open { border-left-color: var(--warn); }
+.item.test-item.is-done { border-left-color: var(--good); }
 .segment { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border-radius: 14px; padding: 4px; position: relative; }
 .segment button { border: 0; background: transparent; padding: 10px; border-radius: 11px; font-weight: 600; cursor: pointer; position: relative; z-index: 1; transition: color .25s; color: var(--muted); }
 .segment button.on { color: var(--accent-ink); }
@@ -562,28 +584,39 @@ VIEWS.home = async () => {
       <span class="ico">${a.announced ? "📊" : "⏳"}</span>
       <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
       <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
-  const tests = b.tests.map(t => `<div class="item test-item" data-test="${t.id}" role="button" tabindex="0">
+  const tests = b.tests.map(t => `<div class="item test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" role="button" tabindex="0">
       <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
       <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Titul" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
         <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
       <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
-  $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><span class="hi">Salom, ${esc(first)} 👋</span>
-      <h1>${role === "student" ? "Testni yeching, natijani kuting" : "Testlar va natijalar"}</h1></div>
-    <div class="segment ${role === "teacher" ? "right" : ""}"><span class="pill"></span>
-      <button class="${role === "student" ? "on" : ""}" data-role="student">🎓 O'quvchi</button>
-      <button class="${role === "teacher" ? "on" : ""}" data-role="teacher">👩‍🏫 O'qituvchi</button></div>
+  const openTests = b.tests.filter(t => !t.closed).length, results = b.tests.reduce((n, t) => n + t.students, 0);
+  // Tepada salomlashish va rol tugmasi (bosilsa — boshqa rolga o'tadi)
+  const top = `<header class="home-top">
+      <div class="home-hello"><span class="brand"><i>O</i>Ona tili · Mock</span>
+        <h1>Salom, ${esc(first)} 👋</h1>
+        <span class="muted small">${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</span></div>
+      <button type="button" class="role-chip" data-switch-role title="Rolni almashtirish">
+        <span>${role === "student" ? "🎓" : "👩‍🏫"}</span><b>${role === "student" ? "O'quvchi" : "O'qituvchi"}</b><i>⇄</i></button>
+    </header>`;
+  $app.innerHTML = `<div class="view">${top}
     ${role === "student" ? `
-      <div class="card"><h2>Test kodi</h2>
+      <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
         <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
         <button class="btn block" id="start" disabled>Boshlash →</button></div>
       <div class="section-title"><h2>Mening testlarim</h2><span class="muted small">${b.attempts.length} ta</span></div>
       <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
     : `
-      <button class="btn block" id="new">＋ Yangi test yaratish</button>
+      <div class="acts">
+        <button type="button" class="act" data-new="online"><span class="act-ico">📱</span><b>Onlayn test</b><small>O'quvchilar kod bilan ilovada yechadi</small><em>＋ Yaratish</em></button>
+        <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Titulli test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
+      </div>
+      ${b.tests.length ? `<div class="strip home-strip">
+        <div><b>${b.tests.length}</b><span>test</span></div><div><b>${results}</b><span>natija</span></div><div><b>${openTests}</b><span>ochiq</span></div></div>` : ""}
       <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
-      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div>Hali test yaratmagansiz.</div>`}</div>`}
+      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b><span>Yuqoridagi plitkalardan birini bosing — bir necha daqiqada tayyor.</span></div>`}</div>`}
   </div>`;
+  document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
+  document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
   const code = document.getElementById("code");
   if (code) {
@@ -613,7 +646,6 @@ VIEWS.home = async () => {
       }, 420);
     } catch (err) { toast(err.message); haptic("error"); }
   });
-  const nw = document.getElementById("new"); if (nw) nw.onclick = () => go("create");
 };
 
 function subscribeGate(channels) {
@@ -784,6 +816,7 @@ VIEWS.result = async ({ id }) => {
 
 VIEWS.create = async () => {
   const st = S.create || (S.create = { title: "", fmt: "milliy", count: 30, topic: "", theme: "classic", mode: "online", variants: ["A"], cur: "A", keys: { A: {} }, channels: [] });
+  if (S.createMode) { st.mode = S.createMode; S.createMode = null; }  // bosh sahifadagi plitkadan
   st.channels = st.channels || [];
   const items = itemsFor(st.fmt, st.count);
   const texts = items.filter(i => i.kind === "text");
