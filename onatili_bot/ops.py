@@ -29,6 +29,7 @@ TASHKENT = timezone(timedelta(hours=5))
 BACKUP_HOUR = 3
 KEEP_ALIVE_EVERY = 600
 ALERT_EVERY = 300
+CONFLICT_GRACE = 180  # bot ikki joyda — Render yangilanishida shuncha soniya normal
 
 
 # ---------- Uyg'oq tutish ----------
@@ -108,11 +109,30 @@ class AlertHandler(logging.Handler):
         super().__init__(level=logging.ERROR)
         self.queue: asyncio.Queue | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.conflict_since = self.conflict_last = 0.0
+
+    def _conflict_is_noise(self, text: str) -> bool:
+        """
+        «Conflict: terminated by other getUpdates» — bot ikki joyda ishlayapti. Render yangilanayotganda eski va
+        yangi nusxa 1–2 daqiqa birga ishlaydi — bu normal. Faqat 3 daqiqadan ortiq davom etsa xabar beriladi.
+        """
+        if "terminated by other getUpdates" not in text:
+            return False
+        now = time.time()
+        if now - self.conflict_last > 300:  # yangi holat
+            self.conflict_since = now
+        self.conflict_last = now
+        return now - self.conflict_since < CONFLICT_GRACE
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.name == "ops" or self.queue is None or self.loop is None:
             return
         text = record.getMessage()
+        if self._conflict_is_noise(text):
+            return
+        if "terminated by other getUpdates" in text:
+            text = ("Bot bir vaqtda ikki joyda ishlayapti (3 daqiqadan beri). Kompyuterda yoki boshqa serverda "
+                    "shu token bilan bot ishga tushirilganmi? Bittasini to'xtating.")
         if record.exc_info and record.exc_info[1] is not None:
             error = record.exc_info[1]
             text += f"\n{error.__class__.__name__}: {error}"
