@@ -123,6 +123,39 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.written_status(self.test["id"]), {"pending": 0, "done": 1, "failed": 0})
         self.assertTrue(any("Yozma javoblar AI'da o'qildi" in text for _, text in self.bot.messages))
 
+    async def test_batch_reads_many_sheets_in_one_request(self):
+        students = db.add_students(self.test["id"], ["Bobur", "Dilnoza", "Ezoza"], ["A", "A", "A"])[-3:]
+        ids = []
+        for n, st in enumerate(students):
+            _, r = await self.upload({"uid": f"b{n}", "student_id": st["id"], "variant": "A", "answers": self.answers},
+                                     written=f"\xff\xd8 rasm {n}".encode())
+            ids.append(r["attempt_id"])
+        calls = {"batch": 0, "single": 0}
+
+        async def fake_batch(images, labels):
+            calls["batch"] += 1
+            self.assertEqual(len(images), 3)
+            return [{"36": "kitob"}, None, {"36": "xato"}]  # 2-titulni AI qaytarmadi
+
+        async def fake_single(image, labels, mime="image/png"):
+            calls["single"] += 1
+            self.assertEqual(image, "\xff\xd8 rasm 1".encode())  # aynan qaytmagan titul alohida o'qiladi
+            return {"36": "kitob"}, 0.0
+
+        originals = essay_ai.read_written_batch, essay_ai.read_written
+        essay_ai.read_written_batch, essay_ai.read_written = fake_batch, fake_single
+        try:
+            jobs = db.pending_written(40)
+            await bot.read_written_group(self.bot, jobs)
+        finally:
+            essay_ai.read_written_batch, essay_ai.read_written = originals
+        self.assertEqual(calls, {"batch": 1, "single": 1})
+        got = [db.get_attempt(i)["answers"].get("36") for i in ids]
+        self.assertEqual(got, ["kitob", "kitob", "xato"])
+        self.assertEqual(db.written_status(self.test["id"])["done"], 3)
+        notices = [text for _, text in self.bot.messages if "Yozma javoblar AI'da o'qildi" in text]
+        self.assertEqual(len(notices), 1)  # 3 titul — bitta umumiy xabar
+
     async def test_ai_failure_gives_up_after_retries(self):
         _, r = await self.upload({"uid": "u7", "student_id": self.student["id"], "variant": "A", "answers": self.answers})
 

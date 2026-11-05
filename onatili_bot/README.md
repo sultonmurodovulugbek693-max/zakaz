@@ -46,8 +46,10 @@ yozma javoblar va esseni AI tekshiradi.
 ## AI (yozma javoblar va esse)
 - `AI_PROVIDER=gemini` — Google Gemini, **bepul tarifi bor**. Kalit: https://aistudio.google.com → API Keys.
   Google akkaunti egasi **18 yoshdan katta** bo'lishi shart.
-- Asosiy model band (503) yoki limitda (429) bo'lsa — zaxira model (`GEMINI_FALLBACK`), uning limiti alohida.
-- Bepul limit taxminan kuniga bir necha yuz so'rov: 1 titul = 1 so'rov, 1 esse = 1 so'rov.
+- Asosiy model band (503) yoki limitda (429) bo'lsa — navbat bilan zaxira modellar (`GEMINI_FALLBACK`),
+  har birining bepul limiti alohida.
+- Yozma javoblar **8 tadan titul bitta so'rovda** o'qiladi (`WRITTEN_BATCH`): 30 titul ≈ 4 so'rov, ~1–2 daqiqa.
+- Bepul limit taxminan kuniga bir necha yuz so'rov: 8 titul = 1 so'rov, 1 esse = 1 so'rov.
   Ko'proq kerak bo'lsa — AI Studio'da «Set up billing» (taxminan 1000 titul ≈ 1 $).
 - `AI_PROVIDER=claude` — Anthropic Claude (pullik, sifati yuqoriroq).
 - AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.

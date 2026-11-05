@@ -27,7 +27,7 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "off").strip().lower()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-flash-latest"
 # Asosiy model band yoki limitda bo'lsa — navbat bilan shular (vergul bilan bir nechta)
-GEMINI_FALLBACK = [m.strip() for m in (os.getenv("GEMINI_FALLBACK") or "gemini-flash-lite-latest").split(",") if m.strip()]
+GEMINI_FALLBACK = [m.strip() for m in (os.getenv("GEMINI_FALLBACK") or "gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",") if m.strip()]
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-opus-5-5"
 # Claude Opus 5.5 narxi: 1 mln token — o'qish $4, yozish $20 (thinking ham yozish hisobida)
@@ -322,6 +322,17 @@ def _written_schema(labels: list[str]) -> dict:
     }
 
 
+def _clean_written(items, labels: list[str]) -> dict[str, str]:
+    result = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        label, text = str(item.get("label", "")), str(item.get("text", "")).strip()
+        if label in labels and label not in result:
+            result[label] = "" if text in ("[?]",) else text[:200]
+    return result
+
+
 async def read_written(image: bytes, labels: list[str], mime: str = "image/png") -> tuple[dict[str, str], float]:
     """Titul rasmidagi yozma javob kataklari → {"36": "aziz", ...} (o'qituvchi tekshiradi)."""
     out, usage = await _call(WRITTEN_PROMPT, "Read these answer rows: " + ", ".join(labels),
@@ -330,9 +341,49 @@ async def read_written(image: bytes, labels: list[str], mime: str = "image/png")
         items = json.loads(out).get("answers", [])
     except (json.JSONDecodeError, AttributeError) as error:
         raise AIError("AI javobini o'qib bo'lmadi", retry=False) from error
-    result = {}
-    for item in items:
-        label, text = str(item.get("label", "")), str(item.get("text", "")).strip()
-        if label in labels and label not in result:
-            result[label] = "" if text in ("[?]",) else text[:200]
-    return result, usage["cost"]
+    return _clean_written(items, labels), usage["cost"]
+
+
+# Bir so'rovda nechta titul: bepul tarif limiti (daqiqasiga ~10 so'rov) shunchalik barobar kam sarflanadi
+WRITTEN_BATCH = max(1, min(12, int(os.getenv("WRITTEN_BATCH") or 8)))
+
+
+def _written_batch_schema(labels: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {"sheets": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"sheet": {"type": "integer"}, "answers": _written_schema(labels)["properties"]["answers"]},
+            "required": ["sheet", "answers"], "additionalProperties": False,
+        }}},
+        "required": ["sheets"], "additionalProperties": False,
+    }
+
+
+async def read_written_batch(images: list[tuple[bytes, str]], labels: list[str]) -> list[dict[str, str] | None]:
+    """
+    Bir nechta titul bitta so'rovda → har biri uchun {"36": "aziz", ...} (rasmlar tartibida).
+    AI biror titulni qaytarmasa — o'rnida None (u titul keyin alohida o'qiladi).
+    """
+    if len(images) == 1:
+        return [(await read_written(images[0][0], labels, images[0][1]))[0]]
+    count = len(images)
+    text = (f"There are {count} images, each a different student's answer sheet: sheet 1 is the first image, "
+            f"sheet 2 the second, … sheet {count} the last. Read every sheet on its own — never copy or carry over "
+            "answers from one sheet to another; if a row is empty on a sheet, it is empty for that sheet. "
+            f"For every sheet read these answer rows: {', '.join(labels)}. "
+            f"Return exactly one entry per sheet with its number (1–{count}).")
+    out, _usage = await _call(WRITTEN_PROMPT, text, images, _written_batch_schema(labels))
+    try:
+        sheets = json.loads(out).get("sheets", [])
+    except (json.JSONDecodeError, AttributeError) as error:
+        raise AIError("AI javobini o'qib bo'lmadi", retry=False) from error
+    results: list[dict[str, str] | None] = [None] * count
+    for sheet in sheets if isinstance(sheets, list) else []:
+        try:
+            index = int(sheet.get("sheet")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= index < count and results[index] is None:
+            results[index] = _clean_written(sheet.get("answers"), labels)
+    return results

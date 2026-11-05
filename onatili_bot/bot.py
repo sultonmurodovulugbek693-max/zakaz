@@ -499,10 +499,14 @@ async def essay_worker(bot: Bot) -> None:
                 purged_at = time.time()
                 if removed := await asyncio.to_thread(db.purge_written_images):
                     logger.info("Eski yozma kataklar rasmlari o'chirildi: %s ta", removed)
-            jobs = await asyncio.to_thread(db.pending_written, 10)
-            for job in jobs:
-                await read_written_one(bot, job)
-                await asyncio.sleep(1)
+            jobs = await asyncio.to_thread(db.pending_written, 40)
+            groups: dict[int, list[dict]] = {}
+            for job in jobs:  # bitta testning titullari — bitta so'rovda (WRITTEN_BATCH tadan)
+                groups.setdefault(job["test_id"], []).append(job)
+            for group in groups.values():
+                for start in range(0, len(group), essay_ai.WRITTEN_BATCH):
+                    await read_written_group(bot, group[start:start + essay_ai.WRITTEN_BATCH])
+                    await asyncio.sleep(1)
             if jobs:  # navbatda yana titul bo'lishi mumkin — esselardan oldin shularni tugatamiz
                 delay = 10
                 continue
@@ -526,6 +530,39 @@ async def essay_worker(bot: Bot) -> None:
 WRITTEN_MAX_TRIES = 5
 
 
+async def read_written_group(bot: Bot, jobs: list[dict]) -> None:
+    """
+    Bitta testning bir nechta titulini bitta AI so'rovida o'qiydi (limit kam sarflanadi, tezroq).
+    So'rov xato bersa yoki AI biror titulni qaytarmasa — o'sha titullar alohida o'qiladi.
+    """
+    test = await asyncio.to_thread(db.get_test, jobs[0]["test_id"])
+    labels = [item["label"] for item in text_items(test["items"])] if test else []
+    valid = []
+    for job in jobs:
+        if not labels or not job["image"] or not await asyncio.to_thread(db.get_attempt, job["attempt_id"]):
+            await asyncio.to_thread(db.written_failed, job["attempt_id"], "Titul yoki rasm topilmadi", True)
+        else:
+            valid.append(job)
+    if len(valid) <= 1:
+        for job in valid:
+            await read_written_one(bot, job)
+        if test and not valid:
+            await written_notice(bot, test)
+        return
+    try:
+        results = await essay_ai.read_written_batch([(base64.b64decode(j["image"]), j["mime"]) for j in valid], labels)
+    except essay_ai.AIError as error:
+        if error.retry:  # limit/tarmoq — hammasi navbatda qoladi, butun navbat biroz kutadi
+            raise
+        results = [None] * len(valid)  # javobni tushunib bo'lmadi — bittalab
+    for job, written in zip(valid, results):
+        if written is None:
+            await read_written_one(bot, job)
+        else:
+            await apply_written(test, job, written)
+    await written_notice(bot, test)
+
+
 async def read_written_one(bot: Bot, job: dict) -> None:
     """Skanerlangan titulning yozma kataklarini o'qiydi va natijani qayta hisoblaydi."""
     attempt = await asyncio.to_thread(db.get_attempt, job["attempt_id"])
@@ -544,6 +581,12 @@ async def read_written_one(bot: Bot, job: dict) -> None:
         if error.retry and not give_up:
             raise  # limit/tarmoq — butun navbat biroz kutadi
         return
+    await apply_written(test, job, written)
+    await written_notice(bot, test)
+
+
+async def apply_written(test: dict, job: dict, written: dict[str, str]) -> None:
+    """AI o'qigan yozma javoblar → natija qayta hisoblanadi."""
     # O'qituvchi skanerda (yoki AI ishlayotganda) o'zi yozgan javob AI'nikidan ustun — eng yangisini olamiz
     attempt = await asyncio.to_thread(db.get_attempt, job["attempt_id"])
     if not attempt:
@@ -557,7 +600,6 @@ async def read_written_one(bot: Bot, job: dict) -> None:
     await asyncio.to_thread(db.update_attempt_result, attempt["id"], answers, grade(test["items"], key, answers))
     await asyncio.to_thread(db.written_done, attempt["id"], written)
     logger.info("Yozma javoblar o'qildi: attempt=%s (%s ta)", attempt["id"], sum(1 for v in written.values() if v))
-    await written_notice(bot, test)
 
 
 async def written_notice(bot: Bot, test: dict) -> None:
