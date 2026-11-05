@@ -419,14 +419,14 @@ def save_attempt(test_id: int, tg_id: int, student_name: str, variant: str, answ
     return _attempt_dict(row)
 
 
-def update_attempt_result(attempt_id: int, answers: dict, result: dict) -> None:
-    """Javoblar o'zgardi (masalan, AI yozma javoblarni o'qidi) — natija qayta hisoblangan holda saqlanadi."""
+def update_attempt_result(attempt_id: int, answers: dict, result: dict, variant: str | None = None) -> None:
+    """Javoblar o'zgardi (AI yozma javoblarni o'qidi yoki o'qituvchi tuzatdi) — natija qayta hisoblanib saqlanadi."""
     with connect() as conn:
         conn.execute(
             "UPDATE attempts SET answers = ?, test_correct = ?, written_correct = ?, auto_total = ?, wrong = ?, "
-            "points = ? WHERE id = ?",
+            "points = ?, variant = COALESCE(?, variant) WHERE id = ?",
             (json.dumps(answers, ensure_ascii=False), result["test_correct"], result["written_correct"],
-             result["auto_total"], json.dumps(result["wrong"]), result["points"], attempt_id),
+             result["auto_total"], json.dumps(result["wrong"]), result["points"], variant, attempt_id),
         )
 
 
@@ -558,10 +558,10 @@ def pending_written(limit: int = 5) -> list[dict]:
 
 
 def written_done(attempt_id: int, result: dict) -> None:
-    """O'qildi — rasm endi kerak emas (baza to'lib ketmasin)."""
+    """O'qildi. Rasm qoladi — o'qituvchi AI o'qiganini rasm bilan solishtirib tuzata oladi (~60 KB)."""
     with connect() as conn:
         conn.execute(
-            "UPDATE written_jobs SET status = 'done', image = NULL, error = NULL, result = ? WHERE attempt_id = ?",
+            "UPDATE written_jobs SET status = 'done', error = NULL, result = ? WHERE attempt_id = ?",
             (json.dumps(result, ensure_ascii=False), attempt_id),
         )
 
@@ -570,10 +570,38 @@ def written_failed(attempt_id: int, error: str, give_up: bool) -> None:
     with connect() as conn:
         conn.execute(
             "UPDATE written_jobs SET tries = tries + 1, error = ?, "
-            "status = CASE WHEN ? = 1 THEN 'failed' ELSE status END, "
-            "image = CASE WHEN ? = 1 THEN NULL ELSE image END WHERE attempt_id = ?",
-            (error[:500], int(give_up), int(give_up), attempt_id),
+            "status = CASE WHEN ? = 1 THEN 'failed' ELSE status END WHERE attempt_id = ?",
+            (error[:500], int(give_up), attempt_id),
         )
+
+
+def get_written_job(attempt_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM written_jobs WHERE attempt_id = ?", (attempt_id,)).fetchone())
+
+
+def written_jobs_for_test(test_id: int) -> dict[int, str]:
+    """{attempt_id: holat} — natijalar ro'yxatida «AI o'qimoqda / o'qiy olmadi» belgisi uchun."""
+    with connect() as conn:
+        rows = conn.execute("SELECT attempt_id, status FROM written_jobs WHERE test_id = ?", (test_id,)).fetchall()
+    return {row["attempt_id"]: row["status"] for row in rows}
+
+
+def purge_written_images(days: int = 45) -> int:
+    """Eski titullarning yozma kataklar rasmlari o'chiriladi (natija qoladi) — baza to'lib ketmasin."""
+    before = datetime.fromtimestamp(time.time() - days * 86400).strftime("%Y-%m-%d %H:%M")
+    with connect() as conn:
+        cursor = conn.execute(
+            "UPDATE written_jobs SET image = NULL WHERE image IS NOT NULL AND status <> 'pending' AND created_at < ?",
+            (before,),
+        )
+        return cursor.rowcount or 0
+
+
+def retry_written(attempt_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE written_jobs SET status = 'pending', tries = 0, error = NULL, notified = 0 "
+                     "WHERE attempt_id = ? AND image IS NOT NULL", (attempt_id,))
 
 
 def written_status(test_id: int) -> dict:

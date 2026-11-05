@@ -17,6 +17,7 @@ import html
 import logging
 import os
 import secrets
+import time
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -482,9 +483,13 @@ async def essay_worker(bot: Bot) -> None:
         logger.info("AI esse tekshiruvi o'chiq (AI_PROVIDER=%s)", essay_ai.AI_PROVIDER)
         return
     logger.info("AI esse tekshiruvi yoqildi: %s", essay_ai.provider_name())
-    delay = 10
+    delay, purged_at = 10, 0.0
     while True:
         try:
+            if time.time() - purged_at > 6 * 3600:  # eski yozma kataklar rasmlari — kuniga bir necha marta tozalanadi
+                purged_at = time.time()
+                if removed := await asyncio.to_thread(db.purge_written_images):
+                    logger.info("Eski yozma kataklar rasmlari o'chirildi: %s ta", removed)
             jobs = await asyncio.to_thread(db.pending_written, 10)
             for job in jobs:
                 await read_written_one(bot, job)
@@ -526,7 +531,10 @@ async def read_written_one(bot: Bot, job: dict) -> None:
         if error.retry and not give_up:
             raise  # limit/tarmoq — butun navbat biroz kutadi
         return
-    # O'qituvchi skanerda o'zi yozgan javob AI'nikidan ustun
+    # O'qituvchi skanerda (yoki AI ishlayotganda) o'zi yozgan javob AI'nikidan ustun — eng yangisini olamiz
+    attempt = await asyncio.to_thread(db.get_attempt, job["attempt_id"])
+    if not attempt:
+        return
     answers = dict(attempt["answers"])
     for label, text in written.items():
         if text and not answers.get(label):

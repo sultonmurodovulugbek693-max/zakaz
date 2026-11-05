@@ -35,6 +35,7 @@ from structure import (
     build_items,
     choice_items,
     format_title,
+    grade,
     max_points,
     percent,
     split_options,
@@ -451,6 +452,7 @@ async def teacher_test(request: web.Request) -> web.Response:
     keys = await run(db.get_keys, test["id"])
     essays = await run(db.essays_for_test, test["id"]) if test["fmt"] == "milliy" else {}
     rasch = await run(rasch_results, test, attempts) if test["fmt"] == "milliy" and attempts else {}
+    written_jobs = await run(db.written_jobs_for_test, test["id"])
     rows = []
     for a in attempts:
         essay = essays.get(a["id"])
@@ -463,6 +465,7 @@ async def teacher_test(request: web.Request) -> web.Response:
             "rasch": score, "grade": grade_name, "wrong": a["wrong"], "created_at": a["created_at"],
             "essay_status": essay["status"] if essay else None,
             "ai_score": essay["ai_score"] if essay else None,
+            "written_status": written_jobs.get(a["id"]),  # skanerlangan titul: pending | done | failed
         })
     rows.sort(key=lambda r: (-(r["rasch"] or 0), -r["total"]))
     analysis = [{"label": item["label"],
@@ -551,6 +554,50 @@ async def _own_attempt(request: web.Request, user: dict) -> tuple[dict, dict]:
     if not test or test["owner_id"] != user["id"]:
         raise ApiError(404, "Topilmadi")
     return attempt, test
+
+
+def _image_data_url(image_b64: str | None, mime: str | None) -> str | None:
+    return f"data:{mime or 'image/jpeg'};base64,{image_b64}" if image_b64 else None
+
+
+async def attempt_answers(request: web.Request) -> web.Response:
+    """O'qituvchi bitta natijani ochadi: javoblar, kalit bilan solishtiruv, AI o'qigan yozma kataklar rasmi."""
+    user = await auth(request)
+    attempt, test = await _own_attempt(request, user)
+    keys = await run(db.get_keys, test["id"])
+    key = keys.get(attempt["variant"]) or next(iter(keys.values()))
+    job = await run(db.get_written_job, attempt["id"])
+    return ok({
+        "id": attempt["id"], "name": attempt["student_name"], "variant": attempt["variant"], "variants": list(keys),
+        "items": [{"label": i["label"], "kind": i["kind"], "options": i.get("options", 4)} for i in test["items"]],
+        "answers": attempt["answers"], "wrong": attempt["wrong"],
+        "key": key,
+        "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
+        "written": {"status": job["status"], "error": job["error"], "ai": json.loads(job["result"]) if job["result"] else None,
+                    "image": _image_data_url(job["image"], job["mime"])} if job else None,
+        "closed": bool(test["closed"]),
+    })
+
+
+async def attempt_answers_save(request: web.Request) -> web.Response:
+    """Tuzatilgan javoblar → natija qayta hisoblanadi (Rasch ham shundan). retry_ai — yozma kataklarni AI qayta o'qisin."""
+    user = await auth(request)
+    attempt, test = await _own_attempt(request, user)
+    payload = await body(request)
+    if payload.get("retry_ai"):
+        await run(db.retry_written, attempt["id"])
+        return ok({"ok": True})
+    keys = await run(db.get_keys, test["id"])
+    variant = payload.get("variant") or attempt["variant"]
+    if variant not in keys:
+        raise ApiError(400, "Variant noto'g'ri")
+    answers = clean_answers(test, payload.get("answers") or {})
+    result = grade(test["items"], keys[variant], answers)
+    await run(db.update_attempt_result, attempt["id"], answers, result, variant)
+    fresh = await run(db.get_attempt, attempt["id"])
+    return ok({"ok": True, "points": total_points(fresh), "max_points": max_points(test["items"], test["fmt"]),
+               "wrong": fresh["wrong"], "correct": fresh["test_correct"] + fresh["written_correct"],
+               "auto_total": fresh["auto_total"]})
 
 
 async def essay_score(request: web.Request) -> web.Response:
@@ -1154,6 +1201,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/upload", scan_upload)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/upload/done", scan_upload_done)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/essay-photo", essay_photo)
+    app.router.add_get("/api/teacher/attempt/{attempt_id:\\d+}/answers", attempt_answers)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/answers", attempt_answers_save)
     return app
 
 
