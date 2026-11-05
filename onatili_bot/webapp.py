@@ -1143,6 +1143,15 @@ async def index(request: web.Request) -> web.Response:
     return response
 
 
+async def service_worker(_request: web.Request) -> web.Response:
+    """Sahifani telefonda saqlovchi skript (oflayn skaner) — butun sayt uchun, kesh'siz."""
+    response = web.FileResponse(STATIC_DIR / "sw.js")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.content_type = "application/javascript"
+    return response
+
+
 async def health(_request: web.Request) -> web.Response:
     return web.Response(text="Bot ishlayapti")
 
@@ -1163,6 +1172,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/app", index)
     app.router.add_get("/health", health)
+    app.router.add_get("/sw.js", service_worker)
     app.router.add_static("/static/", STATIC_DIR)
     app.router.add_get("/api/bootstrap", bootstrap)
     app.router.add_post("/api/app/login", app_login)

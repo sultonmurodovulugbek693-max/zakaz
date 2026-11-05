@@ -1,6 +1,8 @@
 # Ona tili test boti (Milliy sertifikat mock)
 
-Chittak (matemttest) uslubidagi Telegram bot, faqat Ona tili va adabiyot uchun.
+Telegram bot va Mini App: o'qituvchi test yaratadi, o'quvchilar onlayn ishlaydi yoki qog'oz titulni
+to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar Rasch bali va daraja bilan,
+yozma javoblar va esseni AI tekshiradi.
 
 ## Milliy sertifikat mock — UZBMB rasmiy namunasi bo'yicha
 - 45 ta topshiriq, 180 daqiqa
@@ -10,31 +12,72 @@ Chittak (matemttest) uslubidagi Telegram bot, faqat Ona tili va adabiyot uchun.
   (qatnashchilar natijasidan hisoblanadi — taxminiy, rasmiy emas)
 
 ## Imkoniyatlar
-- **O'qituvchi**: test yaratadi, A–D variant kalitlarini kiritadi. Yozma savolga 3 tagacha
-  to'g'ri javob (sinonim): `chiroyli | go'zal | ko'rkam`. Tinish belgili javoblar (37-savol) ham tekshiriladi.
-- Bot test kodi va **kalit PDF** beradi. Ikki rejim: **onlayn** (o'quvchi ilovada belgilaydi) yoki **titul** — titullar PDF chop etiladi, o'qituvchi telefon kamerasida jonli skanerlaydi (titul topilishi bilan o'zi ushlaydi).
-- **O'quvchi**: kod → variant → ism → javoblar (yoki `12345*abcd...`). Ball darhol chiqadi.
-- **Natijalar PDF**: ball, Rasch bali, daraja, xato savollar. Esse bahosi 0–24 (0,5 qadam).
-- Test yakunlanganda har bir qatnashchiga Rasch bali, daraja va to'g'ri javoblar yuboriladi.
+- **O'qituvchi**: test yaratadi, A–D variant kalitlarini kiritadi. Yozma savolga 3 tagacha to'g'ri javob
+  (sinonim): `chiroyli | go'zal | ko'rkam`. Tinish belgili javoblar (37-savol) ham tekshiriladi.
+- Ikki rejim: **onlayn** (o'quvchi ilovada belgilaydi) yoki **titul** (qog'ozda, kamerada skanerlanadi).
+- **O'quvchi**: kod → variant → ism → javoblar. Ball darhol chiqadi, e'londan keyin natija kartasi.
+- **Natijalar**: PDF va Excel — ball, Rasch bali, daraja, xato savollar, savollar tahlili.
+- **Natijani tuzatish**: «👥 Natijalar»da o'quvchini bosing — javoblari, kalit bilan solishtiruv,
+  AI o'qigan yozma kataklar rasmi. Tuzatilsa, ball va Rasch qayta hisoblanadi.
+- **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
 
-## Titul ko'rinishlari (Chittak titullaridan)
-- **Standart** — A4, ism, ID, test va yozma javob kataklari (yozmani AI o'qiydi, kalit bilan solishtiriladi)
-- **Ixcham** — faqat doirachalar, bitta A4 ga 2–3 ta titul
-- **EvalBee** — ism/imtihon/sana qutisi, 5 savollik bloklar
-- **DTM** — EvalBee to'ri, ustunlar tepasida sarlavha
-Yozma javoblar faqat standart titulda o'qiladi (AI_PROVIDER + kalit kerak).
+## Titul va skaner
+- Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari), **Ixcham**
+  (faqat doirachalar, bitta A4 ga 2–3 ta), **EvalBee**, **DTM**. Yozma javoblar faqat standart titulda.
+- Yozma javoblar (36–44) — **har harf alohida katakda** (bosh harflar). AI ularni aniq o'qiydi.
+- **Oflayn skaner** (ilovada yoki Mini App'da):
+  1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
+     (~1–2 soniya, internet shart emas). Keyingi titulni ustiga qo'yavering.
+  2. «📝 Esse ham» yoqilsa — har tituldan keyin esse varaqasini ko'rsatasiz: qimirlamay tursa o'zi
+     suratga oladi, keyingi titul qo'yilsa o'zi titulga qaytadi.
+  3. Kamera ostidagi ro'yxatda har titulni ochib tekshirish/tuzatish mumkin (⚠️ — xira doirachalar).
+  4. «📤 Botga yuborish» — hammasi bittada. Bot chatiga xabar keladi; yozma javoblarni AI fonda
+     o'qiydi va tugagach yana xabar beradi.
+  5. Skaner sahifasi bir marta internet bilan ochilgach, keyingi safar internetsiz ham ochiladi.
 
 ## Skaner ilovasi (APK)
-- Flutter ilova repo ildizida (`lib/main.dart`). Yig'ish:
-  `flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=APP_URL=https://zakaz-9s4l.onrender.com/`
-  so'ng `build/app/outputs/flutter-apk/app-release.apk` → `onatili_bot/downloads/onatili-skaner.apk` (bot `/download` da beradi).
-- Ilovada faqat skaner: Telegram orqali kirish (bot tasdiqlaydi), ochiq titulli testlar, natija botga ham yuboriladi.
-- Mini App'da titul testida «Skanerlash» → «Skaner ilovasida ochish»: ilova shu testda, qayta kirishsiz ochiladi.
+- Flutter ilova repo ildizida (`lib/main.dart`). Ilova sayt sahifasini ochadi — sayt yangilansa,
+  ilovani qayta o'rnatish shart emas. Faqat **sayt manzili o'zgarsa** APK qayta yig'iladi:
+  `flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=APP_URL=https://<sayt>.onrender.com/`
+  so'ng `build/app/outputs/flutter-apk/app-release.apk` → `onatili_bot/downloads/onatili-skaner.apk`
+  (bot uni `/download` manzilida beradi).
+- Ilovaga Telegram orqali kiriladi (bot tasdiqlaydi). Mini App'da «Skanerlash» → ilova shu testda ochiladi.
 
-## Ishga tushirish
+## AI (yozma javoblar va esse)
+- `AI_PROVIDER=gemini` — Google Gemini, **bepul tarifi bor**. Kalit: https://aistudio.google.com → API Keys.
+  Google akkaunti egasi **18 yoshdan katta** bo'lishi shart.
+- Asosiy model band (503) yoki limitda (429) bo'lsa — zaxira model (`GEMINI_FALLBACK`), uning limiti alohida.
+- Bepul limit taxminan kuniga bir necha yuz so'rov: 1 titul = 1 so'rov, 1 esse = 1 so'rov.
+  Ko'proq kerak bo'lsa — AI Studio'da «Set up billing» (taxminan 1000 titul ≈ 1 $).
+- `AI_PROVIDER=claude` — Anthropic Claude (pullik, sifati yuqoriroq).
+- AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.
+
+## Botni o'z hisoblariga ulash (yangi egasi uchun)
+Barcha kalit va parollar **kodda emas**, faqat sozlamalarda (`.env` yoki Render → Environment).
+Botni boshqa odamga topshirganda har birini **yangisiga almashtiring**:
+
+| Sozlama | Qayerdan olinadi |
+|---|---|
+| `BOT_TOKEN` | Telegram @BotFather → yangi bot (yoki eski botni `/mybots` → Transfer ownership) |
+| `ADMIN_IDS` | Yangi egasining Telegram ID'si |
+| `DATABASE_URL` | PostgreSQL (masalan Neon.tech, bepul) — natijalar shu yerda saqlanadi |
+| `AI_PROVIDER`, `GEMINI_API_KEY` | O'z Google akkauntidan AI Studio kaliti |
+| `WEBAPP_URL` | Render'da shart emas (o'zi aniqlaydi) |
+
+Tartib:
+1. GitHub'da repo'ni yangi egasiga o'tkazing (Settings → Transfer) yoki nusxa (fork) oching.
+2. Render.com'da **Web Service** yarating: repo → Root directory `onatili_bot`,
+   Build: `pip install -r requirements.txt`, Start: `python bot.py`.
+3. Render → Environment'ga yuqoridagi sozlamalarni kiriting → Deploy.
+4. Sayt manzili o'zgargan bo'lsa — APK'ni yangi `APP_URL` bilan qayta yig'ing (yuqorida).
+5. Botga `/start` yozing — Mini App tugmasi o'zi o'rnatiladi.
+
+Eski egasining kalitlarini (Gemini, bot tokeni) topshirgandan keyin o'chirib qo'ying.
+
+## Kompyuterda ishga tushirish
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-# .env faylida BOT_TOKEN ni to'ldiring
+copy .env.example .env      # so'ng .env ichini to'ldiring
 .venv\Scripts\python bot.py
 ```

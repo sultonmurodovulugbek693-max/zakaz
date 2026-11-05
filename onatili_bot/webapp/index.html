@@ -392,6 +392,24 @@ async function api(path, data) {
   return json;
 }
 
+// Internet yo'q bo'lsa — shu so'rovning oxirgi saqlangan javobi (skaner internetsiz ham ochilsin).
+// pick — saqlanadigan qismi (localStorage kichik: faqat kerakligi)
+async function apiCached(path, pick = x => x) {
+  const key = "cache:" + path;
+  try {
+    const json = await api(path);
+    try { localStorage.setItem(key, JSON.stringify(pick(json))); } catch (e) {}
+    return json;
+  } catch (e) {
+    if (e.message !== "Internet aloqasi yo'q") throw e;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch (x) {}
+    if (!saved) throw new Error("Internet yo'q. Skanerni bir marta internet bor joyda oching — keyin internetsiz ham ochiladi.");
+    S.fromCache = true;
+    return saved;
+  }
+}
+
 function countUp(root = document) {
   root.querySelectorAll("[data-count]").forEach(el => {
     const to = parseFloat(el.dataset.count), suffix = el.dataset.suffix || "";
@@ -1350,8 +1368,14 @@ function recWarnings(rec) {
 VIEWS.scan = async ({ id }) => {
   loading();
   let d, layout = null;
-  try { [d, layout] = await Promise.all([api(`/api/teacher/test/${id}`), api(`/api/teacher/test/${id}/scan/layout`).catch(() => null)]); }
-  catch (e) { return fail(e); }
+  S.fromCache = false;
+  try {
+    [d, layout] = await Promise.all([
+      apiCached(`/api/teacher/test/${id}`, x => ({ test: x.test, students: x.students, attempts: [] })),
+      apiCached(`/api/teacher/test/${id}/scan/layout`).catch(() => null),
+    ]);
+  } catch (e) { return fail(e); }
+  const fromCache = S.fromCache;
   const t = d.test, milliy = t.fmt === "milliy";
   const items = milliy ? itemsFor("milliy", 45) : [];  // oddiy testda savollar skaner natijasidan olinadi
   const count = () => `${d.students.filter(s => s.scanned).length} / ${d.students.length} skanerlangan`;
@@ -1361,7 +1385,8 @@ VIEWS.scan = async ({ id }) => {
   const testKey = String(t.id);
   let essayMode = milliy && store("scanEssay") === "1";
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span></div>
+    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span>
+      ${fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internetsiz — titullar telefonga saqlanadi, keyin yuborasiz</span>` : ""}</div>
     <div class="cam" id="cam">
       <video id="video" playsinline muted autoplay></video>
       <img id="still" alt="" hidden>
@@ -1470,6 +1495,7 @@ VIEWS.scan = async ({ id }) => {
         const sig = signature(a.read.result);
         if (waitSwap && !isNewSheet(sig, swapSig)) last = null;  // hali o'sha varaq turibdi
         else if (sig === last) {  // barqaror — telefonga saqlaymiz
+          swapSig = sig;  // keep() esse rejimiga o'tishi mumkin — u shu titulni «yangi» deb o'ylamasin
           try { await keep(a); }
           catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); last = null; continue; }
           if (my !== loopToken || phase === "essay") return;
@@ -1606,25 +1632,77 @@ VIEWS.scan = async ({ id }) => {
   function essayInfo() {
     const n = essayRec ? essayRec.essays.length : 0;
     document.getElementById("essay-who").innerHTML = `📝 Esse varaqasi · ${essayRec ? whoOf(essayRec) : ""}`;
-    document.getElementById("essay-info").textContent = n ? `✅ ${n} bet saqlandi. Yana bet bo'lsa — suratga oling, bo'lmasa «Keyingi titul».`
-      : "Esse varaqasini kameraga to'liq ko'rsating va «📸 Suratga olish»ni bosing. Bir necha bet bo'lsa — har birini.";
+    document.getElementById("essay-info").textContent = n ? `✅ ${n} bet saqlandi. Keyingi betni ko'rsating yoki keyingi titulni qo'ying — o'zi davom etadi.`
+      : "Esse varaqasini kameraga to'liq ko'rsating va qimirlatmay turing — o'zi suratga oladi. Keyingi titulni qo'ysangiz, o'zi titulga qaytadi.";
   }
   function enterEssay(rec) {
     phase = "essay"; essayRec = rec; stopLoop(); drawQuad(null);
     essayBar.hidden = false; essayInfo();
     setStatus("📝 Endi esse varaqasini ko'rsating", "ok");
+    watchEssay();
   }
-  function leaveEssay() { phase = "titul"; essayRec = null; if (essayBar) essayBar.hidden = true; startLoop(true); }
-  if (essayBar) {
-    document.getElementById("essay-shot").onclick = async () => {
-      if (!essayRec || !video.videoWidth) return;
+  function leaveEssay() { phase = "titul"; essayRec = null; essayWatch++; if (essayBar) essayBar.hidden = true; startLoop(true); }
+
+  let shooting = false;
+  async function shootEssay() {
+    if (!essayRec || !video.videoWidth || shooting) return;
+    shooting = true;
+    try {
       const blob = await frameJpeg(video);
       if (!blob) return toast("Suratga olib bo'lmadi");
       essayRec.essays.push(blob);
       try { await scanDB.put(essayRec); } catch (e) { essayRec.essays.pop(); return toast("Saqlab bo'lmadi: " + e.message); }
       haptic("success"); cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 400);
+      setStatus(`✅ Esse: ${essayRec.essays.length}-bet saqlandi`, "ok");
       essayInfo(); refreshQueue();
+    } finally { shooting = false; }
+  }
+
+  // Esse rejimida kamera kuzatiladi (kichik kulrang kadr, ~4 marta soniyada):
+  //  • kadr oldingi suratdan (yoki titul turgan kadrdan) sezilarli farq qilsa — yangi varaq qo'yildi;
+  //  • so'ng ~1 soniya qimirlamay tursa — o'zi suratga oladi;
+  //  • kadrda yangi titul ko'rinsa — esse tugadi, titul rejimiga qaytadi.
+  let essayWatch = 0;
+  function watchEssay() {
+    const my = ++essayWatch, SW = 48, SH = 64;
+    const c = document.createElement("canvas"); c.width = SW; c.height = SH;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    const sample = () => {
+      ctx.drawImage(video, 0, 0, SW, SH);
+      const px = ctx.getImageData(0, 0, SW, SH).data, g = new Float32Array(SW * SH);
+      for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = px[j] * 0.299 + px[j + 1] * 0.587 + px[j + 2] * 0.114;
+      return g;
     };
+    const diff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+    const contrast = g => { let m = 0; for (const v of g) m += v; m /= g.length; let s = 0; for (const v of g) s += (v - m) ** 2; return Math.sqrt(s / g.length); };
+    let base = null, prev = null, still = 0, armed = false, tick = 0;
+    (async () => {
+      while (my === essayWatch && phase === "essay" && S.camera && document.body.contains(video)) {
+        await new Promise(r => setTimeout(r, 230));
+        if (my !== essayWatch || phase !== "essay") return;
+        if (!video.videoWidth || shooting || review.innerHTML) continue;
+        // Har ~1 soniyada: yangi titul qo'yilmadimi?
+        if (++tick % 4 === 0) {
+          const a = await analyze();
+          if (my !== essayWatch || phase !== "essay") return;
+          if (a && a.read && isNewSheet(signature(a.read.result), swapSig)) { leaveEssay(); return; }
+        }
+        const g = sample();
+        if (!base) { base = prev = g; continue; }
+        if (!armed && diff(g, base) > 14) armed = true;  // varaq almashdi
+        const moving = diff(g, prev) > 3.5; prev = g;
+        if (!armed) { still = 0; continue; }
+        if (moving || contrast(g) < 16) { still = 0; setStatus("📝 Esse varaqasini to'liq ko'rsating"); continue; }
+        if (++still === 1) setStatus("Qimirlatmang… 📸");
+        if (still >= 4) {
+          await shootEssay();
+          base = prev = sample(); armed = false; still = 0;  // keyingi bet — yana varaq almashgandan keyin
+        }
+      }
+    })();
+  }
+  if (essayBar) {
+    document.getElementById("essay-shot").onclick = () => shootEssay();
     document.getElementById("essay-next").onclick = () => { haptic("light"); leaveEssay(); };
   }
   const essayToggle = document.getElementById("essay-mode");
@@ -1925,7 +2003,8 @@ window.appOpen = url => appStart(new URL(url, location.href).searchParams);  // 
 VIEWS.appHome = async () => {
   if (!store("appSession")) return VIEWS.appLogin();
   loading();
-  try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); }
+  S.fromCache = false;
+  try { S.boot = await apiCached("/api/bootstrap"); } catch (e) { return fail(e); }
   if (S.boot.subscribe) return subscribeGate(S.boot.subscribe);
   const b = S.boot, first = (b.user.name || "").split(" ")[0];
   const open = b.tests.filter(t => !t.closed && t.mode === "offline");
@@ -1935,7 +2014,8 @@ VIEWS.appHome = async () => {
       <span class="pill-tag wait">📷 Skaner</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><span class="hi">Salom, ${esc(first)} 👋</span>
-      <h1>Ochiq testlar</h1><span class="muted small">Testni tanlang va titullarni kamerada tekshiring. Har natija botdagi chatingizga ham yuboriladi.</span></div>
+      <h1>Ochiq testlar</h1><span class="muted small">Testni tanlang va titullarni kamerada tekshiring. Har natija botdagi chatingizga ham yuboriladi.</span>
+      ${S.fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internet yo'q — oxirgi saqlangan ro'yxat</span>` : ""}</div>
     <div class="list">${list || `<div class="card empty"><div class="big">📭</div><b>Ochiq titulli test yo'q</b><span>Botda test yarating («Titul» rejimi) — u shu yerda chiqadi.</span></div>`}</div>
     <div class="row"><button class="btn ghost" id="refresh">🔄 Yangilash</button><button class="btn plain" id="logout">Chiqish</button></div>
   </div>`;
@@ -1951,6 +2031,8 @@ VIEWS.appHome = async () => {
 
 // ---------- Ishga tushirish ----------
 (function init() {
+  // Sahifa telefonda saqlanadi — internetsiz ham ochiladi (sw.js)
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (tg) {
     try { tg.ready(); tg.expand(); if (tg.colorScheme === "dark") document.documentElement.classList.add("dark"); tg.onEvent("themeChanged", () => document.documentElement.classList.toggle("dark", tg.colorScheme === "dark")); } catch (e) {}
   }
