@@ -1255,29 +1255,31 @@ function appScanModal(t) {
   };
 }
 
-// Titul ko'rinishlari (Chittak titullaridan): skaner chop etilgan ko'rinishni testdan biladi
+// Titul ko'rinishlari: skaner chop etilgan ko'rinishni testdan biladi.
+// Milliy sertifikat testida faqat standart titul — yozma javoblar (36–44) harf kataklari faqat unda
 const SHEET_STYLES = [
-  ["standard", "Standart", "A4: ism katagi, ID, test va yozma javob kataklari (yozmani AI o'qiydi)."],
+  ["standard", "Standart", "A4: ism, ID, test doirachalari va yozma javoblar uchun harf kataklari (yozmani AI o'qiydi)."],
   ["compact", "Ixcham", "Faqat doirachalar — bitta A4 ga 2–3 ta titul, qirqib tarqatiladi. Qog'oz tejaladi."],
-  ["evalbee", "EvalBee", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
-  ["dtm", "DTM", "EvalBee to'ri, har ustun tepasida fan va savollar oralig'i — DTM blankasiga o'xshash."],
+  ["evalbee", "Yirik doirachalar", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
+  ["dtm", "Fan ustunli", "Yirik doirachalar, har ustun tepasida fan nomi va savollar oralig'i."],
 ];
 function sheetsModal(t, students) {
+  const milliy = t.fmt === "milliy", styles = milliy ? SHEET_STYLES.slice(0, 1) : SHEET_STYLES;
+  let style = milliy ? "standard" : (t.sheet_style || "standard");
   const modal = document.createElement("div"); modal.className = "sheet-modal";
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
-    <p class="muted small" style="margin:0">Har bir o'quvchiga ismi, raqami va varianti bosilgan shaxsiy titul${t.fmt === "milliy" ? " va esse varaqasi" : ""}. Skaner varaq kimniki ekanini o'zi taniydi.</p>
-    <div class="field"><label>Titul ko'rinishi</label>
-      <div class="chips" id="styles">${SHEET_STYLES.map(([key, name, hint]) => `<button type="button" class="chip ${key === (t.sheet_style || "standard") ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
-      <span class="muted small" id="style-hint"></span></div>
+    <p class="muted small" style="margin:0">Har bir o'quvchiga ismi, raqami va varianti bosilgan shaxsiy titul${milliy ? " va esse varaqasi" : ""}. Skaner varaq kimniki ekanini o'zi taniydi.</p>
+    ${styles.length > 1 ? `<div class="field"><label>Titul ko'rinishi</label>
+      <div class="chips" id="styles">${styles.map(([key, name, hint]) => `<button type="button" class="chip ${key === style ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
+      <span class="muted small" id="style-hint"></span></div>` : `<span class="muted small">${esc(SHEET_STYLES[0][2])}</span>`}
     <div class="field"><label for="blanks">Qo'shimcha bo'sh titullar (ro'yxatda yo'qlar uchun)</label><input class="input" id="blanks" inputmode="numeric" value="${students.length ? 0 : 30}"></div>
     <button class="btn block" id="make">PDF'ni chatga yuborish (${students.length} ta shaxsiy)</button></div>`;
   document.body.appendChild(modal);
   modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
-  let style = t.sheet_style || "standard";
   const hint = () => {
-    const [, , text] = SHEET_STYLES.find(([key]) => key === style);
-    modal.querySelector("#style-hint").textContent = text + (style !== "standard" && t.fmt === "milliy" ? " Yozma javoblar (36–44) titulda yo'q — skanerdan keyin qo'lda kiritasiz." : "");
+    const el = modal.querySelector("#style-hint"); if (!el) return;
+    el.textContent = SHEET_STYLES.find(([key]) => key === style)[2];
   };
   hint();
   modal.querySelectorAll("[data-style]").forEach(b => b.onclick = () => {
@@ -1481,7 +1483,7 @@ VIEWS.scan = async ({ id }) => {
   // Kadrlar telefonning o'zida o'qiladi (omr.js, Chittak skaneri): ramka darhol chiziladi, internet kerak emas.
   // Ketma-ket ikki kadr bir xil o'qilsa — varaq qimirlamay turibdi: natija shu zahoti telefon xotirasiga
   // yoziladi (yozma kataklar va ism katagi rasmi bilan). Telefon buni qo'llamasa — server sikli (startServerLoop)
-  // Titul o'lchami: standart — A4; ixcham — A4 ning 1/3 yoki 1/2 qismi; EvalBee/DTM — o'z bo'yi
+  // Titul o'lchami: standart — A4; ixcham — A4 ning 1/3 yoki 1/2 qismi; yirik / fan ustunli — o'z bo'yi
   if (local) { SHEET_PAGE = sheetPageOf(layout); READ_SCALE = SHEET_PAGE.readScale; }
   let worker = local ? createScanWorker() : null;
   if (worker) worker.postMessage({ layout, page: 1, sheetPage: SHEET_PAGE });

@@ -786,6 +786,8 @@ async def sheets(request: web.Request) -> web.Response:
     if style is not None:
         if style not in sheet_styles.STYLES:
             raise ApiError(400, "Titul ko'rinishi noto'g'ri")
+        if test["fmt"] == "milliy" and style != "standard":  # yozma javob kataklari faqat standart titulda
+            raise ApiError(400, "Milliy sertifikat testi uchun faqat standart titul")
         try:  # savollar shu ko'rinishga sig'adimi
             sheet.layout({**test, "sheet_style": style}, list(await run(db.get_keys, test["id"])))
         except ValueError as error:

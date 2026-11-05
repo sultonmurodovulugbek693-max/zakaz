@@ -23,7 +23,7 @@ from reportlab.pdfbase import pdfmetrics
 
 from structure import LETTERS, choice_items
 
-STYLES = {"standard": "Standart", "compact": "Ixcham", "evalbee": "EvalBee", "dtm": "DTM"}
+STYLES = {"standard": "Standart", "compact": "Ixcham", "evalbee": "Yirik doirachalar", "dtm": "Fan ustunli"}
 
 CORNER, CORNER_SIZE = 32, 14
 EDGE_SIZE = 8
@@ -121,7 +121,7 @@ def compact_plan(test: dict, variants: list[str]) -> dict:
         if rows * columns >= len(items):
             break
     if rows * columns < len(items):
-        raise ValueError("Savollar ixcham titulga sig'maydi — EvalBee yoki standart titulni tanlang")
+        raise ValueError("Savollar ixcham titulga sig'maydi — «Yirik doirachalar» yoki standart titulni tanlang")
     per_column = max(1, math.ceil(len(items) / columns))
     return {"width": width, "height": height, "column_width": column_width, "questions_x": questions_x,
             "id_right": id_right, "edge_marks": max(2, round((height - 2 * CORNER) / COMPACT_EDGE_STEP) - 1),

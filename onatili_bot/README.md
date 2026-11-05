@@ -22,8 +22,8 @@ yozma javoblar va esseni AI tekshiradi.
 - **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
 
 ## Titul va skaner
-- Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari), **Ixcham**
-  (faqat doirachalar, bitta A4 ga 2–3 ta), **EvalBee**, **DTM**. Yozma javoblar faqat standart titulda.
+- Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari) — Milliy sertifikat testida
+  faqat shu. Oddiy testda yana: **Ixcham** (bitta A4 ga 2–3 ta), **Yirik doirachalar**, **Fan ustunli**.
 - Yozma javoblar (36–44) — **har harf alohida katakda** (bosh harflar). AI ularni aniq o'qiydi.
 - **Oflayn skaner** (ilovada yoki Mini App'da):
   1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
