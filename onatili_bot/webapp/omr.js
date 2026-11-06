@@ -1,7 +1,6 @@
 /*
   Titulni telefonning o'zida o'qish (jonli skaner): burchaklarni topish, perspektivani tekislash,
-  doirachalarni o'qish. Chittak (matemttest) loyihasining frontend/js/app.js faylidan olingan
-  (12232–13190-qatorlar, 2d36265-commit) — backend/omr.py bilan bir xil titul formati.
+  doirachalarni o'qish. Serverdagi omr.py bilan bir xil titul formati.
 */
 
 // Varaq o'lchamlari (punktlarda) — backend/omr.py va titul chizilishi bilan bir xil
@@ -29,7 +28,7 @@ function sheetPageOf(layout) {
     edgeMarks: page.edge_marks,
     nameBox: page.name_box,
     nameArea: page.name_area || NAME_BOX,
-    readScale: page.height > 600 ? 1.5 : 2, // to'liq A4 (EvalBee uslubi) — kichikroq masshtab, tezroq
+    readScale: page.height > 600 ? 1.5 : 2, // to'liq A4 (yirik doirachali titul) — kichikroq masshtab, tezroq
   };
 }
 
@@ -345,7 +344,7 @@ function cornersFromEdgeMarks(gray, integral, width, height, blobs) {
   egilish tuzatiladi, har savol qatori chop etilgan halqalarga moslanadi va doirachalar
   ichining qoraygani o'lchanadi. Surat serverga yuborilmaydi — natija bir zumda.
 */
-// Tekislangan varaqda 1 punkt = 2 piksel; to'liq A4 dagi EvalBee uslubidagi titulda 1,5 (doirachalar
+// Tekislangan varaqda 1 punkt = 2 piksel; to'liq A4 dagi yirik doirachali titulda 1,5 (doirachalar
 // kattaroq — aniqlik o'sha, o'qish ~25% tez). Titul tuzilishi kelganda SHEET_PAGE bilan birga o'rnatiladi
 let READ_SCALE = 2;
 const FILLED_RATIO = 0.5;

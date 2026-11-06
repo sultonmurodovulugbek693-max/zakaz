@@ -1,5 +1,5 @@
 """
-Javoblar varaqasini suratdan o'qish (OMR). Chittak (matemttest) loyihasidan olingan.
+Javoblar varaqasini suratdan o'qish (OMR).
 
 Varaq (generate_answer_sheet_pdf) burchaklarida 4 ta qora nuqta bor. Suratda
 shu nuqtalar topiladi, varaq tekislanadi (perspektiva to'g'rilanadi) va har bir

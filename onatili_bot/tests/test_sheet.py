@@ -1,7 +1,7 @@
 """Titul: yozma javob harf kataklari varaqqa sig'adi, PDF chiziladi, skaner uchun joylar to'g'ri."""
 import unittest
 
-import _env  # noqa: F401
+import _env
 
 import sheet
 import structure
@@ -33,6 +33,34 @@ class Layout(unittest.TestCase):
         pdf = sheet.sheets_pdf(milliy_test(), ["A", "B"], [{"number": 7, "name": "Ali Valiyev", "variant": "B"}], blanks=2)
         self.assertTrue(pdf.startswith(b"%PDF"))
         self.assertGreater(len(pdf), 5000)
+
+
+class Styles(unittest.TestCase):
+    def oddiy(self, style: str) -> dict:
+        return {"id": 2, "code": "54321", "title": "Oddiy", "fmt": "oddiy", "count": 30,
+                "items": structure.build_items("oddiy", 30), "sheet_style": style}
+
+    def test_every_style_draws_and_scans(self):
+        import sheet_styles
+        for style in sheet_styles.STYLES:
+            test = self.oddiy(style)
+            spec = sheet.layout(test, ["A", "B"])
+            self.assertTrue(any(b["kind"] == "single" for b in spec["bubbles"]), style)
+            self.assertTrue(sheet.sheets_pdf(test, ["A", "B"], [], blanks=1).startswith(b"%PDF"), style)
+
+    def test_old_style_names_still_work(self):
+        import sheet_styles
+        self.assertEqual(sheet_styles.style_of({"sheet_style": "evalbee"}), "large")
+        self.assertEqual(sheet_styles.style_of({"sheet_style": "dtm"}), "columns")
+        self.assertEqual(sheet_styles.style_of({"sheet_style": "nomalum"}), "standard")
+
+    def test_database_migrates_old_style_names(self):
+        import db
+        _env.fresh_db()
+        test = db.create_test(1, "Eski", "oddiy", 30, structure.build_items("oddiy", 30), {"A": {}})
+        db.set_sheet_style(test["id"], "dtm")
+        db.init()  # bot qayta ishga tushdi
+        self.assertEqual(db.get_test(test["id"])["sheet_style"], "columns")
 
 
 if __name__ == "__main__":

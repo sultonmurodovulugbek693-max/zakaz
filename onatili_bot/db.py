@@ -159,8 +159,8 @@ MIGRATIONS = [
     ("tests", "theme", "TEXT"),
     ("tests", "mode", "TEXT NOT NULL DEFAULT 'online'"),
     ("tests", "channels", "TEXT"),
-    ("tests", "sheet_style", "TEXT"),
-    ("users", "role", "TEXT"),  # oxirgi tanlangan ekran: student | teacher  # titul ko'rinishi: standard | compact | evalbee | dtm
+    ("tests", "sheet_style", "TEXT"),  # titul ko'rinishi: standard | compact | large | columns
+    ("users", "role", "TEXT"),  # oxirgi tanlangan ekran: student | teacher
 ]
 
 
@@ -233,6 +233,9 @@ def init() -> None:
                 columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                 if column not in columns:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        # Titul ko'rinishlarining oldingi nomlari → hozirgilari
+        conn.execute("UPDATE tests SET sheet_style = 'large' WHERE sheet_style = 'evalbee'")
+        conn.execute("UPDATE tests SET sheet_style = 'columns' WHERE sheet_style = 'dtm'")
 
 
 def backend_name() -> str:

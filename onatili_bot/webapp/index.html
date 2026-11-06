@@ -1260,8 +1260,8 @@ function appScanModal(t) {
 const SHEET_STYLES = [
   ["standard", "Standart", "A4: ism, ID, test doirachalari va yozma javoblar uchun harf kataklari (yozmani AI o'qiydi)."],
   ["compact", "Ixcham", "Faqat doirachalar — bitta A4 ga 2–3 ta titul, qirqib tarqatiladi. Qog'oz tejaladi."],
-  ["evalbee", "Yirik doirachalar", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
-  ["dtm", "Fan ustunli", "Yirik doirachalar, har ustun tepasida fan nomi va savollar oralig'i."],
+  ["large", "Yirik doirachalar", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
+  ["columns", "Fan ustunli", "Yirik doirachalar, har ustun tepasida fan nomi va savollar oralig'i."],
 ];
 function sheetsModal(t, students) {
   const milliy = t.fmt === "milliy", styles = milliy ? SHEET_STYLES.slice(0, 1) : SHEET_STYLES;
@@ -1480,7 +1480,7 @@ VIEWS.scan = async ({ id }) => {
   let loopToken = 0;
   function stopLoop() { loopToken++; S.scanLoop = null; }
 
-  // Kadrlar telefonning o'zida o'qiladi (omr.js, Chittak skaneri): ramka darhol chiziladi, internet kerak emas.
+  // Kadrlar telefonning o'zida o'qiladi (omr.js): ramka darhol chiziladi, internet kerak emas.
   // Ketma-ket ikki kadr bir xil o'qilsa — varaq qimirlamay turibdi: natija shu zahoti telefon xotirasiga
   // yoziladi (yozma kataklar va ism katagi rasmi bilan). Telefon buni qo'llamasa — server sikli (startServerLoop)
   // Titul o'lchami: standart — A4; ixcham — A4 ning 1/3 yoki 1/2 qismi; yirik / fan ustunli — o'z bo'yi

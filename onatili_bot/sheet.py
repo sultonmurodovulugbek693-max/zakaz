@@ -5,7 +5,7 @@ Bitta funksiya — layout() — har bir doiracha, belgi va katakning aniq joyini
 PDF ham, skaner ham AYNAN shu joylashuvdan foydalanadi, shuning uchun ular hech qachon
 bir-biridan farq qilmaydi (varaq qayta chizilsa ham — u testdan qayta hisoblanadi).
 
-Varaq tuzilishi (Chittak 3-versiya titul o'lchamlarida):
+Varaq tuzilishi:
   • burchaklarda 4 ta qora kvadrat, chap/o'ng chetda 10 tadan tekislash belgisi
   • pastki chetda 12 bitli kod: o'quvchi raqami (11 bit) + juftlik biti → skaner varaq
     kimniki ekanini o'zi taniydi; 0 — bo'sh (umumiy) titul
@@ -76,7 +76,7 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     """
     Varaqdagi barcha elementlarning joyi: {"bubbles", "written", "written_area", "name_area", "page"}.
     page — titul o'lchami (omr.SheetPage maydonlari); standart A4 titulda None.
-    Ixcham / EvalBee / DTM ko'rinishlari — sheet_styles.py da.
+    Ixcham / yirik doirachali / fan ustunli ko'rinishlar — sheet_styles.py da.
     """
     import sheet_styles
     if sheet_styles.style_of(test) != "standard":
@@ -108,7 +108,7 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     columns, rows = _choice_grid(len(choices))
     column_width = (RIGHT - LEFT) / columns
 
-    # Blok belgilari: har ustundagi har 5 savollik blok burchaklarida qora kvadratcha (Chittak 7-versiya).
+    # Blok belgilari: har ustundagi har 5 savollik blok burchaklarida qora kvadratcha.
     # Skaner har doirachani o'z blokining 4 belgisi orasida joylashtiradi — bukilgan qog'ozda ham aniq.
     def row_y(row: int) -> float:
         return H - (QUESTIONS_TOP + row * ROW_STEP)
@@ -257,7 +257,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     c.setFillColor(ACCENT)
     c.drawString(LEFT, H - QUESTIONS_TOP + 22, f"{choices[0]['label']}–{choices[-1]['label']} · test savollari")
     # Doirachalar BO'SH chiziladi (ichidagi harf skanerga "qisman bo'yalgan" bo'lib ko'rinadi) —
-    # harflar har ustun tepasida sarlavha qilib yoziladi (Chittak titulidagidek)
+    # harflar har ustun tepasida sarlavha qilib yoziladi
     labels_x, headers = {}, {}
     for bubble in spec["bubbles"]:
         if bubble["kind"] != "single":

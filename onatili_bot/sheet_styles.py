@@ -1,14 +1,14 @@
 """
-Titulning qo'shimcha ko'rinishlari — Chittak (matemttest) titullaridan olingan:
+Titulning qo'shimcha ko'rinishlari (standart A4 titul — sheet.py da):
 
-  compact — Ixcham (6-versiya): faqat doirachalar (ID, variant, savollar). Savol soniga qarab A4 ning
+  compact — Ixcham: faqat doirachalar (ID, variant, savollar). Savol soniga qarab A4 ning
             1/3, 1/2 qismi yoki to'liq A4 — bitta varaqqa 2–3 ta titul, orasida qirqish chizig'i.
-  evalbee — EvalBee uslubi (9–10-versiya): bitta varaqda bitta titul, tepada "Ism-familiya / Imtihon /
-            Sana" qutisi, savollar 5 tadan bloklarda, blok burchaklarida qora kvadratlar. O'lchami
-            moslashuvchan: savol kam bo'lsa doirachalar kattaroq.
-  dtm     — DTM ko'rinishi: EvalBee to'ri, har ustun tepasida fan va savollar oralig'i sarlavhasi.
+  large   — Yirik doirachalar: bitta varaqda bitta titul, tepada "Ism-familiya / Imtihon / Sana" qutisi,
+            savollar 5 tadan bloklarda, blok burchaklarida qora kvadratlar. O'lchami moslashuvchan:
+            savol kam bo'lsa doirachalar kattaroq.
+  columns — Fan ustunli: yirik doirachali to'r, har ustun tepasida fan nomi va savollar oralig'i.
 
-Yozma javoblar (Milliy sertifikatda 36–44) bu titullarda yo'q — skanerdan keyin qo'lda kiritiladi.
+Yozma javob kataklari bu titullarda yo'q — shuning uchun Milliy sertifikat testida faqat standart titul.
 
 Har bir ko'rinish bitta chizish funksiyasi bilan ham PDF'ni chizadi, ham skaner uchun doirachalar
 ro'yxatini yig'adi (layout'da "bo'sh" kanvas bilan) — shuning uchun PDF va skaner hech qachon farq qilmaydi.
@@ -23,7 +23,9 @@ from reportlab.pdfbase import pdfmetrics
 
 from structure import LETTERS, choice_items
 
-STYLES = {"standard": "Standart", "compact": "Ixcham", "evalbee": "Yirik doirachalar", "dtm": "Fan ustunli"}
+STYLES = {"standard": "Standart", "compact": "Ixcham", "large": "Yirik doirachalar", "columns": "Fan ustunli"}
+# Oldingi versiyalarda saqlangan nomlar → hozirgilari (eski testlar o'z titulini yo'qotmasin)
+LEGACY_STYLES = {"evalbee": "large", "dtm": "columns"}
 
 CORNER, CORNER_SIZE = 32, 14
 EDGE_SIZE = 8
@@ -34,6 +36,7 @@ MUTED = colors.HexColor("#6b7280")
 
 def style_of(test: dict) -> str:
     style = test.get("sheet_style") or "standard"
+    style = LEGACY_STYLES.get(style, style)
     return style if style in STYLES else "standard"
 
 
@@ -192,10 +195,10 @@ def draw_compact(c, test: dict, plan: dict, variants: list[str], student: dict |
                       "x": x, "y": center, "r": COMPACT_RADIUS})
 
 
-# ---------- EvalBee va DTM titullari (bloklarga bo'lingan) ----------
+# ---------- Yirik doirachali va fan ustunli titullar (bloklarga bo'lingan) ----------
 
 GRID = {"step": 78, "row": 13, "header": 9, "radius": 5.5, "gap": 19, "label": 24}
-DTM_TITLE_BAND = 20      # DTM: blok sarlavhasi shuncha balandroq (fan nomi va oraliq sig'adi)
+TITLE_BAND = 20          # fan ustunli titul: blok sarlavhasi shuncha balandroq (fan nomi va oraliq sig'adi)
 MAX_SCALE, FILL_SCALE, MIN_SCALE = 1.3, 2.0, 0.6
 BRAND_SPACE = 58
 MAX_RADIUS = 6.0
@@ -212,7 +215,7 @@ def _blocks(items: list[dict]) -> list[list[dict]]:
 
 
 def _grid_style(cells: int, reserved: int, column_base: float, title_band: float) -> dict:
-    """cells ta blok sig'adigan eng katta masshtab (Chittak 9-versiya _adaptive_style)."""
+    """cells ta blok sig'adigan eng katta masshtab."""
     base = {**GRID, "column": column_base, "header": GRID["header"] + title_band, "step": GRID["step"] + title_band}
     best = None
     for columns in range(2, 6):
@@ -255,19 +258,19 @@ def _grid_style(cells: int, reserved: int, column_base: float, title_band: float
     }
 
 
-def grid_plan(test: dict, variants: list[str], dtm: bool) -> dict:
+def grid_plan(test: dict, variants: list[str], titled: bool) -> dict:
     items = choice_items(test["items"])
     blocks = _blocks(items)
     show_variants = len(variants) > 1
     reserved = 2 + (1 if show_variants else 0)  # 1-ustunda ID (0–9, ikki blok) va variant
     options = max((item["options"] for item in items), default=4)
     column_base = max(120.0, GRID["label"] + (options - 1) * GRID["gap"] + 2 * GRID["radius"] + 28)
-    style = _grid_style(reserved + len(blocks), reserved, column_base, DTM_TITLE_BAND if dtm else 0.0)
+    style = _grid_style(reserved + len(blocks), reserved, column_base, TITLE_BAND if titled else 0.0)
     slots = [(column, row) for column in range(style["columns"]) for row in range(style["rows"])
              if column or row >= reserved]
     placed = [(block, *slots[index]) for index, block in enumerate(blocks)]
     titles = []
-    if dtm:
+    if titled:
         # Har ustunning birinchi bloki ustida: fan (yoki savol turi) va savollar oralig'i
         for column in range(style["columns"]):
             mine = [(block, row) for block, col, row in placed if col == column]
@@ -436,7 +439,7 @@ def draw_grid(c, test: dict, plan: dict, variants: list[str], student: dict | No
             note({"kind": "variant", "ref": "variant", "label": "variant", "letter": name,
                   "x": x, "y": center, "r": radius, "block": corners})
 
-    # DTM: ustun sarlavhalari (kvadratlar ostida, A B C D harflari ustida)
+    # Fan ustunli titul: ustun sarlavhalari (kvadratlar ostida, A B C D harflari ustida)
     for column, row, caption, text in plan["titles"]:
         center = line_x(column) + column_width / 2
         room = column_width - EDGE_SIZE - 10
@@ -477,7 +480,7 @@ def plan_for(test: dict, variants: list[str]) -> dict:
     style = style_of(test)
     if style == "compact":
         return {"kind": "compact", **compact_plan(test, variants)}
-    return {"kind": style, **grid_plan(test, variants, dtm=style == "dtm")}
+    return {"kind": style, **grid_plan(test, variants, titled=style == "columns")}
 
 
 def _draw_card(c, test: dict, plan: dict, variants: list[str], student: dict | None, note) -> None:
