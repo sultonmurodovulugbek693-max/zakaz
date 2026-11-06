@@ -224,7 +224,17 @@ async def test_info(request: web.Request) -> web.Response:
     if not test:
         raise ApiError(404, "Bunday kodli test topilmadi")
     if (test.get("mode") or "online") == "offline":
-        raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javobni o'qituvchingizga topshiring")
+        if test["fmt"] != "milliy":
+            raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javobni o'qituvchingizga topshiring")
+        # Titulli milliy test: test qog'ozda, 45-esse esa shu yerda yoziladi (ID bilan)
+        await test_gate(test, user, recheck=request.query.get("recheck") == "1")
+        mine = await run(db.offline_essay_of_user, test["id"], user["id"])
+        return ok({
+            "code": test["code"], "title": test["title"], "fmt": test["fmt"], "mode": "offline",
+            "closed": bool(test["closed"]), "essay_topic": test.get("essay_topic"), "ai": essay_ai.enabled(),
+            "last_name": await run(db.last_name_used, user["id"]),
+            "essay_sent": {"number": mine["number"], "words": len(mine["text"].split()), "name": mine["name"]} if mine else None,
+        })
     previous = await run(db.find_attempt, test["id"], user["id"])
     if not previous:
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
@@ -486,6 +496,8 @@ async def teacher_test(request: web.Request) -> web.Response:
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
         "ai": essay_ai.enabled(), "ai_provider": essay_ai.provider_name(),
+        "waiting_essays": await run(db.waiting_offline_essays, test["id"])
+        if test["fmt"] == "milliy" and test.get("mode") == "offline" else 0,
     })
 
 
@@ -924,14 +936,73 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
         name = " ".join(str(payload.get("name") or "").split())[:60]
         if len(name) < 3:
             raise ApiError(400, "O'quvchi ismini yozing yoki ro'yxatdan tanlang")
-        student = (await run(db.add_students, test["id"], [name], [variant]))[-1]
+        # Titulda bo'yalgan ID ro'yxatda yo'q bo'lsa — o'quvchi shu ID bilan qo'shiladi (esse ID bo'yicha topiladi)
+        raw = str(payload.get("number") or "")
+        number = int(raw) if raw.isdigit() and 0 < int(raw) <= 9999 else None
+        before = {s["id"] for s in await run(db.list_students, test["id"])}
+        students = await run(db.add_students, test["id"], [name], [variant], [number] if number else None)
+        student = next(s for s in students if s["id"] not in before)
     answers = clean_answers(test, payload.get("answers") or {})
     attempt = await HOOKS["record_attempt"](test, db.offline_tg_id(test["id"], student["number"]), student["name"],
                                             variant, answers, None, [], 0.0, notify=False)
     if attempt is None:
         raise ApiError(409, "Bu o'quvchining natijasi allaqachon bor")
     await run(db.link_student_attempt, student["id"], attempt["id"])
+    if test["fmt"] == "milliy":
+        await link_offline_essay(test, student["number"], attempt["id"])
     return attempt, student
+
+
+async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
+    """O'quvchi botda yozgan esse (ID bo'yicha) — titul natijasiga."""
+    essay = await run(db.get_offline_essay, test["id"], number)
+    if not essay:
+        return False
+    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if essay_ai.enabled() else "manual")
+    return True
+
+
+ESSAY_MIN_WORDS, ESSAY_MAX_CHARS = 30, 20000
+
+
+async def offline_essay_submit(request: web.Request) -> web.Response:
+    """
+    Titulli testning 45-essesi: o'quvchi titulda bo'yagan ID'si bilan botda yozadi. Titul oldin yoki keyin
+    skanerlanishidan qat'i nazar, natijaga ID bo'yicha biriktiriladi. Bitta akkaunt — bitta ID.
+    """
+    user = await auth(request)
+    payload = await body(request)
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test or (test.get("mode") or "online") != "offline" or test["fmt"] != "milliy":
+        raise ApiError(404, "Bunday kodli titulli test topilmadi")
+    if test["closed"]:
+        raise ApiError(409, "Natijalar e'lon qilingan — esse qabul qilinmaydi")
+    await test_gate(test, user)
+    raw = str(payload.get("number") or "").strip()
+    if not raw.isdigit() or not 0 < int(raw) <= 9999:
+        raise ApiError(400, "ID'ni 4 ta raqam bilan yozing (titulda bo'yaganingizdek, masalan 0007)")
+    number = int(raw)
+    text = str(payload.get("essay") or "").strip()
+    if len(text.split()) < ESSAY_MIN_WORDS:
+        raise ApiError(400, f"Esse juda qisqa — kamida {ESSAY_MIN_WORDS} so'z yozing")
+    if len(text) > ESSAY_MAX_CHARS:
+        raise ApiError(400, "Esse juda uzun")
+    name = " ".join(str(payload.get("name") or "").split())[:60] or None
+    mine = await run(db.offline_essay_of_user, test["id"], user["id"])
+    if mine and mine["number"] != number:
+        raise ApiError(409, f"Siz bu testga ID {mine['number']:04d} bilan esse yuborgansiz — ID'ni o'zgartirib bo'lmaydi")
+    existing = await run(db.get_offline_essay, test["id"], number)
+    if existing and existing["tg_id"] != user["id"]:
+        raise ApiError(409, f"ID {number:04d} bilan esse boshqa akkauntdan yuborilgan — ID'ingizni tekshiring "
+                            "yoki o'qituvchingizga ayting")
+    student = await run(db.get_student, test["id"], None, number)
+    attempt = await run(db.get_attempt, student["attempt_id"]) if student and student["attempt_id"] else None
+    if attempt and attempt["essay"] is not None:
+        raise ApiError(409, "Essengiz allaqachon baholangan — o'zgartirib bo'lmaydi")
+    await run(db.save_offline_essay, test["id"], number, user["id"], name or (student["name"] if student else None), text)
+    linked = bool(attempt) and await link_offline_essay(test, number, attempt["id"])
+    return ok({"ok": True, "number": number, "words": len(text.split()), "linked": linked,
+               "name": student["name"] if student else name})
 
 
 async def scan_save(request: web.Request) -> web.Response:
@@ -1187,6 +1258,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/test/{code:\\d{5}}", test_info)
     app.router.add_post("/api/test/{code:\\d{5}}/submit", submit)
     app.router.add_post("/api/test/{code:\\d{5}}/ping", ping)
+    app.router.add_post("/api/test/{code:\\d{5}}/essay", offline_essay_submit)
     app.router.add_get("/api/result/{attempt_id:\\d+}", result)
     app.router.add_post("/api/teacher/tests", create_test)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)

@@ -312,8 +312,9 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     c.setFont("Sans", 8)
     y = H - spec["bottom"] - 20
     if test["fmt"] == "milliy":
-        c.drawString(LEFT, y, f"45 — esse alohida varaqqa yoziladi ({ESSAY_MAX} ball). Varaqni bukmang, burchakdagi "
-                              "qora kvadratlar ustiga yozmang.")
+        c.drawString(LEFT, y, f"45 — esse botda yoziladi ({ESSAY_MAX} ball): botga test kodi {test['code']} ni "
+                              "kiriting va shu ID bilan yozing.")
+        c.drawString(LEFT, y - 12, "Varaqni bukmang, burchakdagi qora kvadratlar ustiga yozmang.")
     else:
         c.drawString(LEFT, y, "Varaqni bukmang, burchakdagi qora kvadratlar ustiga yozmang.")
     c.setFillColor(GRID)
@@ -337,8 +338,11 @@ def _bubble(c: canvas.Canvas, x: float, y: float, r: float, letter: str, filled:
 
 
 def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blanks: int = 0) -> bytes:
-    """Har o'quvchiga shaxsiy titul (+ milliyda esse varaqasi) va kerak bo'lsa bo'sh titullar."""
-    import pdfs  # shriftlar ro'yxatdan o'tgan bo'lsin; esse sahifasi shu yerda chiziladi
+    """
+    Har o'quvchiga shaxsiy titul va kerak bo'lsa bo'sh titullar. Esse qog'ozda emas — o'quvchi uni botda
+    test kodi va ID'si bilan yozadi (titul skanerlanganda natijaga ID bo'yicha biriktiriladi).
+    """
+    import pdfs  # noqa: F401 — shriftlar ro'yxatdan o'tgan bo'lsin
 
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -347,17 +351,10 @@ def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blank
     import sheet_styles
     if sheet_styles.style_of(test) != "standard":
         sheet_styles.draw_sheets(c, test, variant_names, pages)
-        if test["fmt"] == "milliy":  # esse varaqalari — titullardan keyin, xuddi shu tartibda
-            for student in pages:
-                pdfs.draw_essay_page(c, test, student)
-                c.showPage()
         c.save()
         return buffer.getvalue()
     for student in pages:
         draw_answer_page(c, test, variant_names, student)
         c.showPage()
-        if test["fmt"] == "milliy":
-            pdfs.draw_essay_page(c, test, student)
-            c.showPage()
     c.save()
     return buffer.getvalue()

@@ -693,6 +693,7 @@ function testGate(code, channels) {
 VIEWS.answer = async ({ code }) => {
   loading();
   let t; try { t = await api(`/api/test/${code}`); } catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : fail(e); }
+  if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
   if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
   const choices = t.items.filter(i => i.kind === "choice"), texts = t.items.filter(i => i.kind === "text");
@@ -764,6 +765,59 @@ VIEWS.answer = async ({ code }) => {
     }
   };
 };
+
+// Titulli (qog'oz) milliy test: test qog'ozda yechiladi, 45-esse shu yerda — tituldagi ID bilan.
+// Esse titul skanerlanganda (oldin yoki keyin) shu ID'li o'quvchi natijasiga o'zi qo'shiladi
+function offlineEssay(t) {
+  if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — esse qabul qilinmaydi"));
+  const draftKey = "essay-draft-" + t.code, sent = t.essay_sent;
+  let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1>
+      <span class="muted small">Test qog'ozda (titulda) yechiladi. Bu yerda 45-esseni yozasiz.</span></div>
+    ${sent ? `<div class="card" style="border:1.5px solid var(--good)">✅ Essengiz qabul qilingan: ID <b>${pad3(sent.number)}</b> · ${sent.words} so'z.
+      <span class="muted small">O'zgartirmoqchi bo'lsangiz — tuzatib qayta yuboring (natija e'lon qilinguncha).</span></div>` : ""}
+    <div class="card">
+      <div class="field"><label for="eid">Tituldagi ID'ingiz</label>
+        <input class="code-input" id="eid" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off" value="${sent ? pad3(sent.number) : esc(draft.id || "")}" ${sent ? "readonly" : ""}></div>
+      <span class="muted small">Titulda 4 ta katakka yozgan va bo'yagan raqamingiz (masalan 0007). Xato bo'lsa — esse boshqa o'quvchiga tushadi.</span>
+      <div class="field"><label for="ename">Ism va familiya</label><input class="input" id="ename" autocomplete="name" value="${esc(draft.name || (sent && sent.name) || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+    </div>
+    <div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+    <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
+      <textarea class="input" id="essay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
+      <div class="counter" id="essay-count"></div></div>
+    <div class="sticky-bottom"><div><button class="btn block" id="send">${sent ? "Esseni qayta yuborish" : "Esseni yuborish"}</button></div></div>
+  </div>`;
+  const idEl = document.getElementById("eid"), nameEl = document.getElementById("ename"), essayEl = document.getElementById("essay");
+  const words = () => (essayEl.value.trim() ? essayEl.value.trim().split(/\s+/).length : 0);
+  const save = () => store(draftKey, JSON.stringify({ id: idEl.value, name: nameEl.value, essay: essayEl.value }));
+  const count = () => { const n = words(); document.getElementById("essay-count").textContent = `${n} so'z${n < 30 ? " · kamida 30" : ""}`; };
+  idEl.oninput = () => { idEl.value = idEl.value.replace(/\D/g, "").slice(0, 4); save(); };
+  nameEl.oninput = save;
+  essayEl.oninput = () => { save(); count(); };
+  count();
+  const btn = document.getElementById("send");
+  btn.onclick = async () => {
+    if (idEl.value.length !== 4) { toast("ID'ni 4 ta raqam bilan yozing, masalan 0007"); haptic("error"); return idEl.focus(); }
+    if (words() < 30) { toast("Esse juda qisqa — kamida 30 so'z"); haptic("error"); return essayEl.focus(); }
+    if (!sent && !(await confirmBox(`ID ${idEl.value} bilan yuborilsinmi?\n\nTituldagi ID bilan bir xil ekanini tekshiring — keyin o'zgartirib bo'lmaydi.`))) return;
+    btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    try {
+      const r = await api(`/api/test/${t.code}/essay`, { number: idEl.value, name: nameEl.value.trim(), essay: essayEl.value.trim() });
+      haptic("success");
+      S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
+      $app.innerHTML = `<div class="view"><div class="card success">
+        <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+        <h1>Essengiz qabul qilindi</h1>
+        <p class="muted">${esc(t.title)}<br>ID <b>${pad3(r.number)}</b>${r.name ? ` · ${esc(r.name)}` : ""} · ${r.words} so'z<br>
+          ${r.linked ? "Titulingiz bilan birlashtirildi." : "Titulingiz skanerlanganda natijaga o'zi qo'shiladi."}
+          Natijalar e'lon qilinganda bot sizga xabar beradi.</p>
+        <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
+      document.getElementById("home").onclick = () => render();
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = sent ? "Esseni qayta yuborish" : "Esseni yuborish"; }
+  };
+}
 
 function done({ title, already }) {
   S.stack = []; S.current = { view: "home", params: {} };
@@ -1001,8 +1055,9 @@ VIEWS.teacher = async ({ id, tab }) => {
   // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
   const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0);
   const wPending = d.attempts.filter(a => a.written_status === "pending").length, wFailed = d.attempts.filter(a => a.written_status === "failed").length;
-  const aiNotice = wPending || wFailed ? `<p class="muted small" style="margin:0">${wPending ? `⏳ ${wPending} ta titulda yozma javoblarni AI o'qimoqda — tugagach bot xabar beradi.` : ""}
-      ${wFailed ? `❗ ${wFailed} ta titulni AI o'qiy olmadi — «👥 Natijalar»da o'quvchini bosib, javoblarni o'zingiz yozing.` : ""}</p>` : "";
+  const waitingEssays = d.waiting_essays || 0;
+  const aiNotice = (waitingEssays ? `<p class="muted small" style="margin:0">📝 ${waitingEssays} ta o'quvchi esse yubordi, lekin titul hali skanerlanmagan — skanerlanganda natijaga o'zi qo'shiladi.</p>` : "") + (wPending || wFailed ? `<p class="muted small" style="margin:0">${wPending ? `⏳ ${wPending} ta titulda yozma javoblarni AI o'qimoqda — tugagach bot xabar beradi.` : ""}
+      ${wFailed ? `❗ ${wFailed} ta titulni AI o'qiy olmadi — «👥 Natijalar»da o'quvchini bosib, javoblarni o'zingiz yozing.` : ""}</p>` : "");
   const steps = offline
     ? [["Titul PDF", n > 0 || d.students.length > 0], ["Skaner", n > 0 && (!d.students.length || scanned >= d.students.length)], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]]
     : [["Kodni berish", n > 0], ["Javoblar", n > 0], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]];
@@ -1270,9 +1325,10 @@ function sheetsModal(t, students) {
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
     <p class="muted small" style="margin:0">${students.length
-      ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul${milliy ? " (esse varaqasi bilan)" : ""} + 1 ta bo'sh titul ro'yxatda yo'qlar uchun.`
-      : `1 ta bo'sh titul${milliy ? " va esse varaqasi" : ""}.`}
-      Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi, skaner kimniki ekanini taniydi.</p>
+      ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul + 1 ta bo'sh titul ro'yxatda yo'qlar uchun.`
+      : "1 ta bo'sh titul."}
+      Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi, skaner kimniki ekanini taniydi.
+      ${milliy ? `<br>📝 Esse qog'ozda emas: o'quvchilar botga kod <b>${t.code}</b> ni kiritib, tituldagi ID'si bilan yozadi.` : ""}</p>
     ${styles.length > 1 ? `<div class="field"><label>Titul ko'rinishi</label>
       <div class="chips" id="styles">${styles.map(([key, name, hint]) => `<button type="button" class="chip ${key === style ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
       <span class="muted small" id="style-hint"></span></div>` : `<span class="muted small">${esc(SHEET_STYLES[0][2])}</span>`}
@@ -1388,21 +1444,12 @@ function grayJpeg(img, quality = 0.85) {
   return new Promise(resolve => c.toBlob(b => resolve(b), "image/jpeg", quality));
 }
 
-// Kamera kadri — faqat JPEG (esse sahifasi uchun; dataURL yasalmaydi — tezroq)
-function frameJpeg(video, max = 2200, quality = 0.82) {
-  const k = Math.min(1, max / Math.max(video.videoWidth, video.videoHeight));
-  const c = document.createElement("canvas");
-  c.width = Math.round(video.videoWidth * k); c.height = Math.round(video.videoHeight * k);
-  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-  return new Promise(resolve => c.toBlob(b => resolve(b), "image/jpeg", quality));
-}
-
 // Yuboriladigan natija: o'qituvchi tuzatgan bo'lsa — o'sha, aks holda skaner o'qigani
 function recPayload(rec) {
   if (rec.payload) return rec.payload;
   const answers = {};
   rec.r.questions.forEach(q => { if (q.chosen) answers[q.label] = q.chosen; });
-  return { variant: rec.r.variant, answers, ...(rec.r.student ? { student_id: rec.r.student.id } : {}) };
+  return { variant: rec.r.variant, answers, ...(rec.r.student ? { student_id: rec.r.student.id } : rec.r.id_read ? { number: rec.r.id_read } : {}) };
 }
 function recReady(rec) {
   const p = recPayload(rec);
@@ -1430,7 +1477,6 @@ VIEWS.scan = async ({ id }) => {
   // har titulda murojaat yo'q, shuning uchun bitta titul ~1–2 soniya. Hammasi tugagach — «Botga yuborish».
   const local = layout && typeof analyzeFrame === "function";
   const testKey = String(t.id);
-  let essayMode = milliy && store("scanEssay") === "1";
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span>
       ${fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internetsiz — titullar telefonga saqlanadi, keyin yuborasiz</span>` : ""}</div>
@@ -1442,11 +1488,6 @@ VIEWS.scan = async ({ id }) => {
       <div class="cam-status" id="cam-status">Kamera yoqilmoqda…</div>
       <button type="button" class="cam-torch" id="torch" hidden aria-label="Chiroq">🔦</button>
     </div>
-    ${local && milliy ? `<div class="card" id="essay-bar" hidden style="border:1.5px solid var(--accent)">
-      <b id="essay-who">📝 Esse varaqasi</b>
-      <span class="muted small" id="essay-info">Esse varaqasini kameraga to'liq ko'rsating va «📸 Suratga olish»ni bosing. Bir necha bet bo'lsa — har birini.</span>
-      <div class="row" style="gap:8px"><button type="button" class="btn" id="essay-shot" style="flex:1">📸 Suratga olish</button><button type="button" class="btn ghost" id="essay-next" style="flex:1">▶ Keyingi titul</button></div>
-    </div>` : ""}
     <div class="card" id="fallback" hidden>
       <b>📷 Kamera ochilmadi</b>
       <span class="muted small" id="cam-error"></span>
@@ -1456,7 +1497,7 @@ VIEWS.scan = async ({ id }) => {
     <span class="muted small" id="cam-tip">Titulni tekis joyga qo'ying va telefonni tepasida ushlang: 4 burchakdagi qora kvadrat ramka ichida ko'rinsin. Topilishi bilan o'zi ushlaydi${local ? " va telefonga saqlaydi. Keyingi titulni ustiga qo'yavering" : ""}.</span>
     <div id="review"></div>
     ${local ? `<div class="card" id="q-card">
-      <div class="row between"><b>📦 Telefonda: <span id="q-count">0</span> ta titul</b>${milliy ? `<button type="button" class="chip ${essayMode ? "on" : ""}" id="essay-mode" title="Har tituldan keyin esse varaqasini ham suratga olish">📝 Esse ham</button>` : ""}</div>
+      <div class="row between"><b>📦 Telefonda: <span id="q-count">0</span> ta titul</b></div>
       <span class="muted small" id="q-hint">Titullar shu telefonda saqlanadi — internet shart emas. Hammasini skanerlab bo'lgach «Botga yuborish»ni bosing. Tekshirish yoki tuzatish uchun ro'yxatdagi titulni bosing.</span>
       <div class="list" id="q-list"></div>
       <button type="button" class="btn block" id="q-send" disabled>📤 Botga yuborish</button>
@@ -1533,7 +1574,7 @@ VIEWS.scan = async ({ id }) => {
   const STILL = 0.012;  // ~9 px 720 px kadrda — qo'l titrashi; undan ko'pi — varaq qimirlayapti
   const doubtful = r => r.questions.some(q => q.status === "multiple" || q.status === "unsure") || r.sheet_number_status === "unclear";
 
-  let swapSig = null, savedText = "", phase = "titul", queue = [];
+  let swapSig = null, savedText = "", queue = [];
   const idleText = () => savedText ? `${savedText} · keyingisini qo'ying` : "Titulni ramkaga to'liq sig'diring";
 
   // Tez sikl: har kadrda faqat burchaklar (~0,1–0,3 s). Ikki kadr ketma-ket qimirlamasa — bitta to'liq
@@ -1541,7 +1582,6 @@ VIEWS.scan = async ({ id }) => {
   // waitSwap — saqlangan varaq hali turibdi: yangisi ustiga qo'yilsa (imzo o'zgarsa) — u ham ushlanadi
   async function startLoop(waitSwap = false) {
     if (!local) return startServerLoop(waitSwap);
-    if (phase === "essay") return;  // esse sahifasi kutilmoqda — «Keyingi titul» bosilganda davom etadi
     const my = ++loopToken; S.scanLoop = my;
     let prev = null, confirm = null, movedSinceRead = true, lastReadAt = 0;
     setStatus(idleText(), savedText ? "ok" : "");
@@ -1566,10 +1606,10 @@ VIEWS.scan = async ({ id }) => {
             if (waitSwap && !isNewSheet(sig, swapSig)) confirm = null;  // hali o'sha varaq turibdi
             else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("Telefonni qimirlatmang…"); }
             else {
-              swapSig = sig;  // keep() esse rejimiga o'tishi mumkin — u shu titulni «yangi» deb o'ylamasin
+              swapSig = sig;
               try { await keep(a); }
               catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); confirm = null; continue; }
-              if (my !== loopToken || phase === "essay") return;
+              if (my !== loopToken) return;
               waitSwap = true; confirm = null;
             }
           }
@@ -1614,7 +1654,6 @@ VIEWS.scan = async ({ id }) => {
     savedText = `✅ ${student ? `№ ${pad3(student.number)} ${student.name}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}`;
     setStatus(savedText, "ok");
     await refreshQueue();
-    if (milliy && essayMode) enterEssay(rec);
   }
 
   // ---------- Telefondagi titullar ro'yxati va yuborish ----------
@@ -1701,91 +1740,6 @@ VIEWS.scan = async ({ id }) => {
     if (!review.innerHTML) startLoop();
   }
 
-  // Esse varaqasi: titul saqlangach (o'qituvchi «📝 Esse ham»ni yoqqan bo'lsa) shu o'quvchiga biriktiriladi
-  let essayRec = null;
-  const essayBar = document.getElementById("essay-bar");
-  function essayInfo() {
-    const n = essayRec ? essayRec.essays.length : 0;
-    document.getElementById("essay-who").innerHTML = `📝 Esse varaqasi · ${essayRec ? whoOf(essayRec) : ""}`;
-    document.getElementById("essay-info").textContent = n ? `✅ ${n} bet saqlandi. Keyingi betni ko'rsating yoki keyingi titulni qo'ying — o'zi davom etadi.`
-      : "Esse varaqasini kameraga to'liq ko'rsating va qimirlatmay turing — o'zi suratga oladi. Keyingi titulni qo'ysangiz, o'zi titulga qaytadi.";
-  }
-  function enterEssay(rec) {
-    phase = "essay"; essayRec = rec; stopLoop(); drawQuad(null);
-    essayBar.hidden = false; essayInfo();
-    setStatus("📝 Endi esse varaqasini ko'rsating", "ok");
-    watchEssay();
-  }
-  function leaveEssay() { phase = "titul"; essayRec = null; essayWatch++; if (essayBar) essayBar.hidden = true; startLoop(true); }
-
-  let shooting = false;
-  async function shootEssay() {
-    if (!essayRec || !video.videoWidth || shooting) return;
-    shooting = true;
-    try {
-      const blob = await frameJpeg(video);
-      if (!blob) return toast("Suratga olib bo'lmadi");
-      essayRec.essays.push(blob);
-      try { await scanDB.put(essayRec); } catch (e) { essayRec.essays.pop(); return toast("Saqlab bo'lmadi: " + e.message); }
-      haptic("success"); cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 400);
-      setStatus(`✅ Esse: ${essayRec.essays.length}-bet saqlandi`, "ok");
-      essayInfo(); refreshQueue();
-    } finally { shooting = false; }
-  }
-
-  // Esse rejimida kamera kuzatiladi (kichik kulrang kadr, ~4 marta soniyada):
-  //  • kadr oldingi suratdan (yoki titul turgan kadrdan) sezilarli farq qilsa — yangi varaq qo'yildi;
-  //  • so'ng ~1 soniya qimirlamay tursa — o'zi suratga oladi;
-  //  • kadrda yangi titul ko'rinsa — esse tugadi, titul rejimiga qaytadi.
-  let essayWatch = 0;
-  function watchEssay() {
-    const my = ++essayWatch, SW = 48, SH = 64;
-    const c = document.createElement("canvas"); c.width = SW; c.height = SH;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
-    const sample = () => {
-      ctx.drawImage(video, 0, 0, SW, SH);
-      const px = ctx.getImageData(0, 0, SW, SH).data, g = new Float32Array(SW * SH);
-      for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = px[j] * 0.299 + px[j + 1] * 0.587 + px[j + 2] * 0.114;
-      return g;
-    };
-    const diff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
-    const contrast = g => { let m = 0; for (const v of g) m += v; m /= g.length; let s = 0; for (const v of g) s += (v - m) ** 2; return Math.sqrt(s / g.length); };
-    let base = null, prev = null, still = 0, armed = false, tick = 0;
-    (async () => {
-      while (my === essayWatch && phase === "essay" && S.camera && document.body.contains(video)) {
-        await new Promise(r => setTimeout(r, 230));
-        if (my !== essayWatch || phase !== "essay") return;
-        if (!video.videoWidth || shooting || review.innerHTML) continue;
-        // Har ~1 soniyada: yangi titul qo'yilmadimi?
-        if (++tick % 4 === 0) {
-          const a = await analyze();
-          if (my !== essayWatch || phase !== "essay") return;
-          if (a && a.read && isNewSheet(signature(a.read.result), swapSig)) { leaveEssay(); return; }
-        }
-        const g = sample();
-        if (!base) { base = prev = g; continue; }
-        if (!armed && diff(g, base) > 14) armed = true;  // varaq almashdi
-        const moving = diff(g, prev) > 3.5; prev = g;
-        if (!armed) { still = 0; continue; }
-        if (moving || contrast(g) < 16) { still = 0; setStatus("📝 Esse varaqasini to'liq ko'rsating"); continue; }
-        if (++still === 1) setStatus("Qimirlatmang… 📸");
-        if (still >= 4) {
-          await shootEssay();
-          base = prev = sample(); armed = false; still = 0;  // keyingi bet — yana varaq almashgandan keyin
-        }
-      }
-    })();
-  }
-  if (essayBar) {
-    document.getElementById("essay-shot").onclick = () => shootEssay();
-    document.getElementById("essay-next").onclick = () => { haptic("light"); leaveEssay(); };
-  }
-  const essayToggle = document.getElementById("essay-mode");
-  if (essayToggle) essayToggle.onclick = () => {
-    essayMode = !essayMode; store("scanEssay", essayMode ? "1" : "0"); essayToggle.classList.toggle("on", essayMode); haptic("select");
-    toast(essayMode ? "📝 Har tituldan keyin esse varaqasini ham suratga olasiz" : "Faqat titullar skanerlanadi");
-    if (!essayMode && phase === "essay") leaveEssay();
-  };
   if (qSend) qSend.onclick = () => sendAll();
   if (local) {
     refreshQueue();
@@ -1901,7 +1855,8 @@ function showReview(r, d, allItems, box, onNext, local = null) {
     if (r.student) payload.student_id = r.student.id;
     else {
       const pick = box.querySelector("#pick"), nn = box.querySelector("#newname");
-      if (pick && pick.value) payload.student_id = +pick.value; else payload.name = nn ? nn.value.trim() : "";
+      if (pick && pick.value) payload.student_id = +pick.value;
+      else { payload.name = nn ? nn.value.trim() : ""; if (r.id_read) payload.number = r.id_read; }
       if (!payload.student_id && (!payload.name || payload.name.length < 3)) { toast("O'quvchini tanlang yoki ismini yozing"); haptic("error"); return; }
     }
     if (!variant) { toast("Variantni tanlang"); haptic("error"); return; }
@@ -1918,16 +1873,8 @@ function showReview(r, d, allItems, box, onNext, local = null) {
       box.innerHTML = `<div class="card success" style="padding:20px 10px">
         <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
         <h2>${esc(res.name)}</h2><p class="muted" style="margin:0">${milliy ? `${num(res.points)} / ${num(res.max_points)} ball (essesiz)` : `${res.correct} / ${res.auto_total} to'g'ri`}</p>
-        ${milliy ? `<label class="btn ghost block" for="essay-photo">📝 Esse varaqasini suratga olish</label><input type="file" id="essay-photo" accept="image/*" capture="environment" hidden>` : ""}
         <button class="btn block" id="next-sheet">📷 Keyingi titul</button></div>`;
       box.querySelector("#next-sheet").onclick = () => { haptic("light"); onNext(); };
-      const ep = box.querySelector("#essay-photo");
-      if (ep) ep.onchange = async () => {
-        const f = ep.files[0]; if (!f) return;
-        const lbl = box.querySelector('label[for="essay-photo"]'); lbl.textContent = "Yuklanmoqda…";
-        try { const form = new FormData(); form.append("photo", await compressImage(f, 2400), "essay.jpg"); const er = await apiForm(`/api/teacher/attempt/${res.attempt_id}/essay-photo`, form); lbl.textContent = er.status === "pending" ? "✅ Esse AI navbatida" : "✅ Esse saqlandi"; haptic("success"); }
-        catch (e) { toast(e.message); lbl.textContent = "📝 Esse varaqasini suratga olish"; }
-      };
       S.boot = null;
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "💾 Saqlash"; }
   };

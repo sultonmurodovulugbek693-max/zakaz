@@ -142,6 +142,17 @@ SCHEMA = [
         notified   INTEGER NOT NULL DEFAULT 0,
         created_at TEXT
     )""",
+    # Titulli (qog'oz) testning essesi: o'quvchi botda ID'si bilan yozadi. Titul skanerlanganda
+    # shu ID'li o'quvchining natijasiga biriktiriladi (oldin ham, keyin ham yuborilishi mumkin)
+    f"""CREATE TABLE IF NOT EXISTS offline_essays (
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        number     INTEGER NOT NULL,
+        tg_id      {BIG} NOT NULL,
+        name       TEXT,
+        text       TEXT NOT NULL,
+        created_at TEXT,
+        PRIMARY KEY (test_id, number)
+    )""",
     # Ilovaga (APK) Telegram orqali kirish: kind = login (bot tasdiqlashini kutadi) | session (kirilgan)
     f"""CREATE TABLE IF NOT EXISTS app_tokens (
         token   TEXT PRIMARY KEY,
@@ -647,6 +658,53 @@ def import_tables(data: dict[str, list[dict]], force: bool = False) -> dict[str,
     return counts
 
 
+# ---------- Titulli testning ilovada yozilgan essesi ----------
+
+def get_offline_essay(test_id: int, number: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM offline_essays WHERE test_id = ? AND number = ?",
+                                 (test_id, number)).fetchone())
+
+
+def offline_essay_of_user(test_id: int, tg_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM offline_essays WHERE test_id = ? AND tg_id = ?",
+                                 (test_id, tg_id)).fetchone())
+
+
+def save_offline_essay(test_id: int, number: int, tg_id: int, name: str | None, text: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO offline_essays (test_id, number, tg_id, name, text, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(test_id, number) DO UPDATE SET name = excluded.name, text = excluded.text, "
+            "created_at = excluded.created_at",
+            (test_id, number, tg_id, name, text, _now()),
+        )
+
+
+def waiting_offline_essays(test_id: int) -> int:
+    """Yuborilgan, lekin titul hali skanerlanmagan (natijaga biriktirilmagan) esselar soni."""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM offline_essays e WHERE e.test_id = ? AND NOT EXISTS ("
+            "SELECT 1 FROM students s WHERE s.test_id = e.test_id AND s.number = e.number AND s.attempt_id IS NOT NULL)",
+            (test_id,),
+        ).fetchone()["n"]
+
+
+def set_essay_text(attempt_id: int, text: str, status: str) -> None:
+    """Natijaga esse matni (yangi yoki almashtirilgan) — AI navbatiga qayta qo'yiladi."""
+    with connect() as conn:
+        updated = conn.execute(
+            "UPDATE essays SET text = ?, photos = '[]', status = ?, tries = 0, error = NULL, ai_score = NULL, "
+            "ai_result = NULL, graded_at = NULL WHERE attempt_id = ?",
+            (text, status, attempt_id),
+        ).rowcount
+        if not updated:
+            conn.execute("INSERT INTO essays (attempt_id, text, photos, status, created_at) VALUES (?, ?, '[]', ?, ?)",
+                         (attempt_id, text, status, _now()))
+
+
 def retry_written(attempt_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE written_jobs SET status = 'pending', tries = 0, error = NULL, notified = 0 "
@@ -777,13 +835,17 @@ def get_student(test_id: int, student_id: int | None = None, number: int | None 
     return _row(row)
 
 
-def add_students(test_id: int, names: list[str], variants: list[str]) -> list[dict]:
+def add_students(test_id: int, names: list[str], variants: list[str], numbers: list[int] | None = None) -> list[dict]:
+    """Ro'yxatga qo'shish. numbers — titulda bo'yalgan ID (bo'sh bo'lsa yoki band bo'lsa — keyingi bo'sh raqam)."""
     with connect() as conn:
-        start = conn.execute("SELECT COALESCE(MAX(number), 0) AS n FROM students WHERE test_id = ?",
-                             (test_id,)).fetchone()["n"]
-        for index, (name, variant) in enumerate(zip(names, variants), start=1):
+        taken = {row["number"] for row in conn.execute("SELECT number FROM students WHERE test_id = ?", (test_id,))}
+        for index, (name, variant) in enumerate(zip(names, variants)):
+            wanted = numbers[index] if numbers and index < len(numbers) else None
+            if not wanted or wanted in taken:
+                wanted = max(taken, default=0) + 1
+            taken.add(wanted)
             conn.execute("INSERT INTO students (test_id, number, name, variant) VALUES (?, ?, ?, ?)",
-                         (test_id, start + index, name, variant))
+                         (test_id, wanted, name, variant))
     return list_students(test_id)
 
 

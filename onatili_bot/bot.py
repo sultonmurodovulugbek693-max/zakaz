@@ -350,6 +350,8 @@ async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], 
     caption = (f"📄 <b>Titullar</b> · {esc(test['title'])}\n" + " + ".join(parts) + "\n"
                + ("🖨 Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi.\n"
                   if blanks else "")
+               + (f"📝 Esse qog'ozda emas: o'quvchilar botga kod <b>{test['code']}</b> ni kiritib, tituldagi ID'si "
+                  "bilan yozadi — titul skanerlanganda natijaga o'zi qo'shiladi.\n" if test["fmt"] == "milliy" else "")
                + "Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
     await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
 

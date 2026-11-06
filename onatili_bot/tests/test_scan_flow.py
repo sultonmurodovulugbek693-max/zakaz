@@ -156,6 +156,62 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         notices = [text for _, text in self.bot.messages if "Yozma javoblar AI'da o'qildi" in text]
         self.assertEqual(len(notices), 1)  # 3 titul — bitta umumiy xabar
 
+    # ---------- Titulli testning essesi — botda, ID bilan ----------
+
+    ESSAY = " ".join(["Ijtimoiy tarmoqlar yoshlar hayotida muhim o'rin tutadi."] * 8)
+
+    async def essay(self, number, text=None, user=None):
+        if user:
+            self.user["id"] = user
+        response = await self.client.post(f"/api/test/{self.test['code']}/essay",
+                                          json={"number": number, "name": "Ali", "essay": text or self.ESSAY})
+        self.user["id"] = OWNER
+        return response.status, await response.json()
+
+    async def test_offline_essay_before_and_after_scan(self):
+        db.set_mode(self.test["id"], "offline")
+        info = await (await self.client.get(f"/api/test/{self.test['code']}")).json()
+        self.assertEqual(info["mode"], "offline")
+        number = self.student["number"]
+        # 1) Avval esse, keyin titul
+        status, r = await self.essay(f"{number:04d}", user=501)
+        self.assertEqual((status, r["linked"]), (200, False))
+        page = await (await self.client.get(f"/api/teacher/test/{self.test['id']}")).json()
+        self.assertEqual(page["waiting_essays"], 1)
+        _, up = await self.upload({"uid": "e1", "student_id": self.student["id"], "variant": "A", "answers": self.answers})
+        essay = db.get_essay(up["attempt_id"])
+        self.assertEqual((essay["text"], essay["status"]), (self.ESSAY, "pending"))
+        page = await (await self.client.get(f"/api/teacher/test/{self.test['id']}")).json()
+        self.assertEqual(page["waiting_essays"], 0)
+        # 2) Titul allaqachon bor — esse darhol biriktiriladi; o'sha akkaunt tuzatib qayta yuborsa ham
+        status, r = await self.essay(f"{number:04d}", text=self.ESSAY + " Xulosa.", user=501)
+        self.assertEqual((status, r["linked"]), (200, True))
+        self.assertTrue(db.get_essay(up["attempt_id"])["text"].endswith("Xulosa."))
+
+    async def test_offline_essay_protection(self):
+        db.set_mode(self.test["id"], "offline")
+        self.assertEqual((await self.essay("0001", user=501))[0], 200)
+        self.assertEqual((await self.essay("0001", user=502))[0], 409)  # boshqa akkaunt shu ID bilan
+        self.assertEqual((await self.essay("0002", user=501))[0], 409)  # bitta akkaunt — bitta ID
+        self.assertEqual((await self.essay("0003", text="Juda qisqa esse", user=503))[0], 400)
+        self.assertEqual((await self.essay("12a", user=504))[0], 400)
+        # Baholangan esse o'zgarmaydi
+        _, up = await self.upload({"uid": "e2", "student_id": self.student["id"], "variant": "A", "answers": self.answers})
+        db.set_essay(up["attempt_id"], 18)
+        self.assertEqual((await self.essay("0001", user=501))[0], 409)
+
+    async def test_blank_sheet_student_gets_bubbled_id(self):
+        """Ro'yxatda yo'q o'quvchi: titulda bo'yagan ID'si bilan qo'shiladi va essesi topiladi."""
+        db.set_mode(self.test["id"], "offline")
+        await self.essay("0123", user=601)
+        _, up = await self.upload({"uid": "e3", "name": "Yangi O'quvchi", "number": 123, "variant": "A", "answers": self.answers})
+        student = db.get_student(self.test["id"], None, 123)
+        self.assertEqual((student["name"], student["attempt_id"]), ("Yangi O'quvchi", up["attempt_id"]))
+        self.assertEqual(db.get_essay(up["attempt_id"])["text"], self.ESSAY)
+        # ID band bo'lsa — keyingi bo'sh raqam (ikkinchi nusxa ochilmaydi)
+        _, up2 = await self.upload({"uid": "e4", "name": "Boshqa O'quvchi", "number": 123, "variant": "A", "answers": self.answers})
+        self.assertNotEqual(db.get_attempt(up2["attempt_id"])["student_name"], "Yangi O'quvchi")
+
     async def test_ai_failure_gives_up_after_retries(self):
         _, r = await self.upload({"uid": "u7", "student_id": self.student["id"], "variant": "A", "answers": self.answers})
 

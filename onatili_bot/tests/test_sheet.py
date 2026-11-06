@@ -29,6 +29,13 @@ class Layout(unittest.TestCase):
         self.assertLess(y1, y2)
         self.assertLessEqual(x2, sheet.W)
 
+    def test_pdf_has_one_page_per_sheet_without_essay(self):
+        """Esse botda yoziladi — titul PDF'ida esse varaqasi yo'q: 2 o'quvchi + 1 bo'sh = 3 bet."""
+        import re
+        students = [{"number": 7, "name": "Ali", "variant": "A"}, {"number": 8, "name": "Vali", "variant": "B"}]
+        pdf = sheet.sheets_pdf(milliy_test(), ["A", "B"], students, blanks=1)
+        self.assertEqual(len(re.findall(rb"/Type /Page[^s]", pdf)), 3)
+
     def test_pdf_builds_for_students_and_blanks(self):
         pdf = sheet.sheets_pdf(milliy_test(), ["A", "B"], [{"number": 7, "name": "Ali Valiyev", "variant": "B"}], blanks=2)
         self.assertTrue(pdf.startswith(b"%PDF"))

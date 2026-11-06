@@ -24,16 +24,19 @@ yozma javoblar va esseni AI tekshiradi.
 ## Titul va skaner
 - Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari) — Milliy sertifikat testida
   faqat shu. Oddiy testda yana: **Ixcham** (bitta A4 ga 2–3 ta), **Yirik doirachalar**, **Fan ustunli**.
+- **ID** — 4 xonali: tepada 4 ta katak (raqam yoziladi), ostida 4 ta tik 0–9 ustun (bo'yaladi).
+  Shaxsiy titulda oldindan yozilgan; bo'sh titulni printerda ko'paytirasiz, o'quvchi ID'sini o'zi to'ldiradi.
 - Yozma javoblar (36–44) — **har harf alohida katakda** (bosh harflar). AI ularni aniq o'qiydi.
+- **Esse (45) qog'ozda emas**: o'quvchi botga test kodini kiritadi va tituldagi ID'si bilan esseni
+  telefonda yozadi. Titul skanerlanganda (oldin yoki keyin) esse shu ID'li natijaga o'zi qo'shiladi.
+  Bitta Telegram akkaunt — bitta ID; baholangan esse o'zgartirilmaydi.
 - **Oflayn skaner** (ilovada yoki Mini App'da):
   1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
      (~1–2 soniya, internet shart emas). Keyingi titulni ustiga qo'yavering.
-  2. «📝 Esse ham» yoqilsa — har tituldan keyin esse varaqasini ko'rsatasiz: qimirlamay tursa o'zi
-     suratga oladi, keyingi titul qo'yilsa o'zi titulga qaytadi.
-  3. Kamera ostidagi ro'yxatda har titulni ochib tekshirish/tuzatish mumkin (⚠️ — xira doirachalar).
-  4. «📤 Botga yuborish» — hammasi bittada. Bot chatiga xabar keladi; yozma javoblarni AI fonda
+  2. Kamera ostidagi ro'yxatda har titulni ochib tekshirish/tuzatish mumkin (⚠️ — xira doirachalar).
+  3. «📤 Botga yuborish» — hammasi bittada. Bot chatiga xabar keladi; yozma javoblarni AI fonda
      o'qiydi va tugagach yana xabar beradi.
-  5. Skaner sahifasi bir marta internet bilan ochilgach, keyingi safar internetsiz ham ochiladi.
+  4. Skaner sahifasi bir marta internet bilan ochilgach, keyingi safar internetsiz ham ochiladi.
 
 ## Skaner ilovasi (APK)
 - Flutter ilova repo ildizida (`lib/main.dart`). Ilova sayt sahifasini ochadi — sayt yangilansa,
