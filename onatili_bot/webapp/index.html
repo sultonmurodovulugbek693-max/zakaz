@@ -622,6 +622,8 @@ VIEWS.home = async () => {
         <button type="button" class="act" data-new="online"><span class="act-ico">📱</span><b>Onlayn test</b><small>O'quvchilar kod bilan ilovada yechadi</small><em>＋ Yaratish</em></button>
         <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Titulli test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
       </div>
+      <button type="button" class="item" id="my-classes"><span class="ico">👥</span>
+        <span><b>Sinflarim${b.classes ? ` · ${b.classes}` : ""}</b><small>O'quvchilar ro'yxati va doimiy ID'lari — titul uchun</small></span><span class="muted">›</span></button>
       ${b.tests.length ? `<div class="strip home-strip">
         <div><b>${b.tests.length}</b><span>test</span></div><div><b>${results}</b><span>natija</span></div><div><b>${openTests}</b><span>ochiq</span></div></div>` : ""}
       <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
@@ -629,6 +631,7 @@ VIEWS.home = async () => {
   </div>`;
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
+  const mc = document.getElementById("my-classes"); if (mc) mc.onclick = () => { haptic("light"); go("classes"); };
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
   const code = document.getElementById("code");
   if (code) {
@@ -1247,6 +1250,102 @@ function compressImage(file, max = 2000) {
   });
 }
 
+// ---------- Sinflar: o'quvchilarga doimiy ID (har testda bir xil) ----------
+VIEWS.classes = async () => {
+  loading();
+  let r; try { r = await api("/api/teacher/classes"); } catch (e) { return fail(e); }
+  const list = r.classes.map(c => `<button type="button" class="item" data-class="${c.id}"><span class="ico">👥</span>
+      <span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi</small></span><span class="muted">›</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Sinflar</span><h1>Sinflarim</h1>
+      <span class="muted small">Har o'quvchiga doimiy 4 xonali ID beriladi — u har titulda shu ID'ni yozadi. Titulli testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan sinfni testga qo'shasiz.</span></div>
+    <div class="card"><div class="field"><label for="cname">Yangi sinf</label>
+      <div class="row"><input class="input" id="cname" maxlength="40" placeholder="Masalan: 11-A" autocomplete="off"><button class="btn" id="cadd" style="flex-shrink:0">＋ Qo'shish</button></div></div></div>
+    <div class="list">${list || `<div class="card empty"><div class="big">👥</div><b>Hali sinf yo'q</b><span>Sinf nomini yozib «Qo'shish»ni bosing.</span></div>`}</div>
+  </div>`;
+  const input = document.getElementById("cname"), btn = document.getElementById("cadd");
+  const create = async () => {
+    const name = input.value.trim(); if (!name) { toast("Sinf nomini yozing"); return input.focus(); }
+    btn.disabled = true;
+    try { const c = await api("/api/teacher/classes", { name }); haptic("success"); S.boot = null; go("klass", { id: c.class.id }); }
+    catch (e) { toast(e.message); btn.disabled = false; }
+  };
+  btn.onclick = create; input.onkeydown = e => { if (e.key === "Enter") create(); };
+  document.querySelectorAll("[data-class]").forEach(x => x.onclick = () => go("klass", { id: x.dataset.class }));
+};
+
+VIEWS.klass = async ({ id }) => {
+  loading();
+  let c; try { c = (await api(`/api/teacher/class/${id}`)).class; } catch (e) { return fail(e); }
+  const rows = c.list.map(s => `<div class="item" style="cursor:default"><span class="rank" title="Doimiy ID"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
+      <span><b>${esc(s.name)}</b></span><button class="btn plain sm" data-del-cs="${s.id}" aria-label="O'chirish">✕</button></div>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Sinf</span><h1>${esc(c.name)}</h1><span class="muted small">${c.list.length} ta o'quvchi</span></div>
+    ${c.list.length ? `<button class="btn block" id="send-ids">📨 ID ro'yxatini chatga yuborish</button>` : ""}
+    <div class="card"><h2>O'quvchilarni qo'shish</h2>
+      <textarea class="input" id="cnames" rows="5" placeholder="Har bir o'quvchi yangi qatorda:\nAli Valiyev\nMadina Yusupova\n…"></textarea>
+      <button class="btn block" id="cs-add">＋ Qo'shish</button>
+      <label class="btn ghost block" for="cxlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
+      <input type="file" id="cxlsx" accept=".xlsx,.csv,.txt" hidden>
+      <span class="muted small">Har o'quvchiga keyingi bo'sh ID beriladi va u o'zgarmaydi — o'quvchi uni har titulda yozadi.</span></div>
+    <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div>Hali o'quvchi yo'q.</div>`}</div>
+    <div class="card"><div class="field"><label for="c-name">Sinf nomi</label>
+      <div class="row"><input class="input" id="c-name" maxlength="40" value="${esc(c.name)}"><button class="btn ghost" id="c-rename" style="flex-shrink:0">Saqlash</button></div></div>
+      <button class="btn danger block" id="c-del">🗑 Sinfni o'chirish</button></div>
+  </div>`;
+  const reload = () => { S.boot = null; rerender(); };
+  const add = document.getElementById("cs-add");
+  add.onclick = async () => {
+    const names = document.getElementById("cnames").value.split("\n").map(x => x.trim()).filter(Boolean);
+    if (!names.length) { toast("Ismlarni yozing"); return; }
+    add.disabled = true;
+    try { await api(`/api/teacher/class/${id}/students`, { names }); haptic("success"); toast(`✅ ${names.length} ta o'quvchi qo'shildi`); reload(); }
+    catch (e) { toast(e.message); add.disabled = false; }
+  };
+  const xlsx = document.getElementById("cxlsx");
+  xlsx.onchange = async () => {
+    const file = xlsx.files[0]; if (!file) return;
+    const label = document.querySelector('label[for="cxlsx"]'); label.textContent = "Yuklanmoqda…";
+    try { const form = new FormData(); form.append("file", file, file.name); const r = await apiForm(`/api/teacher/class/${id}/students/import`, form); haptic("success"); toast(`✅ ${r.added} ta o'quvchi qo'shildi`); reload(); }
+    catch (e) { toast(e.message); haptic("error"); label.textContent = "📥 Excel'dan yuklash (.xlsx, .csv)"; }
+    xlsx.value = "";
+  };
+  const send = document.getElementById("send-ids");
+  if (send) send.onclick = async () => {
+    send.disabled = true;
+    try { await api(`/api/teacher/class/${id}/send`, {}); haptic("success"); toast("📨 ID ro'yxati chatga yuborildi"); } catch (e) { toast(e.message); }
+    send.disabled = false;
+  };
+  document.querySelectorAll("[data-del-cs]").forEach(x => x.onclick = async () => {
+    if (!(await confirmBox("O'quvchini sinfdan o'chirasizmi? Uning ID'si boshqa o'quvchiga berilmaydi."))) return;
+    try { await api(`/api/teacher/class/${id}/students/${x.dataset.delCs}`, { delete: true }); reload(); } catch (e) { toast(e.message); }
+  });
+  document.getElementById("c-rename").onclick = async () => {
+    const name = document.getElementById("c-name").value.trim(); if (!name || name === c.name) return;
+    try { await api(`/api/teacher/class/${id}`, { name }); toast("✅ Saqlandi"); reload(); } catch (e) { toast(e.message); }
+  };
+  document.getElementById("c-del").onclick = async () => {
+    if (!(await confirmBox(`«${c.name}» sinfini o'chirasizmi?\n\nTestlardagi natijalar o'chmaydi.`))) return;
+    try { await api(`/api/teacher/class/${id}`, { delete: true }); haptic("success"); toast("🗑 O'chirildi"); S.boot = null; back(); } catch (e) { toast(e.message); }
+  };
+};
+
+// Titulli testga sinf o'quvchilarini qo'shish (doimiy ID'lari bilan)
+async function fromClassModal(testId, vmode, done) {
+  let r; try { r = await api("/api/teacher/classes"); } catch (e) { return toast(e.message); }
+  if (!r.classes.length) {
+    if (await confirmBox("Hali sinf yo'q. Sinf yaratasizmi?")) go("classes");
+    return;
+  }
+  const modal = openModal("👥 Sinfdan qo'shish", `<span class="muted small">Sinf o'quvchilari doimiy ID'lari bilan qo'shiladi (testda bor ID'lar o'tkazib yuboriladi).</span>
+    <div class="list">${r.classes.map(c => `<button type="button" class="item" data-pick-class="${c.id}"><span class="ico">👥</span><span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi</small></span><span class="muted">＋</span></button>`).join("")}</div>`);
+  modal.querySelectorAll("[data-pick-class]").forEach(x => x.onclick = async () => {
+    x.disabled = true;
+    try { const res = await api(`/api/teacher/test/${testId}/students/from-class`, { class_id: +x.dataset.pickClass, mode: vmode }); haptic("success"); toast(`✅ ${res.added} ta o'quvchi qo'shildi`); modal.remove(); done(); }
+    catch (e) { toast(e.message); x.disabled = false; }
+  });
+}
+
 function rosterHTML(d) {
   const vs = d.test.variants;
   const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
@@ -1258,6 +1357,7 @@ function rosterHTML(d) {
       ${vs.length > 1 ? `<button type="button" class="chip on" data-vm="cycle">Navbat bilan (${vs.join(", ")})</button><button type="button" class="chip" data-vm="random">Aralash</button>` : ""}
       ${vs.map((v, i) => `<button type="button" class="chip ${vs.length === 1 && !i ? "on" : ""}" data-vm="${v}">Hammasi ${v}</button>`).join("")}</div></div>` : ""}
     <button class="btn block" id="add-st">＋ Ro'yxatga qo'shish</button>
+    <button class="btn ghost block" id="from-class">👥 Sinfdan qo'shish</button>
     <label class="btn ghost block" for="xlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
     <input type="file" id="xlsx" accept=".xlsx,.csv,.txt" hidden>
     <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida)${vs.length > 1 ? ", variant ustuni ixtiyoriy (A, B, C, D)" : ""}. Har o'quvchiga ID beriladi: 0001, 0002, …</span></div>
@@ -1278,6 +1378,8 @@ function bindRoster(d, id) {
     try { await api(`/api/teacher/test/${id}/students`, { names, mode: vmode }); haptic("success"); toast(`✅ ${names.length} ta o'quvchi qo'shildi`); rerender(); }
     catch (e) { toast(e.message); add.disabled = false; }
   };
+  const fc = document.getElementById("from-class");
+  if (fc) fc.onclick = () => fromClassModal(id, vmode, rerender);
   const xlsx = document.getElementById("xlsx");
   if (xlsx) xlsx.onchange = async () => {
     const file = xlsx.files[0]; if (!file) return;
@@ -2080,6 +2182,7 @@ VIEWS.appHome = async () => {
   if (q.get("r")) { S.stack = []; go("result", { id: q.get("r") }); }
   else if (q.get("t")) { S.role = "teacher"; go("teacher", { id: q.get("t"), tab: q.get("tab") || undefined }); }
   else if (q.get("v") === "create") { S.role = "teacher"; go("create"); }
+  else if (q.get("v") === "classes") { S.role = "teacher"; go(q.get("k") ? "klass" : "classes", q.get("k") ? { id: q.get("k") } : {}); }
   else if (q.get("c")) { go("answer", { code: q.get("c") }); }
   else render();
 })();

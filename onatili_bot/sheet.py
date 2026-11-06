@@ -171,7 +171,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     c.setFillColor(colors.black)
     for x, y in [(CORNER, H - CORNER), (W - CORNER, H - CORNER), (CORNER, CORNER), (W - CORNER, CORNER)]:
         _square(c, x, y, CORNER_SIZE)
-    code = encode_number(student["number"]) if student else 0
+    code = encode_number(student["number"]) if student and student["number"] <= 0x7FF else 0
     for bubble in spec["bubbles"]:
         if bubble["kind"] == "mark":
             _square(c, bubble["x"], bubble["y"], EDGE_SIZE)

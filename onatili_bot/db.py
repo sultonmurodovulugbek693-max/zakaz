@@ -153,6 +153,27 @@ SCHEMA = [
         created_at TEXT,
         PRIMARY KEY (test_id, number)
     )""",
+    # O'qituvchining sinflari: o'quvchiga doimiy ID beriladi (o'qituvchining barcha sinflari bo'yicha takrorlanmaydi).
+    # Titulli testga sinf qo'shilganda o'quvchilar shu ID'lar bilan test ro'yxatiga ko'chiriladi
+    f"""CREATE TABLE IF NOT EXISTS classes (
+        id         {ID},
+        owner_id   {BIG} NOT NULL,
+        name       TEXT NOT NULL,
+        created_at TEXT
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS class_students (
+        id       {ID},
+        class_id {BIG} NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        owner_id {BIG} NOT NULL,
+        number   INTEGER NOT NULL,
+        name     TEXT NOT NULL,
+        UNIQUE (owner_id, number)
+    )""",
+    # Har o'qituvchiga berilgan oxirgi ID — o'chirilgan o'quvchining ID'si boshqasiga qayta berilmasin
+    f"""CREATE TABLE IF NOT EXISTS id_counters (
+        owner_id {BIG} PRIMARY KEY,
+        last     INTEGER NOT NULL
+    )""",
     # Ilovaga (APK) Telegram orqali kirish: kind = login (bot tasdiqlashini kutadi) | session (kirilgan)
     f"""CREATE TABLE IF NOT EXISTS app_tokens (
         token   TEXT PRIMARY KEY,
@@ -625,8 +646,12 @@ BACKUP_TABLES = {
     "essays": "*",
     "students": "*",
     "written_jobs": "attempt_id, test_id, mime, status, tries, error, result, notified, created_at",
+    "offline_essays": "*",
+    "classes": "*",
+    "class_students": "*",
+    "id_counters": "*",
 }
-SERIAL_TABLES = ("tests", "attempts", "essays", "students")
+SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students")
 
 
 def export_tables() -> dict[str, list[dict]]:
@@ -656,6 +681,74 @@ def import_tables(data: dict[str, list[dict]], force: bool = False) -> dict[str,
                 conn.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
                              f"COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)")
     return counts
+
+
+# ---------- Sinflar (o'qituvchining doimiy o'quvchilar ro'yxati) ----------
+
+MAX_ID = 9999  # titulda 4 xonali ID
+
+
+def list_classes(owner_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.*, (SELECT COUNT(*) FROM class_students s WHERE s.class_id = c.id) AS students "
+            "FROM classes c WHERE c.owner_id = ? ORDER BY c.id", (owner_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_class(owner_id: int, name: str) -> dict:
+    with connect() as conn:
+        row = conn.execute("INSERT INTO classes (owner_id, name, created_at) VALUES (?, ?, ?) RETURNING *",
+                           (owner_id, name, _now())).fetchone()
+    return dict(row)
+
+
+def get_class(class_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM classes WHERE id = ?", (class_id,)).fetchone())
+
+
+def rename_class(class_id: int, name: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE classes SET name = ? WHERE id = ?", (name, class_id))
+
+
+def delete_class(class_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM class_students WHERE class_id = ?", (class_id,))
+        conn.execute("DELETE FROM classes WHERE id = ?", (class_id,))
+
+
+def list_class_students(class_id: int) -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM class_students WHERE class_id = ? ORDER BY name, number", (class_id,)).fetchall()]
+
+
+def add_class_students(class_id: int, owner_id: int, names: list[str]) -> list[dict]:
+    """Yangi o'quvchilar — o'qituvchining keyingi ID'lari bilan (o'chirilgan ID hech qachon qayta berilmaydi)."""
+    with connect() as conn:
+        counter = conn.execute("SELECT last FROM id_counters WHERE owner_id = ?", (owner_id,)).fetchone()
+        present = conn.execute("SELECT COALESCE(MAX(number), 0) AS n FROM class_students WHERE owner_id = ?",
+                               (owner_id,)).fetchone()["n"]
+        last = max(counter["last"] if counter else 0, present)
+        if last + len(names) > MAX_ID:
+            raise ValueError(f"ID'lar tugadi (ko'pi bilan {MAX_ID})")
+        for index, name in enumerate(names, start=1):
+            conn.execute("INSERT INTO class_students (class_id, owner_id, number, name) VALUES (?, ?, ?, ?)",
+                         (class_id, owner_id, last + index, name))
+        conn.execute("INSERT INTO id_counters (owner_id, last) VALUES (?, ?) "
+                     "ON CONFLICT(owner_id) DO UPDATE SET last = excluded.last", (owner_id, last + len(names)))
+    return list_class_students(class_id)
+
+
+def update_class_student(class_id: int, student_id: int, name: str | None = None, delete: bool = False) -> None:
+    with connect() as conn:
+        if delete:
+            conn.execute("DELETE FROM class_students WHERE id = ? AND class_id = ?", (student_id, class_id))
+        elif name:
+            conn.execute("UPDATE class_students SET name = ? WHERE id = ? AND class_id = ?", (name, student_id, class_id))
 
 
 # ---------- Titulli testning ilovada yozilgan essesi ----------

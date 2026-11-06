@@ -717,6 +717,7 @@ async def main() -> None:
         store_photo=lambda chat_id, data, caption: store_photo(bot, chat_id, data, caption),
         scan_notice=lambda chat_id, *args: scan_notice(bot, chat_id, *args),
         scan_batch_notice=lambda chat_id, *args: scan_batch_notice(bot, chat_id, *args),
+        send_text=lambda chat_id, text: bot.send_message(chat_id, text),
         bot_username=lambda: bot_username(bot),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),

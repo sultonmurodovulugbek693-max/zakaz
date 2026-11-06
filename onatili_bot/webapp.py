@@ -11,6 +11,7 @@ bot.py dan HOOKS orqali beriladi — bu modul botni import qilmaydi.
 import asyncio
 import base64
 import csv
+import html
 import io
 import json
 import random
@@ -161,6 +162,7 @@ async def bootstrap(request: web.Request) -> web.Response:
             "announced": bool(a["closed"]), "created_at": a["created_at"], "theme": a["theme"] or "classic",
         } for a in attempts],
         "tests": teacher_tests,
+        "classes": len(await run(db.list_classes, user["id"])),
         "ai": essay_ai.essay_enabled(),
         "themes": THEMES,
     })
@@ -788,6 +790,152 @@ async def student_update(request: web.Request) -> web.Response:
     return ok({"students": [student_view(s) for s in await run(db.list_students, test["id"])]})
 
 
+# ---------- Sinflar: o'quvchilarga doimiy ID ----------
+
+def class_view(cls: dict, students: list[dict] | None = None) -> dict:
+    view = {"id": cls["id"], "name": cls["name"], "students": cls.get("students", len(students or []))}
+    if students is not None:
+        view["list"] = [{"id": s["id"], "number": s["number"], "name": s["name"]} for s in students]
+    return view
+
+
+async def own_class(request: web.Request, user: dict) -> dict:
+    cls = await run(db.get_class, int(request.match_info["class_id"]))
+    if not cls or cls["owner_id"] != user["id"]:
+        raise ApiError(404, "Sinf topilmadi")
+    return cls
+
+
+def clean_name(value) -> str:
+    return " ".join(str(value or "").split())[:60]
+
+
+async def classes_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    return ok({"classes": [class_view(c) for c in await run(db.list_classes, user["id"])]})
+
+
+async def class_create(request: web.Request) -> web.Response:
+    user = await auth(request)
+    payload = await body(request)
+    name = clean_name(payload.get("name"))[:40]
+    if len(name) < 1:
+        raise ApiError(400, "Sinf nomini yozing (masalan: 11-A)")
+    if len(await run(db.list_classes, user["id"])) >= 100:
+        raise ApiError(400, "Sinflar soni 100 tadan oshmasin")
+    return ok({"class": class_view(await run(db.create_class, user["id"], name), [])})
+
+
+async def class_detail(request: web.Request) -> web.Response:
+    user = await auth(request)
+    cls = await own_class(request, user)
+    return ok({"class": class_view(cls, await run(db.list_class_students, cls["id"]))})
+
+
+async def class_update(request: web.Request) -> web.Response:
+    user = await auth(request)
+    cls = await own_class(request, user)
+    payload = await body(request)
+    if payload.get("delete"):
+        await run(db.delete_class, cls["id"])
+        return ok({"ok": True})
+    name = clean_name(payload.get("name"))[:40]
+    if name:
+        await run(db.rename_class, cls["id"], name)
+    return ok({"class": class_view({**cls, "name": name or cls["name"]}, await run(db.list_class_students, cls["id"]))})
+
+
+async def _add_to_class(user: dict, cls: dict, names: list[str]) -> list[dict]:
+    names = [n for n in (clean_name(n) for n in names) if len(n) >= 3]
+    if not names:
+        raise ApiError(400, "Ism-familiyalarni yozing (har biri yangi qatorda)")
+    if len(await run(db.list_class_students, cls["id"])) + len(names) > 300:
+        raise ApiError(400, "Bitta sinfda ko'pi bilan 300 o'quvchi")
+    try:
+        return await run(db.add_class_students, cls["id"], user["id"], names)
+    except ValueError as error:
+        raise ApiError(400, str(error))
+
+
+async def class_students_add(request: web.Request) -> web.Response:
+    user = await auth(request)
+    cls = await own_class(request, user)
+    payload = await body(request)
+    students = await _add_to_class(user, cls, list(payload.get("names") or []))
+    return ok({"class": class_view(cls, students)})
+
+
+async def class_students_import(request: web.Request) -> web.Response:
+    user = await auth(request)
+    cls = await own_class(request, user)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Fayl yuborilmadi")
+    field = form.get("file")
+    if field is None or not hasattr(field, "file"):
+        raise ApiError(400, "Fayl yuborilmadi")
+    data = field.file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise ApiError(400, "Fayl juda katta (5 MB gacha)")
+    parsed = await run(parse_roster, data, field.filename, [])
+    if not parsed:
+        raise ApiError(400, "Faylda ism-familiya topilmadi — birinchi ustunda F.I.Sh. bo'lsin")
+    students = await _add_to_class(user, cls, [n for n, _ in parsed])
+    return ok({"class": class_view(cls, students), "added": len(parsed)})
+
+
+async def class_student_update(request: web.Request) -> web.Response:
+    user = await auth(request)
+    cls = await own_class(request, user)
+    payload = await body(request)
+    student_id = int(request.match_info["student_id"])
+    await run(db.update_class_student, cls["id"], student_id, clean_name(payload.get("name")) or None,
+              bool(payload.get("delete")))
+    return ok({"class": class_view(cls, await run(db.list_class_students, cls["id"]))})
+
+
+async def class_send_ids(request: web.Request) -> web.Response:
+    """Sinfning «ID — ism» ro'yxati bot chatiga (o'quvchilarga tarqatish uchun)."""
+    user = await auth(request)
+    cls = await own_class(request, user)
+    students = sorted(await run(db.list_class_students, cls["id"]), key=lambda s: s["number"])
+    if not students:
+        raise ApiError(400, "Sinfda hali o'quvchi yo'q")
+    lines = [f"<code>{s['number']:04d}</code> — {html.escape(s['name'])}" for s in students]
+    header = (f"👥 <b>{html.escape(cls['name'])}</b> · {len(students)} ta o'quvchi\n"
+              "Titulda shu ID'ni 4 ta katakka yozib, doirachalarini bo'yaysiz.\n\n")
+    chunk, chunks = header, []
+    for line in lines:
+        if len(chunk) + len(line) > 3800:
+            chunks.append(chunk)
+            chunk = ""
+        chunk += line + "\n"
+    chunks.append(chunk)
+    for text in chunks:
+        await HOOKS["send_text"](user["id"], text)
+    return ok({"ok": True, "count": len(students)})
+
+
+async def students_from_class(request: web.Request) -> web.Response:
+    """Titulli testga sinf o'quvchilari — doimiy ID'lari bilan (testda bor ID'lar o'tkazib yuboriladi)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    cls = await run(db.get_class, int(payload.get("class_id") or 0))
+    if not cls or cls["owner_id"] != user["id"]:
+        raise ApiError(404, "Sinf topilmadi")
+    pupils = await run(db.list_class_students, cls["id"])
+    taken = {s["number"] for s in await run(db.list_students, test["id"])}
+    fresh = [p for p in pupils if p["number"] not in taken]
+    if not fresh:
+        raise ApiError(400, "Bu sinf o'quvchilari testda allaqachon bor" if pupils else "Sinfda hali o'quvchi yo'q")
+    variants = list(await run(db.get_keys, test["id"]))
+    chosen = assign_variants(len(fresh), variants, str(payload.get("mode") or "cycle"), start=len(taken))
+    students = await run(db.add_students, test["id"], [p["name"] for p in fresh], chosen, [p["number"] for p in fresh])
+    return ok({"students": [student_view(s) for s in students], "added": len(fresh)})
+
+
 async def sheets(request: web.Request) -> web.Response:
     """Titullar PDF'i chatga: har o'quvchiga shaxsiy titul + bo'sh titullar."""
     user = await auth(request)
@@ -1280,6 +1428,15 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students", students_add)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/{student_id:\\d+}", student_update)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/import", students_import)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/students/from-class", students_from_class)
+    app.router.add_get("/api/teacher/classes", classes_list)
+    app.router.add_post("/api/teacher/classes", class_create)
+    app.router.add_get("/api/teacher/class/{class_id:\\d+}", class_detail)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}", class_update)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}/students", class_students_add)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/import", class_students_import)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/{student_id:\\d+}", class_student_update)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}/send", class_send_ids)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)

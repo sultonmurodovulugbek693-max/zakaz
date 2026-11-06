@@ -22,6 +22,10 @@ yozma javoblar va esseni AI tekshiradi.
 - **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
 
 ## Titul va skaner
+- **Sinflar** («👥 Sinflarim»): o'qituvchi sinf yaratadi, o'quvchilarni yozib yoki Excel'dan qo'shadi —
+  har biriga **doimiy 4 xonali ID** beriladi (o'qituvchining barcha sinflari bo'yicha takrorlanmaydi,
+  o'chirilgan ID qayta berilmaydi). «📨 ID ro'yxatini chatga yuborish» — o'quvchilarga tarqatish uchun.
+  Titulli testning «🗂 Ro'yxat» bo'limida «👥 Sinfdan qo'shish» — o'quvchilar shu ID'lar bilan qo'shiladi.
 - Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari) — Milliy sertifikat testida
   faqat shu. Oddiy testda yana: **Ixcham** (bitta A4 ga 2–3 ta), **Yirik doirachalar**, **Fan ustunli**.
 - **ID** — 4 xonali: tepada 4 ta katak (raqam yoziladi), ostida 4 ta tik 0–9 ustun (bo'yaladi).
