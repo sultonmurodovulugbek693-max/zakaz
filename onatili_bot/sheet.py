@@ -9,7 +9,8 @@ Varaq tuzilishi:
   • burchaklarda 4 ta qora kvadrat, chap/o'ng chetda 10 tadan tekislash belgisi
   • pastki chetda 12 bitli kod: o'quvchi raqami (11 bit) + juftlik biti → skaner varaq
     kimniki ekanini o'zi taniydi; 0 — bo'sh (umumiy) titul
-  • variant doirachalari (shaxsiy titulda belgilangan varianti oldindan bo'yalgan)
+  • variant doirachalari yo'q: shaxsiy titulda variant ro'yxatdan olinadi (titulda matn bilan yozilgan),
+    bo'sh titulda — test bitta variantli bo'lsa o'zi, aks holda skanerdan keyin o'qituvchi tanlaydi
   • test savollari doirachalari, yozma javob kataklari (AI o'qiydi), ism katagi
 
 Koordinatalar punktlarda; doirachalar PDF tizimida (y pastdan), kataklar — tepadan.
@@ -98,9 +99,6 @@ def layout(test: dict, variant_names: list[str]) -> dict:
         bubbles.append({"page": 1, "kind": "code", "ref": "code", "letter": str(bit),
                         "x": first_x + bit * gap, "y": CORNER, "r": CODE_SIZE / 2})
 
-    for index, name in enumerate(variant_names or ["A"]):
-        bubbles.append({"page": 1, "kind": "variant", "ref": "variant", "letter": name, "label": "variant",
-                        "x": 142 + index * 32, "y": H - VARIANT_TOP, "r": 7})
 
     for column in range(ID_DIGITS):  # ref id0 — eng chap raqam (skaner ref tartibida o'qiydi)
         for digit in range(10):
@@ -240,24 +238,17 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
         c.setFont("Sans-Bold" if index == 0 else "Sans", 8)
         c.drawString(help_x, H - ID_BOX_TOP - 10 - index * 13, line)
 
-    # Variant
-    c.drawString(LEFT, H - VARIANT_TOP - 3, "Variant:")
-    for bubble in spec["bubbles"]:
-        if bubble["kind"] != "variant":
-            continue
-        filled = bool(student) and student.get("variant") == bubble["letter"]
-        c.setFillColor(INK)
-        c.setFont("Sans-Bold", 9)
-        c.drawRightString(bubble["x"] - 9.5, bubble["y"] - 3, bubble["letter"])
-        _bubble(c, bubble["x"], bubble["y"], bubble["r"], "", filled)
+    # Bo'yash namunasi (shaxsiy titulda — o'quvchining varianti matn bilan)
     c.setFont("Sans", 8)
     c.setFillColor(INK)
-    hint = "Variantingiz belgilangan" if student else "Variantingizni bo'yang"
-    text = f"{hint} · javobni to'liq bo'yang:"
-    c.drawString(290, H - VARIANT_TOP - 3, text)
-    end = 290 + pdfmetrics.stringWidth(text, "Sans", 8)
+    text = "Javobni doirachani to'liq bo'yab belgilang:"
+    c.drawString(LEFT, H - VARIANT_TOP - 3, text)
+    end = LEFT + pdfmetrics.stringWidth(text, "Sans", 8)
     _bubble(c, end + 10, H - VARIANT_TOP, 5, "", True)
     c.drawString(end + 19, H - VARIANT_TOP - 3, "to'g'ri")
+    if student and student.get("variant") and len(variant_names or []) > 1:
+        c.setFont("Sans-Bold", 10)
+        c.drawString(410, H - VARIANT_TOP - 3.5, f"Variant: {student['variant']}")
 
     # Test savollari
     choices = choice_items(test["items"])
