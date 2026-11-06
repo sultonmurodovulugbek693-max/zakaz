@@ -22,7 +22,7 @@ import time
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -42,10 +42,12 @@ import db
 import excel
 import essay_ai
 import ops
+import plans
 import pdfs
 import sheet
 import subscription
 import webapp
+import config
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
 from scoring import rasch_results, total_points
 from structure import ESSAY_MAX, choice_items, fmt_num, grade, max_points, percent, text_items
@@ -146,6 +148,82 @@ async def cmd_backup(message: Message) -> None:
     note = await message.answer("💾 Nusxa tayyorlanmoqda…")
     sent = await ops.send_backup(message.bot, [message.chat.id])
     await note.edit_text("✅ Nusxa yuborildi" if sent else "❌ Nusxani yuborib bo'lmadi — Render → Logs")
+
+
+# ---------- Obuna (admin) ----------
+
+def _who(user: dict) -> str:
+    name = esc(user.get("full_name") or "") or "—"
+    username = f" (@{esc(user['username'])})" if user.get("username") else ""
+    return f"{name}{username} · <code>{user['tg_id']}</code>"
+
+
+@dp.message(Command("obuna"))
+async def cmd_grant(message: Message, command: CommandObject) -> None:
+    """Admin: /obuna <@username yoki ID> <tarif> [oy] — o'qituvchiga tarif berish yoki uzaytirish."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    args = (command.args or "").split()
+    if len(args) < 2:
+        await message.answer("Ishlatish: <code>/obuna @username pro 1</code>  (tarif, necha oy)\n"
+                             "O'qituvchi oldin botga /start bosgan bo'lsin (yoki ID'sini yozing).\n\n"
+                             f"Tariflar:\n{plans.price_list()}")
+        return
+    months = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+    user = await asyncio.to_thread(db.find_user, args[0])
+    if not user:
+        await message.answer("Bunday foydalanuvchi topilmadi — u botga /start bosgan bo'lishi kerak "
+                             "(yoki Telegram ID'sini yozing: o'qituvchi /myid bilan biladi).")
+        return
+    try:
+        status = await asyncio.to_thread(plans.grant, user["tg_id"], args[1].lower(), months)
+    except ValueError as error:
+        await message.answer(f"❌ {esc(str(error))}")
+        return
+    limits = status["limits"]
+    await message.answer(f"✅ {_who(user)}\n💎 <b>{status['name']}</b> · {status['expires']} gacha\n"
+                         f"AI: oyiga {limits['essays']} esse, {limits['written']} titul")
+    try:
+        await message.bot.send_message(
+            user["tg_id"], f"🎉 <b>Obunangiz faollashdi</b>: {status['name']} · {status['expires']} gacha\n"
+                           f"AI tekshiruvi: oyiga {limits['essays']} ta esse va {limits['written']} ta titul.",
+            reply_markup=app_markup())
+    except Exception:
+        logger.warning("O'qituvchiga obuna xabari yuborilmadi")
+
+
+@dp.message(Command("obunalar"))
+async def cmd_subscriptions(message: Message) -> None:
+    """Admin: barcha o'qituvchilar — tarif, muddat, shu oydagi AI sarfi."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    subs = await asyncio.to_thread(db.list_subscriptions)
+    if not subs:
+        await message.answer("Hali obunachi yo'q.")
+        return
+    lines = [f"👩‍🏫 <b>O'qituvchilar</b>: {len(subs)} ta\n"]
+    for sub in subs:
+        st = await asyncio.to_thread(plans.status, sub["tg_id"])
+        mark = "🟢" if st["active"] else "🔴"
+        days = f"{st['days_left']} kun" if st["active"] else "tugagan"
+        lines.append(f"{mark} {_who(sub)}\n    {st['name']} · {days} · esse {st['used']['essays']}/{st['limits']['essays']}"
+                     f" · titul {st['used']['written']}/{st['limits']['written']}")
+    text, chunk = "\n".join(lines), ""
+    for line in text.split("\n"):
+        if len(chunk) + len(line) > 3800:
+            await message.answer(chunk)
+            chunk = ""
+        chunk += line + "\n"
+    await message.answer(chunk)
+
+
+@dp.message(Command("tariflar"))
+async def cmd_prices(message: Message) -> None:
+    contact = f"\n\nObuna uchun: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
+    await message.answer(f"💎 <b>Tariflar</b> (oyiga)\n{plans.price_list()}\n\n"
+                         f"Yangi o'qituvchiga {plans.TRIAL_DAYS} kunlik bepul sinov.{contact}")
 
 
 @dp.message(Command("myid"))
@@ -386,7 +464,8 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     except db.IntegrityError:  # shu test uchun javob allaqachon bor (SQLite ham, PostgreSQL ham)
         return None
     if test["fmt"] == "milliy":
-        status = ("pending" if essay_ai.essay_enabled() else "manual") if (essay_text or photos) else "none"
+        ai = essay_ai.essay_enabled() and await webapp.ai_allowed(test["owner_id"], "essays") if (essay_text or photos) else False
+        status = ("pending" if ai else "manual") if (essay_text or photos) else "none"
         await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
         if essay_cost:
             await asyncio.to_thread(db.add_essay_cost, attempt["id"], essay_cost)
@@ -745,6 +824,7 @@ async def main() -> None:
         asyncio.create_task(essay_worker(bot)),   # AI navbati: yozma javoblar va esselar
         asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
         asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
+        asyncio.create_task(ops.plan_reminders(bot)),  # obuna tugashiga 3 va 1 kun qolganda — o'qituvchiga
     ]
     if url := ops.keep_alive_url():  # Render bepul tarifida server uxlab qolmasin
         tasks.append(asyncio.create_task(ops.keep_alive(url)))

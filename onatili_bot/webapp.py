@@ -25,9 +25,10 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 
 import db
 import essay_ai
+import plans
 import sheet
 import sheet_styles
-from config import ADMIN_IDS, BOT_TOKEN
+from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN
 from scoring import rasch_results, total_points
 from structure import (
     ESSAY_MAX,
@@ -163,6 +164,9 @@ async def bootstrap(request: web.Request) -> web.Response:
         } for a in attempts],
         "tests": teacher_tests,
         "classes": len(await run(db.list_classes, user["id"])),
+        "plan": await run(plans.status, user["id"]),
+        "plans": [{"key": k, **plans.PLANS[k]} for k in plans.PAID],
+        "admin_contact": ADMIN_CONTACT,
         "ai": essay_ai.essay_enabled(),
         "themes": THEMES,
     })
@@ -412,9 +416,33 @@ def validate_key(items: list[dict], raw: dict) -> dict:
     return key
 
 
+async def require_plan(user: dict) -> None:
+    """Yangi test faqat faol obuna (yoki bepul sinov) bilan. Birinchi marta — sinov o'zi boshlanadi."""
+    status = await run(plans.ensure_active, user["id"])
+    if not status["active"]:
+        raise ApiError(402, "Obunangiz muddati tugagan — uzaytirish uchun admin bilan bog'laning", plan=status)
+
+
+async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
+    """AI ishlatish (oylik limit bo'yicha). Limit/obuna tugagan bo'lsa — o'qituvchiga oyiga bir marta xabar."""
+    if await run(plans.use_ai, owner_id, kind, amount):
+        return True
+    if await run(db.take_limit_notice, owner_id, plans.month_key()) and "send_text" in HOOKS:
+        status = await run(plans.status, owner_id)
+        reason = "obunangiz muddati tugagan" if not status["active"] else f"«{status['name']}» tarifining oylik AI limiti tugadi"
+        try:
+            await HOOKS["send_text"](owner_id, f"⚠️ AI tekshiruvi to'xtadi: {reason}.\n"
+                                               "Esse va yozma javoblar endi siz tekshirishingiz uchun qoladi "
+                                               "(«📝 Esselar» va «👥 Natijalar»). Uzaytirish — ilovadagi «Obuna» tugmasi.")
+        except Exception:
+            logger.warning("Limit haqida xabar yuborilmadi", exc_info=True)
+    return False
+
+
 async def create_test(request: web.Request) -> web.Response:
     user = await auth(request)
     payload = await body(request)
+    await require_plan(user)
     title = " ".join(str(payload.get("title", "")).split())[:80]
     if len(title) < 2:
         raise ApiError(400, "Test nomini yozing")
@@ -447,6 +475,7 @@ async def copy_test(request: web.Request) -> web.Response:
     """Shu testning nusxasi — yangi kod bilan, kalitlar o'sha: boshqa guruhga qayta kiritmasdan berish uchun."""
     user = await auth(request)
     test = await own_test(request, user)
+    await require_plan(user)
     title = " ".join(str((await body(request)).get("title") or "").split())[:80] or f"{test['title']} (nusxa)"[:80]
     keys = await run(db.get_keys, test["id"])
     copy = await run(db.create_test, user["id"], title, test["fmt"], test["count"], test["items"], keys, test.get("essay_topic"))
@@ -1048,7 +1077,7 @@ async def scan(request: web.Request) -> web.Response:
     written, ai_note = {}, None
     labels = [i["label"] for i in text_items(test["items"])]
     if labels and written_png and not live:
-        if essay_ai.enabled():
+        if essay_ai.enabled() and await ai_allowed(test["owner_id"], "written"):
             try:
                 written, _cost = await essay_ai.read_written(written_png, labels)
             except essay_ai.AIError as error:
@@ -1108,7 +1137,8 @@ async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
     essay = await run(db.get_offline_essay, test["id"], number)
     if not essay:
         return False
-    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if essay_ai.essay_enabled() else "manual")
+    ai = essay_ai.essay_enabled() and await ai_allowed(test["owner_id"], "essays")
+    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if ai else "manual")
     return True
 
 
@@ -1178,7 +1208,7 @@ async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]
         page = f" · {index}-bet" if len(pages) > 1 else ""
         file_ids.append(await HOOKS["store_photo"](user["id"], data,
                                                    f"📝 Esse · {attempt['student_name']}{page} · {test['title']}"))
-    status = "pending" if essay_ai.essay_enabled() else "manual"
+    status = "pending" if essay_ai.essay_enabled() and await ai_allowed(test["owner_id"], "essays") else "manual"
     if not await run(db.get_essay, attempt["id"]):
         await run(db.create_essay, attempt["id"], None, file_ids, status)
     else:
@@ -1239,7 +1269,7 @@ async def scan_upload(request: web.Request) -> web.Response:
     # O'qituvchi hamma yozma javobni o'zi kiritgan bo'lsa — AI kerak emas
     need_ai = [label for label in labels if not (payload.get("answers") or {}).get(label)]
     queued = False
-    if written and need_ai and essay_ai.enabled():
+    if written and need_ai and essay_ai.enabled() and await ai_allowed(test["owner_id"], "written"):
         await run(db.create_written_job, attempt["id"], test["id"], base64.b64encode(written).decode(),
                   str(payload.get("written_mime") or "image/jpeg")[:20])
         queued = True

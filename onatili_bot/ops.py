@@ -100,6 +100,43 @@ async def daily_backup(bot: Bot) -> None:
         await asyncio.sleep(60)
 
 
+# ---------- Obuna tugashi haqida eslatma ----------
+
+async def remind_plans(bot: Bot) -> int:
+    """Obunasi 3 yoki 1 kunda tugaydigan o'qituvchilarga — bir martadan eslatma."""
+    import plans
+
+    sent = 0
+    for sub in await asyncio.to_thread(db.list_subscriptions):
+        if plans.is_admin(sub["tg_id"]):
+            continue
+        status = await asyncio.to_thread(plans.status, sub["tg_id"])
+        if not status["active"] or status["days_left"] not in (1, 3):
+            continue
+        key = f"{status['days_left']}:{sub['expires_at'][:10]}"
+        if sub.get("reminded") == key:
+            continue
+        text = (f"⏳ Obunangiz ({status['name']}) <b>{status['days_left']} kundan keyin</b> tugaydi "
+                f"({status['expires']}).\nUzaytirish uchun ilovadagi «💎 Obuna» tugmasini bosing.")
+        try:
+            await bot.send_message(sub["tg_id"], text)
+            sent += 1
+        except Exception as error:
+            logger.warning("Obuna eslatmasi yuborilmadi (%s): %s", sub["tg_id"], error)
+        await asyncio.to_thread(db.mark_reminded, sub["tg_id"], key)
+    return sent
+
+
+async def plan_reminders(bot: Bot) -> None:
+    while True:
+        await asyncio.sleep(_seconds_until(10))  # har kuni 10:00 (Toshkent)
+        try:
+            await remind_plans(bot)
+        except Exception:
+            logger.warning("Obuna eslatmalari bajarilmadi", exc_info=True)
+        await asyncio.sleep(60)
+
+
 # ---------- Xatolar haqida adminga xabar ----------
 
 class AlertHandler(logging.Handler):

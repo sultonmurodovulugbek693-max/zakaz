@@ -16,5 +16,8 @@ FONTS_DIR = BASE_DIR / "fonts"
 WEBAPP_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 # Admin(lar)ning Telegram ID'si — majburiy obuna kanallarini boshqaradi. Bir nechta: 123,456
+# O'qituvchilar obuna uchun kimga yozadi (Telegram username, @ siz) — ilovada ko'rsatiladi
+ADMIN_CONTACT = (os.getenv("ADMIN_CONTACT") or "").strip().lstrip("@")
+
 ADMIN_IDS = {int(x) for x in (os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID") or "").replace(" ", "").split(",")
              if x.isdigit()}

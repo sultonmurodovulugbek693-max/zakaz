@@ -63,6 +63,17 @@ yozma javoblar va esseni AI tekshiradi.
   chuqur tahlil bilan. Yozma javoblar esa `AI_PROVIDER` (bepul Gemini) da qoladi.
 - AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.
 
+## Obuna (boshqa o'qituvchilarga berish)
+Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va natijalari alohida.
+- Yangi o'qituvchi birinchi testini yaratganda — **14 kunlik bepul sinov** (AI: 30 esse, 60 titul).
+- Pullik tariflar va oylik AI limitlari — `plans.py` dagi `PLANS` (narx so'mda; shu yerda o'zgartiriladi):
+  Start, Pro, Markaz. Limit tugasa — esse va yozma javoblar o'qituvchining o'ziga (qo'lda) qoladi.
+- **Admin buyruqlari** (`ADMIN_IDS`): `/obuna @username pro 1` — tarif berish/uzaytirish (oy soni),
+  `/obunalar` — barcha o'qituvchilar: tarif, muddat, shu oydagi AI sarfi, `/tariflar` — narxlar.
+- O'qituvchi ilovada tarifini, qolgan kunlarni va AI sarfini ko'radi; «Obunani uzaytirish» — narxlar va
+  admin bilan bog'lanish (`ADMIN_CONTACT`). Obuna tugasa yangi test yaratib bo'lmaydi; eski testlar,
+  natijalar va o'quvchilar ishlayveradi. Tugashiga 3 va 1 kun qolganda o'qituvchiga eslatma boradi.
+
 ## Xizmat ishlari (o'zi bajariladi)
 - **Uyg'oq tutish**: Render'ning bepul tarifida server 15 daqiqa so'rovsiz qolsa uxlaydi va bot javob
   bermay qo'yadi. Bot har 10 daqiqada o'z manziliga murojaat qiladi (`KEEP_ALIVE=0` — o'chirish).

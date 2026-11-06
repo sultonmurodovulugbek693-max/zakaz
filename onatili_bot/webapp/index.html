@@ -96,6 +96,9 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .act.alt .act-ico { background: color-mix(in srgb, var(--accent-2) 16%, transparent); }
 .act.alt > em { color: var(--accent-2); }
 .home-strip { grid-template-columns: repeat(3, 1fr); }
+.plan-card { gap: 10px; }
+.plan-card .plan-use { display: grid; gap: 4px; }
+.plan-card.plan-off { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 .code-card h2 { margin: 0; }
 .item.test-item { border-left: 4px solid transparent; }
 .item.test-item.is-open { border-left-color: var(--warn); }
@@ -622,6 +625,7 @@ VIEWS.home = async () => {
         <button type="button" class="act" data-new="online"><span class="act-ico">📱</span><b>Onlayn test</b><small>O'quvchilar kod bilan ilovada yechadi</small><em>＋ Yaratish</em></button>
         <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Oflayn test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
       </div>
+      ${planCard(b.plan)}
       <button type="button" class="item" id="my-classes"><span class="ico">👥</span>
         <span><b>Sinflarim${b.classes ? ` · ${b.classes}` : ""}</b><small>O'quvchilar ro'yxati va doimiy ID'lari — titul uchun</small></span><span class="muted">›</span></button>
       ${b.tests.length ? `<div class="strip home-strip">
@@ -632,6 +636,7 @@ VIEWS.home = async () => {
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   const mc = document.getElementById("my-classes"); if (mc) mc.onclick = () => { haptic("light"); go("classes"); };
+  const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => planModal();
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
   const code = document.getElementById("code");
   if (code) {
@@ -979,7 +984,11 @@ VIEWS.create = async () => {
         <div class="row"><button class="btn ghost" id="copy">Kodni nusxalash</button><button class="btn" id="open">Testni ochish</button></div></div></div>`;
       document.getElementById("copy").onclick = () => { navigator.clipboard.writeText(res.code).then(() => toast("Nusxalandi"), () => toast(res.code)); };
       document.getElementById("open").onclick = () => { S.current = { view: "home", params: {} }; go("teacher", { id: res.id }); };
-    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Saqlash va PDF olish"; }
+    } catch (e) {
+      haptic("error"); btn.disabled = false; btn.textContent = "Saqlash va PDF olish";
+      if (e.data && e.data.plan) { S.boot = null; try { S.boot = await api("/api/bootstrap"); } catch (x) {} return planModal(); }
+      toast(e.message);
+    }
   };
 };
 
@@ -1220,7 +1229,7 @@ function copyTestModal(t) {
   modal.querySelector("#make-copy").onclick = async e => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Yaratilmoqda…";
     try { const r = await api(`/api/teacher/test/${t.id}/copy`, { title: modal.querySelector("#copy-title").value }); haptic("success"); toast(`✅ Yangi kod: ${r.code}`); modal.remove(); S.boot = null; go("teacher", { id: r.id }); }
-    catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Nusxa yaratish"; }
+    catch (err) { btn.disabled = false; btn.textContent = "Nusxa yaratish"; if (err.data && err.data.plan) { modal.remove(); return planModal(); } toast(err.message); }
   };
 }
 
@@ -1248,6 +1257,34 @@ function compressImage(file, max = 2000) {
     img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
     img.src = url;
   });
+}
+
+// ---------- Obuna: tarif, muddat, oylik AI limiti ----------
+function planCard(p) {
+  if (!p || p.unlimited) return "";
+  if (!p.plan) return `<button type="button" class="item" id="plan-open"><span class="ico">💎</span>
+      <span><b>Bepul sinov</b><small>Birinchi testingizni yarating — ${p.trial_days || 14} kunlik sinov o'zi boshlanadi</small></span><span class="muted">›</span></button>`;
+  const bar = (used, limit) => `<div class="track" style="height:6px"><i style="width:${Math.min(100, used / Math.max(1, limit) * 100)}%"></i></div>`;
+  return `<div class="card plan-card ${p.active ? "" : "plan-off"}">
+      <div class="row between"><b>💎 ${esc(p.name)}</b><span class="pill-tag ${p.active && p.days_left > 3 ? "done" : "wait"}">${p.active ? `${p.days_left} kun qoldi` : "Muddati tugagan"}</span></div>
+      <div class="plan-use"><span class="muted small">AI esse: ${p.used.essays} / ${p.limits.essays}</span>${bar(p.used.essays, p.limits.essays)}
+        <span class="muted small">AI titul: ${p.used.written} / ${p.limits.written}</span>${bar(p.used.written, p.limits.written)}</div>
+      <button type="button" class="btn ${p.active ? "ghost" : ""} sm" id="plan-open">${p.active ? "Obunani uzaytirish" : "💎 Obunani yangilash"}</button></div>`;
+}
+
+function planModal() {
+  const b = S.boot || {}, p = b.plan || {}, me = (b.user && b.user.id) || "";
+  const rows = (b.plans || []).map(x => `<div class="item" style="cursor:default"><span class="ico">💎</span>
+      <span><b>${esc(x.name)}</b><small>Oyiga AI: ${x.essays} esse · ${x.written} titul</small></span>
+      <b style="white-space:nowrap">${num(x.price).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm</b></div>`).join("");
+  const contact = b.admin_contact ? `<a class="btn block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish (@${esc(b.admin_contact)})</a>` : "";
+  const modal = openModal("💎 Obuna", `
+    ${p.plan ? `<span class="muted small">Hozirgi tarif: <b>${esc(p.name)}</b>${p.active ? ` · ${esc(p.expires || "")} gacha` : " · muddati tugagan"}</span>` : ""}
+    <div class="list">${rows}</div>
+    <span class="muted small">1) Tarifni tanlab, admin'ga to'lov qiling. 2) Admin'ga ID'ingizni yuboring — obuna shu zahoti yoqiladi. Obuna tugasa, eski testlar va natijalar saqlanadi.</span>
+    <div class="row between card" style="padding:12px 14px"><span>Sizning ID: <b>${esc(String(me))}</b></span><button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
+    ${contact}`);
+  modal.querySelector("#copy-me").onclick = () => navigator.clipboard.writeText(String(me)).then(() => toast("ID nusxalandi"), () => toast(String(me)));
 }
 
 // ---------- Sinflar: o'quvchilarga doimiy ID (har testda bir xil) ----------

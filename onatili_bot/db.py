@@ -174,6 +174,23 @@ SCHEMA = [
         owner_id {BIG} PRIMARY KEY,
         last     INTEGER NOT NULL
     )""",
+    # O'qituvchi obunasi: tarif va tugash sanasi (admin beradi; birinchi testda — bepul sinov)
+    f"""CREATE TABLE IF NOT EXISTS subscriptions (
+        tg_id      {BIG} PRIMARY KEY,
+        plan       TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        updated_at TEXT,
+        reminded   TEXT
+    )""",
+    # Oylik AI sarfi (o'qituvchi bo'yicha): esse va yozma javoblar (titul). Limit shu yerda tekshiriladi
+    f"""CREATE TABLE IF NOT EXISTS usage (
+        tg_id    {BIG} NOT NULL,
+        month    TEXT NOT NULL,
+        essays   INTEGER NOT NULL DEFAULT 0,
+        written  INTEGER NOT NULL DEFAULT 0,
+        notified INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (tg_id, month)
+    )""",
     # Ilovaga (APK) Telegram orqali kirish: kind = login (bot tasdiqlashini kutadi) | session (kirilgan)
     f"""CREATE TABLE IF NOT EXISTS app_tokens (
         token   TEXT PRIMARY KEY,
@@ -650,6 +667,8 @@ BACKUP_TABLES = {
     "classes": "*",
     "class_students": "*",
     "id_counters": "*",
+    "subscriptions": "*",
+    "usage": "*",
 }
 SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students")
 
@@ -749,6 +768,76 @@ def update_class_student(class_id: int, student_id: int, name: str | None = None
             conn.execute("DELETE FROM class_students WHERE id = ? AND class_id = ?", (student_id, class_id))
         elif name:
             conn.execute("UPDATE class_students SET name = ? WHERE id = ? AND class_id = ?", (name, student_id, class_id))
+
+
+# ---------- Obuna va AI sarfi ----------
+
+def get_subscription(tg_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM subscriptions WHERE tg_id = ?", (tg_id,)).fetchone())
+
+
+def set_subscription(tg_id: int, plan: str, expires_at: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions (tg_id, plan, expires_at, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET plan = excluded.plan, expires_at = excluded.expires_at, "
+            "updated_at = excluded.updated_at, reminded = NULL",
+            (tg_id, plan, expires_at, _now()),
+        )
+
+
+def mark_reminded(tg_id: int, key: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE subscriptions SET reminded = ? WHERE tg_id = ?", (key, tg_id))
+
+
+def list_subscriptions() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT s.*, u.full_name, u.username FROM subscriptions s LEFT JOIN users u ON u.tg_id = s.tg_id "
+            "ORDER BY s.expires_at DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def find_user(ref: str) -> dict | None:
+    """Telegram ID yoki @username bo'yicha (bot bilan gaplashgan foydalanuvchi)."""
+    ref = ref.strip()
+    with connect() as conn:
+        if ref.lstrip("-").isdigit():
+            row = conn.execute("SELECT * FROM users WHERE tg_id = ?", (int(ref),)).fetchone()
+            return dict(row) if row else {"tg_id": int(ref), "full_name": None, "username": None}
+        row = conn.execute("SELECT * FROM users WHERE LOWER(username) = ?", (ref.lstrip("@").lower(),)).fetchone()
+    return _row(row)
+
+
+def get_usage(tg_id: int, month: str) -> dict:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM usage WHERE tg_id = ? AND month = ?", (tg_id, month)).fetchone()
+    return dict(row) if row else {"tg_id": tg_id, "month": month, "essays": 0, "written": 0, "notified": 0}
+
+
+def consume_usage(tg_id: int, month: str, kind: str, amount: int, limit: int | None) -> bool:
+    """AI sarfini yozadi — limitdan oshsa yozmaydi va False (bitta tranzaksiyada: ikki so'rov limitni yorib o'tmaydi)."""
+    assert kind in ("essays", "written")
+    with connect() as conn:
+        conn.execute("INSERT INTO usage (tg_id, month) VALUES (?, ?) ON CONFLICT(tg_id, month) DO NOTHING", (tg_id, month))
+        if limit is None:
+            conn.execute(f"UPDATE usage SET {kind} = {kind} + ? WHERE tg_id = ? AND month = ?", (amount, tg_id, month))
+            return True
+        updated = conn.execute(
+            f"UPDATE usage SET {kind} = {kind} + ? WHERE tg_id = ? AND month = ? AND {kind} + ? <= ?",
+            (amount, tg_id, month, amount, limit),
+        ).rowcount
+    return bool(updated)
+
+
+def take_limit_notice(tg_id: int, month: str) -> bool:
+    """Limit tugagani haqida oyiga bir marta xabar — birinchi chaqiriqda True."""
+    with connect() as conn:
+        return bool(conn.execute("UPDATE usage SET notified = 1 WHERE tg_id = ? AND month = ? AND notified = 0",
+                                 (tg_id, month)).rowcount)
 
 
 # ---------- Titulli testning ilovada yozilgan essesi ----------
