@@ -781,7 +781,7 @@ async def sheets(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
-    blanks = max(0, min(200, int(payload.get("blanks") or 0)))
+    blanks = max(0, min(200, int(payload.get("blanks", 1) or 0)))  # bo'sh titul — printerda ko'paytiriladi
     style = payload.get("style")
     if style is not None:
         if style not in sheet_styles.STYLES:
@@ -798,7 +798,7 @@ async def sheets(request: web.Request) -> web.Response:
     if payload.get("only"):
         students = [s for s in students if s["id"] in set(payload["only"])]
     if not students and not blanks:
-        raise ApiError(400, "Avval o'quvchilarni qo'shing yoki bo'sh titullar sonini kiriting")
+        raise ApiError(400, "Titul tanlanmadi")
     await HOOKS["send_sheets"](user["id"], test, students, blanks)
     return ok({"ok": True, "pages": len(students) + blanks})
 

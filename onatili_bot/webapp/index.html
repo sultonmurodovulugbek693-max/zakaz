@@ -1196,7 +1196,7 @@ function rosterHTML(d) {
     <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida)${vs.length > 1 ? ", variant ustuni ixtiyoriy (A, B, C, D)" : ""}. Har o'quvchiga ID beriladi: 001, 002, …</span></div>
     <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div><b>Ro'yxat ixtiyoriy</b>
       <span>Ro'yxat bo'lsa — har o'quvchiga ismi va ID'si bosilgan shaxsiy titul chiqadi.<br>
-      Bo'lmasa — «📄 Titullarni chiqarish»da bo'sh titullar chiqaring: o'quvchi ID'sini o'zi bo'yaydi yoki skanerlashda ismini yozasiz.</span></div>`}</div>`;
+      Bo'lmasa — «📄 Titullarni chiqarish»da bo'sh titulni oling va printerda ko'paytiring: o'quvchi ID'sini o'zi bo'yaydi yoki skanerlashda ismini yozasiz.</span></div>`}</div>`;
 }
 
 function bindRoster(d, id) {
@@ -1269,12 +1269,14 @@ function sheetsModal(t, students) {
   const modal = document.createElement("div"); modal.className = "sheet-modal";
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
-    <p class="muted small" style="margin:0">Har bir o'quvchiga ismi, raqami va varianti bosilgan shaxsiy titul${milliy ? " va esse varaqasi" : ""}. Skaner varaq kimniki ekanini o'zi taniydi.</p>
+    <p class="muted small" style="margin:0">${students.length
+      ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul${milliy ? " (esse varaqasi bilan)" : ""} + 1 ta bo'sh titul ro'yxatda yo'qlar uchun.`
+      : `1 ta bo'sh titul${milliy ? " va esse varaqasi" : ""}.`}
+      Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi, skaner kimniki ekanini taniydi.</p>
     ${styles.length > 1 ? `<div class="field"><label>Titul ko'rinishi</label>
       <div class="chips" id="styles">${styles.map(([key, name, hint]) => `<button type="button" class="chip ${key === style ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
       <span class="muted small" id="style-hint"></span></div>` : `<span class="muted small">${esc(SHEET_STYLES[0][2])}</span>`}
-    <div class="field"><label for="blanks">Qo'shimcha bo'sh titullar (ro'yxatda yo'qlar uchun)</label><input class="input" id="blanks" inputmode="numeric" value="${students.length ? 0 : 30}"></div>
-    <button class="btn block" id="make">PDF'ni chatga yuborish (${students.length} ta shaxsiy)</button></div>`;
+    <button class="btn block" id="make">📄 PDF'ni chatga yuborish</button></div>`;
   document.body.appendChild(modal);
   modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
   const hint = () => {
@@ -1288,8 +1290,8 @@ function sheetsModal(t, students) {
   });
   modal.querySelector("#make").onclick = async () => {
     const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { const r = await api(`/api/teacher/test/${t.id}/sheets`, { blanks: parseInt(modal.querySelector("#blanks").value) || 0, style }); t.sheet_style = style; haptic("success"); toast(`📨 ${r.pages} ta titul chatga yuborildi`); modal.remove(); }
-    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "PDF'ni chatga yuborish"; }
+    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove(); }
+    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "📄 PDF'ni chatga yuborish"; }
   };
 }
 

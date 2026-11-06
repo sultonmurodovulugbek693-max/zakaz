@@ -346,9 +346,11 @@ async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], 
     """Oflayn test: har o'quvchiga shaxsiy titul (ismi, raqami, varianti) + bo'sh titullar — bitta PDF."""
     keys = await asyncio.to_thread(db.get_keys, test["id"])
     content = await asyncio.to_thread(sheet.sheets_pdf, test, list(keys), students, blanks)
-    caption = (f"📄 <b>Titullar</b> · {esc(test['title'])}\n"
-               f"👥 {len(students)} ta shaxsiy" + (f" + {blanks} ta bo'sh" if blanks else "") +
-               "\nChop eting va tarqating. Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
+    parts = ([f"👥 {len(students)} ta shaxsiy"] if students else []) + ([f"{blanks} ta bo'sh"] if blanks else [])
+    caption = (f"📄 <b>Titullar</b> · {esc(test['title'])}\n" + " + ".join(parts) + "\n"
+               + ("🖨 Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi.\n"
+                  if blanks else "")
+               + "Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
     await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
 
 
