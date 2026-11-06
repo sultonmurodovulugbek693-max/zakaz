@@ -14,7 +14,7 @@ yozma javoblar va esseni AI tekshiradi.
 ## Imkoniyatlar
 - **O'qituvchi**: test yaratadi, A–D variant kalitlarini kiritadi. Yozma savolga 3 tagacha to'g'ri javob
   (sinonim): `chiroyli | go'zal | ko'rkam`. Tinish belgili javoblar (37-savol) ham tekshiriladi.
-- Ikki rejim: **onlayn** (o'quvchi ilovada belgilaydi) yoki **titul** (qog'ozda, kamerada skanerlanadi).
+- Ikki rejim: **onlayn** (o'quvchi ilovada belgilaydi) yoki **oflayn** (titul qog'ozda, kamerada skanerlanadi).
 - **O'quvchi**: kod → variant → ism → javoblar. Ball darhol chiqadi, e'londan keyin natija kartasi.
 - **Natijalar**: PDF va Excel — ball, Rasch bali, daraja, xato savollar, savollar tahlili.
 - **Natijani tuzatish**: «👥 Natijalar»da o'quvchini bosing — javoblari, kalit bilan solishtiruv,
@@ -25,7 +25,7 @@ yozma javoblar va esseni AI tekshiradi.
 - **Sinflar** («👥 Sinflarim»): o'qituvchi sinf yaratadi, o'quvchilarni yozib yoki Excel'dan qo'shadi —
   har biriga **doimiy 4 xonali ID** beriladi (o'qituvchining barcha sinflari bo'yicha takrorlanmaydi,
   o'chirilgan ID qayta berilmaydi). «📨 ID ro'yxatini chatga yuborish» — o'quvchilarga tarqatish uchun.
-  Titulli testning «🗂 Ro'yxat» bo'limida «👥 Sinfdan qo'shish» — o'quvchilar shu ID'lar bilan qo'shiladi.
+  Oflayn testning «🗂 Ro'yxat» bo'limida «👥 Sinfdan qo'shish» — o'quvchilar shu ID'lar bilan qo'shiladi.
 - Titul ko'rinishlari: **Standart** (A4, ism, ID, test va yozma javob kataklari) — Milliy sertifikat testida
   faqat shu. Oddiy testda yana: **Ixcham** (bitta A4 ga 2–3 ta), **Yirik doirachalar**, **Fan ustunli**.
 - **ID** — 4 xonali: tepada 4 ta katak (raqam yoziladi), ostida 4 ta tik 0–9 ustun (bo'yaladi).

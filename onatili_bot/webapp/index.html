@@ -598,7 +598,7 @@ VIEWS.home = async () => {
       <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
   const tests = b.tests.map(t => `<div class="item test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" role="button" tabindex="0">
       <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
-      <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Titul" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
+      <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Oflayn" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
         <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
       <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
   const openTests = b.tests.filter(t => !t.closed).length, results = b.tests.reduce((n, t) => n + t.students, 0);
@@ -620,7 +620,7 @@ VIEWS.home = async () => {
     : `
       <div class="acts">
         <button type="button" class="act" data-new="online"><span class="act-ico">📱</span><b>Onlayn test</b><small>O'quvchilar kod bilan ilovada yechadi</small><em>＋ Yaratish</em></button>
-        <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Titulli test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
+        <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Oflayn test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
       </div>
       <button type="button" class="item" id="my-classes"><span class="ico">👥</span>
         <span><b>Sinflarim${b.classes ? ` · ${b.classes}` : ""}</b><small>O'quvchilar ro'yxati va doimiy ID'lari — titul uchun</small></span><span class="muted">›</span></button>
@@ -900,7 +900,7 @@ VIEWS.create = async () => {
         <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button></div></div>
       <div class="field"><label>Qanday o'tkaziladi</label><div class="chips">
         <button type="button" class="chip ${st.mode !== "offline" ? "on" : ""}" data-mode="online">📱 Onlayn — ilovada</button>
-        <button type="button" class="chip ${st.mode === "offline" ? "on" : ""}" data-mode="offline">📄 Titul — qog'ozda + skaner</button></div>
+        <button type="button" class="chip ${st.mode === "offline" ? "on" : ""}" data-mode="offline">📄 Oflayn — qog'ozda + skaner</button></div>
         <span class="muted small">${st.mode === "offline" ? "Titul chop etasiz, o'quvchilar bo'yaydi, siz telefon kamerasida skanerlaysiz." : "O'quvchilar kodni kiritib, javoblarni ilovada belgilaydi."}</span></div>
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
@@ -1258,7 +1258,7 @@ VIEWS.classes = async () => {
       <span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi</small></span><span class="muted">›</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Sinflar</span><h1>Sinflarim</h1>
-      <span class="muted small">Har o'quvchiga doimiy 4 xonali ID beriladi — u har titulda shu ID'ni yozadi. Titulli testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan sinfni testga qo'shasiz.</span></div>
+      <span class="muted small">Har o'quvchiga doimiy 4 xonali ID beriladi — u har titulda shu ID'ni yozadi. Oflayn testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan sinfni testga qo'shasiz.</span></div>
     <div class="card"><div class="field"><label for="cname">Yangi sinf</label>
       <div class="row"><input class="input" id="cname" maxlength="40" placeholder="Masalan: 11-A" autocomplete="off"><button class="btn" id="cadd" style="flex-shrink:0">＋ Qo'shish</button></div></div></div>
     <div class="list">${list || `<div class="card empty"><div class="big">👥</div><b>Hali sinf yo'q</b><span>Sinf nomini yozib «Qo'shish»ni bosing.</span></div>`}</div>
@@ -2151,7 +2151,7 @@ VIEWS.appHome = async () => {
     <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><span class="hi">Salom, ${esc(first)} 👋</span>
       <h1>Ochiq testlar</h1><span class="muted small">Testni tanlang va titullarni kamerada tekshiring. Har natija botdagi chatingizga ham yuboriladi.</span>
       ${S.fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internet yo'q — oxirgi saqlangan ro'yxat</span>` : ""}</div>
-    <div class="list">${list || `<div class="card empty"><div class="big">📭</div><b>Ochiq titulli test yo'q</b><span>Botda test yarating («Titul» rejimi) — u shu yerda chiqadi.</span></div>`}</div>
+    <div class="list">${list || `<div class="card empty"><div class="big">📭</div><b>Ochiq oflayn test yo'q</b><span>Botda test yarating («Oflayn» rejimi) — u shu yerda chiqadi.</span></div>`}</div>
     <div class="row"><button class="btn ghost" id="refresh">🔄 Yangilash</button><button class="btn plain" id="logout">Chiqish</button></div>
   </div>`;
   document.querySelectorAll("[data-scan]").forEach(el => el.onclick = () => go("scan", { id: el.dataset.scan }));
