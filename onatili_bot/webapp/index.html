@@ -8,34 +8,37 @@
 <script src="/static/omr.js?v=3"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
 <style>
 :root {
   /* O'z palitramiz: yumshoq siyohrang-ko'k asosiy rang, iliq och fon, marjon ikkinchi urg'u, yumshoq soyalar */
-  --bg: #f5f4fb;
+  --bg: #f3faf5;
   --surface: #ffffff;
-  --ink: #1f1d3a;
-  --muted: #6f6c8f;
-  --accent: #5a5bd8;
-  --accent-2: #f2735a;
-  --accent-ink: #ffffff;
+  --ink: #0b1f2a;
+  --muted: #4f6670;
+  --accent: #00a844;
+  --accent-2: #a8f063;
+  --accent-ink: #0b1f2a;
+  --hero: #0b1f2a;      /* to'q tepa karta */
+  --lime: #a8f063;      /* ajratilgan raqam va yorliqlar */
+  --btn-fg: #0b1f2a;
   --accent-soft: color-mix(in srgb, var(--accent) 11%, transparent);
   --line: color-mix(in srgb, var(--accent) 13%, transparent);
-  --shadow: 0 10px 28px -18px rgba(54, 48, 140, .45), 0 1px 2px rgba(54, 48, 140, .06);
-  --grad: linear-gradient(135deg, #5a5bd8 0%, #8a5cd0 60%, #d0708a 100%);  /* tugma, statistika, tanlangan javob */
+  --shadow: 0 6px 18px rgba(11, 31, 42, .06);
+  --grad: linear-gradient(135deg, #00c853 0%, #00a844 100%);  /* tugma, tanlangan javob */
   --good: #22a06b; --warn: #e3a032; --bad: #e5484d;
-  --radius: 22px;
-  --btn-radius: 99px;
-  --font-display: "Sora", "Manrope", system-ui, sans-serif;
-  --font-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 24px;
+  --btn-radius: 18px;
+  --font-display: "Plus Jakarta Sans", "Manrope", system-ui, sans-serif;
+  --font-body: "Plus Jakarta Sans", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 html.dark {
-  --bg: #13122a; --surface: #1d1b3b; --ink: #ecebff; --muted: #a29fc9;
-  --accent: #8d8bff; --accent-2: #ff8a70; --accent-ink: #14132b;
-  --line: color-mix(in srgb, var(--accent) 18%, transparent);
-  --shadow: 0 12px 30px -18px rgba(0, 0, 0, .7);
-  --grad: linear-gradient(135deg, #4b49c4 0%, #7449b5 60%, #a8516f 100%);
+  --bg: #0f1115; --surface: #1a1d24; --ink: #f3f4f6; --muted: #9ca3af;
+  --accent: #00c853; --accent-2: #a8f063; --accent-ink: #0b1f2a; --hero: #142a36;
+  --line: #2a2d36;
+  --shadow: 0 10px 28px rgba(0, 0, 0, .45);
+  --grad: linear-gradient(135deg, #00c853 0%, #00a844 100%);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font-body); line-height: 1.45; }
@@ -65,7 +68,7 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .brand i { width: 24px; height: 24px; border-radius: 50%; background: var(--grad); display: inline-grid; place-items: center; color: #fff; font-style: normal; font-size: 12px; font-weight: 700; font-family: var(--font-display); box-shadow: 0 4px 10px -4px var(--accent); }
 
 /* Tugmalar */
-.btn { border: 0; border-radius: var(--btn-radius); padding: 14px 20px; font-weight: 700; letter-spacing: .01em; background: var(--grad); color: #fff; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; justify-content: center; box-shadow: 0 10px 22px -12px var(--accent); transition: transform .12s, filter .2s, opacity .2s, box-shadow .2s; }
+.btn { border: 0; border-radius: var(--btn-radius); padding: 14px 20px; font-weight: 700; letter-spacing: .01em; background: var(--grad); color: var(--btn-fg); cursor: pointer; display: inline-flex; gap: 8px; align-items: center; justify-content: center; box-shadow: 0 10px 22px -12px var(--accent); transition: transform .12s, filter .2s, opacity .2s, box-shadow .2s; }
 .btn:hover { filter: brightness(1.05); }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .5; }
@@ -97,6 +100,27 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .act.alt .act-ico { background: color-mix(in srgb, var(--accent-2) 16%, transparent); }
 .act.alt > em { color: var(--accent-2); }
 .home-strip { grid-template-columns: repeat(3, 1fr); }
+.hero-card { position: relative; overflow: hidden; background: var(--hero); color: #fff; border-radius: 32px; padding: 20px 18px 18px; display: grid; gap: 14px; box-shadow: 0 22px 40px -22px rgba(11, 31, 42, .75); }
+.hero-card::before { content: ""; position: absolute; right: -70px; top: -90px; width: 240px; height: 240px; border-radius: 50%; background: radial-gradient(circle, rgba(0, 200, 83, .38), rgba(0, 200, 83, 0) 70%); pointer-events: none; }
+.hero-card > * { position: relative; }
+.hero-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hero-logo { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.3px; }
+.hero-logo i { width: 34px; height: 34px; border-radius: 10px; background: var(--lime); color: #0b1f2a; display: grid; place-items: center; font-style: normal; font-weight: 800; }
+.hero-card .role-chip { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.18); color: #fff; box-shadow: none; }
+.hero-card .role-chip i { color: var(--lime); }
+.hero-hello { font-size: 24px; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+.hero-hello small { display: block; font-size: 13px; font-weight: 500; color: #b7cbbf; letter-spacing: 0; margin-top: 4px; }
+.hero-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.hero-stat { border-radius: 16px; background: rgba(255,255,255,.08); padding: 10px 12px; }
+.hero-stat b { display: block; font-size: 22px; font-weight: 800; }
+.hero-stat small { color: #b7cbbf; font-size: 12px; }
+.hero-stat.is-sun { background: rgba(168, 240, 99, .14); box-shadow: inset 0 0 0 1px var(--lime); }
+.hero-stat.is-sun b { color: var(--lime); }
+.quick-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.quick-action { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 4px 12px; font: 700 12.5px var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); cursor: pointer; transition: transform .2s cubic-bezier(.34, 1.56, .64, 1); text-align: center; }
+.quick-action:active { transform: scale(.94); }
+.quick-action i { width: 44px; height: 44px; display: grid; place-items: center; font-size: 21px; font-style: normal; border-radius: 14px; background: #eaf7ee; }
+html.dark .quick-action i { background: #20302a; }
 .plan-card { gap: 10px; }
 .plan-card .plan-use { display: grid; gap: 4px; }
 .plan-card.plan-off { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
@@ -145,7 +169,7 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .qrow.done .qnum { color: var(--accent); }
 .bubbles { display: flex; gap: 8px; flex-wrap: wrap; }
 .bubble { width: 42px; height: 42px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--bg); color: var(--muted); font-weight: 700; font-size: 14px; display: grid; place-items: center; cursor: pointer; transition: background .15s, border-color .15s, color .15s, transform .15s; }
-.bubble.on { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 6px 14px -8px var(--accent); animation: pick .3s cubic-bezier(.3,1.6,.5,1); }
+.bubble.on { background: var(--grad); border-color: transparent; color: var(--btn-fg); box-shadow: 0 6px 14px -8px var(--accent); animation: pick .3s cubic-bezier(.3,1.6,.5,1); }
 @keyframes pick { 50% { transform: scale(1.18); } }
 .section-title { display: flex; justify-content: space-between; align-items: baseline; }
 .textq { display: grid; grid-template-columns: 42px 1fr; gap: 8px; align-items: center; }
@@ -672,13 +696,16 @@ VIEWS.home = async () => {
       <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
   const openTests = b.tests.filter(t => !t.closed).length, results = b.tests.reduce((n, t) => n + t.students, 0);
   // Tepada salomlashish va rol tugmasi (bosilsa — boshqa rolga o'tadi)
-  const top = `<header class="home-top">
-      <div class="home-hello"><span class="brand"><i>O</i>Ona tili · Mock</span>
-        <h1>Salom, ${esc(first)} 👋</h1>
-        <span class="muted small">${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</span></div>
-      <button type="button" class="role-chip" data-switch-role title="Rolni almashtirish">
-        <span>${role === "student" ? "🎓" : "👩‍🏫"}</span><b>${role === "student" ? "O'quvchi" : "O'qituvchi"}</b><i>⇄</i></button>
-    </header>`;
+  const stats = role === "student"
+    ? [[b.attempts.length, "test"], [b.attempts.filter(a => a.announced).length, "natija tayyor", true], [b.attempts.filter(a => !a.announced).length, "kutilmoqda"]]
+    : [[b.tests.length, "test"], [results, "natija", true], [openTests, "ochiq"]];
+  const top = `<section class="hero-card">
+      <div class="hero-row"><span class="hero-logo"><i>O</i>Ona tili · Mock</span>
+        <button type="button" class="role-chip" data-switch-role title="Rolni almashtirish">
+          <span>${role === "student" ? "🎓" : "👩‍🏫"}</span><b>${role === "student" ? "O'quvchi" : "O'qituvchi"}</b><i>⇄</i></button></div>
+      <div class="hero-hello">Salom, ${esc(first)} 👋<small>${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</small></div>
+      <div class="hero-stats">${stats.map(([n, label, sun]) => `<div class="hero-stat ${sun ? "is-sun" : ""}"><b>${n}</b><small>${label}</small></div>`).join("")}</div>
+    </section>`;
   $app.innerHTML = `<div class="view">${top}
     ${role === "student" ? `
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
@@ -687,22 +714,21 @@ VIEWS.home = async () => {
       <div class="section-title"><h2>Mening testlarim</h2><span class="muted small">${b.attempts.length} ta</span></div>
       <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
     : `
-      <div class="acts">
-        <button type="button" class="act" data-new="online"><span class="act-ico">📱</span><b>Onlayn test</b><small>O'quvchilar kod bilan ilovada yechadi</small><em>＋ Yaratish</em></button>
-        <button type="button" class="act alt" data-new="offline"><span class="act-ico">📄</span><b>Oflayn test</b><small>Qog'ozda yechiladi, kamerada skanerlanadi</small><em>＋ Yaratish</em></button>
+      <div class="quick-actions">
+        <button type="button" class="quick-action" data-new="online"><i>📱</i>Onlayn test</button>
+        <button type="button" class="quick-action" data-new="offline"><i>📄</i>Oflayn test</button>
+        <button type="button" class="quick-action" id="my-classes"><i>👥</i>Sinflar${b.classes ? ` · ${b.classes}` : ""}</button>
+        <button type="button" class="quick-action" id="plan-quick"><i>💎</i>Obuna</button>
       </div>
       ${planCard(b.plan)}
-      <button type="button" class="item" id="my-classes"><span class="ico">👥</span>
-        <span><b>Sinflarim${b.classes ? ` · ${b.classes}` : ""}</b><small>O'quvchilar ro'yxati va doimiy ID'lari — titul uchun</small></span><span class="muted">›</span></button>
-      ${b.tests.length ? `<div class="strip home-strip">
-        <div><b>${b.tests.length}</b><span>test</span></div><div><b>${results}</b><span>natija</span></div><div><b>${openTests}</b><span>ochiq</span></div></div>` : ""}
       <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
-      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b><span>Yuqoridagi plitkalardan birini bosing — bir necha daqiqada tayyor.</span></div>`}</div>`}
+      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b><span>Yuqoridagi «Onlayn test» yoki «Oflayn test»ni bosing — bir necha daqiqada tayyor.</span></div>`}</div>`}
   </div>`;
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   const mc = document.getElementById("my-classes"); if (mc) mc.onclick = () => { haptic("light"); go("classes"); };
   const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => planModal();
+  const pq = document.getElementById("plan-quick"); if (pq) pq.onclick = () => { haptic("light"); planModal(); };
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
   const code = document.getElementById("code");
   if (code) {
