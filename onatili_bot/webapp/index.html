@@ -25,6 +25,7 @@
   --grad: linear-gradient(135deg, #5a5bd8 0%, #8a5cd0 60%, #d0708a 100%);  /* tugma, statistika, tanlangan javob */
   --good: #22a06b; --warn: #e3a032; --bad: #e5484d;
   --radius: 22px;
+  --btn-radius: 99px;
   --font-display: "Sora", "Manrope", system-ui, sans-serif;
   --font-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -44,7 +45,7 @@ input, textarea { font: inherit; color: var(--ink); }
 .topbar { position: sticky; top: 0; z-index: 30; background: var(--bg); padding: 8px 16px 4px; max-width: 640px; margin: 0 auto; }
 .topbar[hidden] { display: none; }
 .topbar + #app { padding-top: 4px; }
-.back { border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 14.5px var(--font-body); padding: 8px 16px 8px 12px; border-radius: 99px; cursor: pointer; box-shadow: var(--shadow); }
+.back { border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 14.5px var(--font-body); padding: 8px 16px 8px 12px; border-radius: var(--btn-radius); cursor: pointer; box-shadow: var(--shadow); }
 .back:active { transform: scale(.96); }
 #app.soft *, #app.soft *::before, #app.soft *::after { animation: none !important; transition: none !important; }
 .view { animation: viewIn .35s cubic-bezier(.2,.8,.2,1); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
@@ -64,7 +65,7 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .brand i { width: 24px; height: 24px; border-radius: 50%; background: var(--grad); display: inline-grid; place-items: center; color: #fff; font-style: normal; font-size: 12px; font-weight: 700; font-family: var(--font-display); box-shadow: 0 4px 10px -4px var(--accent); }
 
 /* Tugmalar */
-.btn { border: 0; border-radius: 99px; padding: 14px 20px; font-weight: 700; letter-spacing: .01em; background: var(--grad); color: #fff; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; justify-content: center; box-shadow: 0 10px 22px -12px var(--accent); transition: transform .12s, filter .2s, opacity .2s, box-shadow .2s; }
+.btn { border: 0; border-radius: var(--btn-radius); padding: 14px 20px; font-weight: 700; letter-spacing: .01em; background: var(--grad); color: #fff; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; justify-content: center; box-shadow: 0 10px 22px -12px var(--accent); transition: transform .12s, filter .2s, opacity .2s, box-shadow .2s; }
 .btn:hover { filter: brightness(1.05); }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .5; }
@@ -489,6 +490,51 @@ async function render(soft = false) {
   }
 }
 const rerender = () => render(true);
+
+// ---------- Ilova dizaynlari (ranglar, shriftlar, burchaklar) ----------
+// [nomi, fon, karta, matn, ikkinchi matn, asosiy rang, ikkinchi rang, karta burchagi, tugma burchagi, matn shrifti, sarlavha shrifti]
+const UI_THEMES = {
+  indigo:   ["Siyohrang",     "#f5f4fb", "#ffffff", "#1f1d3a", "#6f6c8f", "#5a5bd8", "#f2735a", 22, 99, "Manrope", "Sora"],
+  okean:    ["Okean",         "#eef5f7", "#ffffff", "#0f2a33", "#5c7781", "#0f7c8c", "#3fb6c6", 18, 14, "Inter", "Inter"],
+  zumrad:   ["Zumrad",        "#f4f6f1", "#ffffff", "#17261d", "#647268", "#1e7a4f", "#c2a14d", 16, 12, "DM Sans", "DM Serif Display"],
+  grafit:   ["Grafit",        "#f2f2f3", "#ffffff", "#111214", "#6a6d73", "#1f6feb", "#111214", 10, 8, "Inter", "Inter"],
+  qumtosh:  ["Qumtosh",       "#f6f1ea", "#fffdf9", "#2b2219", "#7c6e60", "#b5552f", "#d8a25a", 14, 10, "Source Sans 3", "Lora"],
+  navy:     ["Rasmiy",        "#f3f5f9", "#ffffff", "#0d1b33", "#5b6780", "#1b3a6b", "#c9a227", 12, 8, "IBM Plex Sans", "IBM Plex Sans"],
+  shaftoli: ["Shaftoli",      "#fbf4f1", "#ffffff", "#2d1f2a", "#7d6a75", "#8e3b6f", "#e3926f", 20, 16, "Nunito Sans", "Nunito Sans"],
+  lavanda:  ["Lavanda",       "#f4f3f9", "#ffffff", "#24233a", "#6c6a86", "#6b5fb0", "#9c8fd9", 18, 12, "Plus Jakarta Sans", "Plus Jakarta Sans"],
+  osmon:    ["Osmon",         "#f1f7fd", "#ffffff", "#132a44", "#5d7590", "#2f80d1", "#66b7f0", 18, 99, "Rubik", "Rubik"],
+  olcha:    ["Olcha",         "#f8f4f2", "#fffdfb", "#2a1518", "#7a6164", "#8c1f32", "#c96a4a", 14, 10, "Manrope", "Playfair Display"],
+  zaytun:   ["Zaytun",        "#f4f4ec", "#fffffa", "#22261a", "#6e7360", "#5a6b2e", "#b08d3a", 14, 10, "Work Sans", "Work Sans"],
+  tun:      ["Tun",           "#0e1320", "#161d2e", "#e8edf7", "#8d99b3", "#4fd1c5", "#7c9cff", 18, 12, "Space Grotesk", "Space Grotesk"],
+  komir:    ["Ko'mir",        "#141414", "#1e1e1e", "#f1efe9", "#9b978e", "#e0a43a", "#d9733b", 14, 10, "Inter", "Inter"],
+  qogoz:    ["Qog'oz",        "#f7f6f2", "#ffffff", "#1d2233", "#666b7a", "#2c4fa3", "#2c4fa3", 8, 6, "Source Sans 3", "Merriweather"],
+  registon: ["Registon",      "#f1f6f6", "#ffffff", "#10283a", "#5a707c", "#1d5fa8", "#1fa3a0", 16, 12, "Montserrat", "Montserrat"],
+  minimal:  ["Minimal",       "#ffffff", "#ffffff", "#0a0a0a", "#737373", "#0a0a0a", "#525252", 10, 8, "Inter", "Inter"],
+  marjon:   ["Marjon",        "#fbf6f4", "#ffffff", "#2a1a17", "#7b6762", "#d2553f", "#e99b52", 20, 14, "Outfit", "Outfit"],
+  yalpiz:   ["Yalpiz",        "#f0f7f4", "#ffffff", "#132a24", "#5b7570", "#16846c", "#5cc2a3", 18, 14, "Lexend", "Lexend"],
+  kumush:   ["Kumush",        "#f2f4f7", "#ffffff", "#1a2230", "#667085", "#3e5c86", "#7a93b8", 12, 8, "IBM Plex Sans", "IBM Plex Sans"],
+  oltin:    ["Oltin",         "#f5f3ec", "#fffdf7", "#16241d", "#66706a", "#1f4d3a", "#b8923a", 14, 8, "Manrope", "Cormorant Garamond"],
+};
+const DARK_UI = ["tun", "komir"];
+function applyUiTheme(key) {
+  const t = UI_THEMES[key]; if (!t) return;
+  const [, bg, surface, ink, muted, accent, accent2, radius, btn, body, display] = t, root = document.documentElement.style;
+  const dark = DARK_UI.includes(key);
+  Object.entries({
+    "--bg": bg, "--surface": surface, "--ink": ink, "--muted": muted, "--accent": accent, "--accent-2": accent2,
+    "--accent-ink": dark ? bg : "#ffffff", "--radius": radius + "px", "--btn-radius": btn + "px",
+    "--grad": accent === accent2 ? accent : `linear-gradient(135deg, ${accent} 0%, ${accent2} 100%)`,
+    "--shadow": dark ? "0 12px 30px -18px rgba(0,0,0,.8)" : `0 10px 26px -18px color-mix(in srgb, ${accent} 55%, transparent), 0 1px 2px rgba(0,0,0,.05)`,
+    "--font-body": `"${body}", system-ui, sans-serif`, "--font-display": `"${display}", "${body}", system-ui, sans-serif`,
+  }).forEach(([name, value]) => root.setProperty(name, value));
+  document.documentElement.classList.toggle("dark", dark);
+  const fonts = [...new Set([body, display])].filter(f => !["Manrope", "Sora"].includes(f));
+  if (fonts.length) {
+    const link = document.createElement("link"); link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?" + fonts.map(f => `family=${f.replace(/ /g, "+")}:wght@400;500;600;700`).join("&") + "&display=swap";
+    document.head.appendChild(link);
+  }
+}
 
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
@@ -2235,6 +2281,7 @@ VIEWS.appHome = async () => {
     return;
   }
   const q = new URLSearchParams(location.search);
+  if (q.get("ui")) applyUiTheme(q.get("ui"));
   S.current = { view: "home", params: {} };
   if (q.get("r")) { S.stack = []; go("result", { id: q.get("r") }); }
   else if (q.get("t")) { S.role = "teacher"; go("teacher", { id: q.get("t"), tab: q.get("tab") || undefined }); }
