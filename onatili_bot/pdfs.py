@@ -24,8 +24,8 @@ pdfmetrics.registerFont(TTFont("Sans-Bold", str(FONTS_DIR / "DejaVuSans-Bold.ttf
 pdfmetrics.registerFontFamily("Sans", normal="Sans", bold="Sans-Bold", italic="Sans", boldItalic="Sans-Bold")
 
 INK = colors.HexColor("#1f2933")
-ACCENT = colors.HexColor("#1d6f42")
-LIGHT = colors.HexColor("#e8f3ec")
+ACCENT = colors.HexColor("#4b4ac0")  # ilova bilan bir xil siyohrang-ko'k
+LIGHT = colors.HexColor("#eeedfb")
 GRID = colors.HexColor("#9aa5b1")
 
 STYLES = {
@@ -38,7 +38,7 @@ STYLES = {
     "h1": ParagraphStyle("h1", fontName="Sans-Bold", fontSize=14, leading=18, textColor=INK, spaceAfter=2),
     "banner": ParagraphStyle("banner", fontName="Sans-Bold", fontSize=15, leading=19, textColor=colors.white),
     "banner_sub": ParagraphStyle("banner_sub", fontName="Sans", fontSize=9.5, leading=12,
-                                 textColor=colors.HexColor("#d7eadf")),
+                                 textColor=colors.HexColor("#dcdbf7")),
     "card_value": ParagraphStyle("card_value", fontName="Sans-Bold", fontSize=15, leading=18, alignment=TA_CENTER,
                                  textColor=ACCENT),
     "card_label": ParagraphStyle("card_label", fontName="Sans", fontSize=8, leading=10, alignment=TA_CENTER,
@@ -333,8 +333,8 @@ def _table_style() -> TableStyle:
         ("FONT", (0, 1), (-1, -1), "Sans", 9),
         ("BACKGROUND", (0, 0), (-1, 0), INK),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f7f5")]),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#d9e2dc")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f5fc")]),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#dedcf2")),
         ("BOX", (0, 0), (-1, -1), 0.6, GRID),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (2, 0), (-2, -1), "CENTER"),

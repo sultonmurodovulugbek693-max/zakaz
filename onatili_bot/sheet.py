@@ -49,7 +49,7 @@ NAME_AREA = (100, 86, 392, 110)  # ism katagi (tepadan) — skanerda rasm qilib 
 WRITTEN_CELL_W, WRITTEN_CELL_H, WRITTEN_LABEL_W = 14.5, 21, 30  # yozma javobning harf kataklari
 
 INK = colors.HexColor("#1f2933")
-ACCENT = colors.HexColor("#1d6f42")
+ACCENT = colors.HexColor("#4b4ac0")  # ilova bilan bir xil siyohrang-ko'k
 GRID = colors.HexColor("#9aa5b1")
 
 
@@ -310,7 +310,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
 
     c.setFillColor(INK)
     c.setFont("Sans", 8)
-    y = H - spec["bottom"] - 20
+    y = H - spec["bottom"] - 16
     if test["fmt"] == "milliy":
         c.drawString(LEFT, y, f"45 — esse botda yoziladi ({ESSAY_MAX} ball): botga test kodi {test['code']} ni "
                               "kiriting va shu ID bilan yozing.")
@@ -319,7 +319,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
         c.drawString(LEFT, y, "Varaqni bukmang, burchakdagi qora kvadratlar ustiga yozmang.")
     c.setFillColor(GRID)
     c.setFont("Sans", 7)
-    c.drawCentredString(W / 2, CORNER + 14, "Ona tili test boti · titulni o'qituvchi ilova orqali skanerlaydi")
+    c.drawCentredString(W / 2, CORNER + 9, "Ona tili test boti · titulni o'qituvchi ilova orqali skanerlaydi")
 
 
 def _bubble(c: canvas.Canvas, x: float, y: float, r: float, letter: str, filled: bool) -> None:
