@@ -480,6 +480,7 @@ async function render(soft = false) {
   if (!soft) window.scrollTo(0, 0);
   const { view, params } = S.current;
   showBack(S.stack.length > 0);
+  rememberView(view, params);
   const home = APP && !(tg && tg.initData) ? VIEWS.appHome : VIEWS.home;
   try { await (view === "home" ? home : VIEWS[view] || home)(params); }
   finally {
@@ -488,6 +489,24 @@ async function render(soft = false) {
   }
 }
 const rerender = () => render(true);
+
+// Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
+// Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
+const RESUMABLE = { student: ["answer", "result"], teacher: ["teacher", "classes", "klass", "result"] };
+function rememberView(view, params) {
+  if (!(tg && tg.initData)) return;
+  if (view === "home") return store("lastView", "");
+  const role = S.role || store("role");
+  if ((RESUMABLE[role] || []).includes(view)) store("lastView", JSON.stringify({ view, params, role }));
+}
+function resumeView() {
+  let last = null;
+  try { last = JSON.parse(store("lastView") || "null"); } catch (e) {}
+  const role = store("role");
+  if (!last || !role || last.role !== role || !(RESUMABLE[role] || []).includes(last.view)) return false;
+  S.role = role; S.stack = [{ view: "home", params: {} }]; S.current = { view: last.view, params: last.params || {} };
+  return true;
+}
 if (tg) { try { tg.BackButton.onClick(back); } catch (e) {} }
 document.getElementById("back").onclick = () => { haptic("light"); back(); };
 // Orqaga: sahifa tepasidagi tugma (har qurilmada ko'rinadi) + Telegram'ning o'z tugmasi (bor joyda)
@@ -504,6 +523,7 @@ window.appBack = () => {
 };
 function loading() { if (S.soft && $app.firstElementChild) return; $app.innerHTML = `<div class="view"><div class="skeleton" style="height:40px;width:60%"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
 function fail(error) {
+  store("lastView", "");
   $app.innerHTML = `<div class="view"><div class="card empty"><div class="big">😕</div><b>${esc(error.message || error)}</b><button class="btn ghost" id="retry">Qayta urinish</button></div></div>`;
   document.getElementById("retry").onclick = () => render();
 }
@@ -569,7 +589,7 @@ function bindBubbles(answers, onChange) {
 const VIEWS = {};
 
 function setRole(role) {
-  S.role = role; store("role", role); haptic("select");
+  S.role = role; store("role", role); store("lastView", ""); haptic("select");
   if (S.boot) S.boot.role = role;
   api("/api/role", { role }).catch(() => {});  // keyingi kirishda ham (boshqa qurilmada ham) shu ekran
 }
@@ -2221,7 +2241,7 @@ VIEWS.appHome = async () => {
   else if (q.get("v") === "create") { S.role = "teacher"; go("create"); }
   else if (q.get("v") === "classes") { S.role = "teacher"; go(q.get("k") ? "klass" : "classes", q.get("k") ? { id: q.get("k") } : {}); }
   else if (q.get("c")) { go("answer", { code: q.get("c") }); }
-  else render();
+  else { resumeView(); render(); }  // birinchi kirishda — rol tanlash, keyin — oxirgi sahifa
 })();
 </script>
 </body>
