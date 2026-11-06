@@ -794,6 +794,8 @@ async def sheets(request: web.Request) -> web.Response:
     test = await own_test(request, user)
     payload = await body(request)
     blanks = max(0, min(200, int(payload.get("blanks", 1) or 0)))  # bo'sh titul — printerda ko'paytiriladi
+    if payload.get("only") is None and await run(db.list_students, test["id"]):
+        blanks = 0  # ro'yxat bor — faqat shaxsiy titullar, qo'shimcha bo'sh titulsiz
     style = payload.get("style")
     if style is not None:
         if style not in sheet_styles.STYLES:

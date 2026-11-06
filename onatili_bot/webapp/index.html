@@ -1337,9 +1337,8 @@ function sheetsModal(t, students) {
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
     <p class="muted small" style="margin:0">${students.length
-      ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul + 1 ta bo'sh titul ro'yxatda yo'qlar uchun.`
-      : "1 ta bo'sh titul."}
-      Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi, skaner kimniki ekanini taniydi.
+      ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul (har biriga bittadan).`
+      : "1 ta bo'sh titul — printerda kerakli sonda nusxa qilib chiqaring. O'quvchi ID'sini o'zi to'ldiradi, skaner kimniki ekanini taniydi."}
       ${milliy ? `<br>📝 Esse qog'ozda emas: o'quvchilar botga kod <b>${t.code}</b> ni kiritib, tituldagi ID'si bilan yozadi.` : ""}</p>
     ${styles.length > 1 ? `<div class="field"><label>Titul ko'rinishi</label>
       <div class="chips" id="styles">${styles.map(([key, name, hint]) => `<button type="button" class="chip ${key === style ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
@@ -1358,7 +1357,7 @@ function sheetsModal(t, students) {
   });
   modal.querySelector("#make").onclick = async () => {
     const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove(); }
+    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: students.length ? 0 : 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove(); }
     catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "📄 PDF'ni chatga yuborish"; }
   };
 }
