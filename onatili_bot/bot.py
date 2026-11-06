@@ -3,7 +3,7 @@ Ona tili test boti — Telegram Mini App uchun "eshik".
 
 Hamma ish ilovada (webapp/index.html): test yaratish, javob berish, natijalar,
 esse baholash. Bot faqat:
-  • /start — salomlashish va ilovani ochish tugmasi («Ochish» menyu tugmasi ham)
+  • /start — salomlashish va ilovani ochish tugmasi («Kirish» menyu tugmasi ham)
   • majburiy obuna (admin bot ichida /admin orqali kanal qo'shadi)
   • xabarnomalar: o'qituvchiga yangi javob, o'quvchiga e'lon qilingan natija, PDF fayllar
   • fonda AI esse tekshiruvi
@@ -58,7 +58,7 @@ AUTO_CONFIRM_ESSAYS = os.getenv("ESSAY_AUTO_CONFIRM", "0") == "1"
 
 dp = Dispatcher()
 dp.message.filter(F.chat.type == "private")
-LINE = "━━━━━━━━━━━━━━━━"
+LINE = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 
 
 # ---------- Yordamchilar ----------
@@ -81,7 +81,7 @@ def app_url(**params) -> str | None:
     return f"{WEBAPP_URL}/app" + (f"?{query}" if query else "")
 
 
-def app_markup(text: str = "📱 Ilovani ochish", **params) -> InlineKeyboardMarkup | None:
+def app_markup(text: str = "✨ Ilovaga kirish", **params) -> InlineKeyboardMarkup | None:
     url = app_url(**params)
     if not url:
         return None
@@ -404,7 +404,7 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
             f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
             f"👤 {esc(name)}{f' · {variant} variant' if len(keys) > 1 else ''} — <b>{summary}</b>\n"
             f"👥 Jami topshirdi: <b>{count}</b> ta",
-            reply_markup=app_markup("📱 Testni ochish", t=test["id"]),
+            reply_markup=app_markup("◈ Testni ochish", t=test["id"]),
         )
     except Exception:
         logger.warning("O'qituvchiga natija haqida xabar yuborilmadi")
@@ -445,14 +445,14 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
                 f"📢 <b>Natijalar e'lon qilindi</b> · {esc(test['title'])}\n{LINE}\n"
                 f"{result_text(attempt, test, rasch.get(attempt['id']), multi_variant)}\n\n"
                 "Har bir savol tahlili, to'g'ri javoblar va natija kartasi — ilovada 👇",
-                reply_markup=app_markup("📱 Natija kartasini ochish", r=attempt["id"]),
+                reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
             )
             sent += 1
         except Exception:
             logger.warning("Qatnashchiga xabar yuborilmadi: %s", attempt["tg_id"])
         await asyncio.sleep(0.05)
     await bot.send_message(owner_chat, f"📨 <b>{esc(test['title'])}</b>: natijalar <b>{sent}</b> ta o'quvchiga yuborildi.",
-                           reply_markup=app_markup("📱 Statistikani ochish", t=test["id"]))
+                           reply_markup=app_markup("◈ Statistika", t=test["id"]))
     await send_pdf(bot, owner_chat, test, "results")
     return sent
 
@@ -468,7 +468,7 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
             attempt["tg_id"],
             f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
             f"💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>",
-            reply_markup=app_markup("📱 Natija kartasi", r=attempt["id"]),
+            reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
         )
     except Exception:
         logger.warning("Esse bali o'quvchiga yuborilmadi")
@@ -620,7 +620,7 @@ async def written_notice(bot: Bot, test: dict) -> None:
         text += f"\n⚠️ {failed} ta titulni AI o'qiy olmadi — ularni qayta skanerlang yoki javobini qo'lda kiriting."
     text += "\nNatijalarni tekshirib, e'lon qilishingiz mumkin."
     try:
-        await bot.send_message(test["owner_id"], text, reply_markup=app_markup("📱 Testni ochish", t=test["id"]))
+        await bot.send_message(test["owner_id"], text, reply_markup=app_markup("◈ Testni ochish", t=test["id"]))
     except Exception:
         logger.warning("Yozma javoblar haqida xabar yuborilmadi")
 
@@ -638,7 +638,7 @@ async def scan_batch_notice(bot: Bot, chat_id: int, test: dict, saved: int, writ
         lines.append(f"⚠️ {failed} tasi yuborilmadi — ilovada qayta «Yuborish»ni bosing")
     attempts = await asyncio.to_thread(db.list_attempts, test["id"])
     lines.append(f"👥 Jami natijalar: <b>{len(attempts)}</b> ta")
-    await bot.send_message(chat_id, "\n".join(lines), reply_markup=app_markup("📱 Testni ochish", t=test["id"]))
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=app_markup("◈ Testni ochish", t=test["id"]))
 
 
 async def grade_one(bot: Bot, essay: dict) -> None:
@@ -663,7 +663,7 @@ async def grade_one(bot: Bot, essay: dict) -> None:
 async def fallback(message: Message, state: FSMContext) -> None:
     await state.clear()
     # Eski pastki tugmalardan biri bosilgan bo'lishi mumkin — tugmalar shu xabar bilan olib tashlanadi
-    await message.answer("📱 Hamma ish ilovada — pastdagi «Ochish» tugmasi yoki quyidagi tugma orqali.",
+    await message.answer("✨ Hamma ish ilovada — pastdagi «Kirish» tugmasi yoki quyidagi tugma orqali.",
                          reply_markup=ReplyKeyboardRemove())
     if app_url():
         await message.answer("👇", reply_markup=app_markup())
@@ -733,8 +733,8 @@ async def main() -> None:
     except Exception:
         logger.warning("Buyruqlar ro'yxatini o'rnatib bo'lmadi", exc_info=True)
     if app_url():
-        try:  # xabar maydoni yonidagi «Ochish» tugmasi — Mini App
-            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Ochish", web_app=WebAppInfo(url=app_url())))
+        try:  # xabar maydoni yonidagi «Kirish» tugmasi — Mini App
+            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Kirish", web_app=WebAppInfo(url=app_url())))
         except Exception:
             logger.warning("Menyu tugmasini o'rnatib bo'lmadi", exc_info=True)
     else:
