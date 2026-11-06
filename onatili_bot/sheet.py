@@ -283,10 +283,11 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
         c.setFillColor(ACCENT)
         c.drawString(LEFT, H - spec["written"][0]["top"] + 18, f"{first.rstrip('ab')}–{last.rstrip('ab')} · yozma javoblar")
         c.setFillColor(INK)
-        c.setFont("Sans", 7.5)
-        c.drawString(LEFT, H - spec["written"][0]["top"] + 7,
-                     "Har katakka bitta BOSH harf (masalan: K I T O B). O' va G' — bitta katakka. "
-                     "So'zlar orasida bitta katak bo'sh. Tinish belgisi ham alohida katakka.")
+        rule = ("Har katakka bitta BOSH harf: K I T O B. O' va G' — bitta katakka, so'zlar orasida "
+                "1 katak bo'sh, tinish belgisi ham alohida katakka.")
+        size = min(7.5, 7.5 * (RIGHT - LEFT) / pdfmetrics.stringWidth(rule, "Sans", 7.5))  # varaqdan chiqmasin
+        c.setFont("Sans", size)
+        c.drawString(LEFT, H - spec["written"][0]["top"] + 7, rule)
         c.setStrokeColor(GRID)
         c.setLineWidth(0.7)
         for box in spec["written"]:
@@ -302,7 +303,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     c.setFont("Sans", 8)
     y = H - spec["bottom"] - 20
     if test["fmt"] == "milliy":
-        c.drawString(LEFT, y, f"45 — Esse esse varaqasiga yoziladi ({ESSAY_MAX} ball). Varaqni bukmang, burchakdagi "
+        c.drawString(LEFT, y, f"45 — esse alohida varaqqa yoziladi ({ESSAY_MAX} ball). Varaqni bukmang, burchakdagi "
                               "qora kvadratlar ustiga yozmang.")
     else:
         c.drawString(LEFT, y, "Varaqni bukmang, burchakdagi qora kvadratlar ustiga yozmang.")
