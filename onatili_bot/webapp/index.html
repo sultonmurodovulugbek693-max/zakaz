@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Ona tili · Test</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="/static/omr.js?v=2"></script>
+<script src="/static/omr.js?v=3"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
@@ -1182,7 +1182,7 @@ function compressImage(file, max = 2000) {
 
 function rosterHTML(d) {
   const vs = d.test.variants;
-  const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${String(s.number).padStart(3, "0")}</span>
+  const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
     <span><b>${esc(s.name)}</b><small>${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
     <span class="row" style="gap:6px">${vs.length > 1 ? `<button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button>` : ""}<button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
   return `<div class="card"><h2>O'quvchilarni qo'shish</h2>
@@ -1193,7 +1193,7 @@ function rosterHTML(d) {
     <button class="btn block" id="add-st">＋ Ro'yxatga qo'shish</button>
     <label class="btn ghost block" for="xlsx">📥 Excel'dan yuklash (.xlsx, .csv)</label>
     <input type="file" id="xlsx" accept=".xlsx,.csv,.txt" hidden>
-    <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida)${vs.length > 1 ? ", variant ustuni ixtiyoriy (A, B, C, D)" : ""}. Har o'quvchiga ID beriladi: 001, 002, …</span></div>
+    <span class="muted small">Excel'da: 1-ustun — F.I.Sh. (yoki Familiya va Ism alohida)${vs.length > 1 ? ", variant ustuni ixtiyoriy (A, B, C, D)" : ""}. Har o'quvchiga ID beriladi: 0001, 0002, …</span></div>
     <div class="list">${rows || `<div class="card empty"><div class="big">🗂</div><b>Ro'yxat ixtiyoriy</b>
       <span>Ro'yxat bo'lsa — har o'quvchiga ismi va ID'si bosilgan shaxsiy titul chiqadi.<br>
       Bo'lmasa — «📄 Titullarni chiqarish»da bo'sh titulni oling va printerda ko'paytiring: o'quvchi ID'sini o'zi bo'yaydi yoki skanerlashda ismini yozasiz.</span></div>`}</div>`;
@@ -1350,7 +1350,7 @@ const scanDB = (() => {
   };
 })();
 
-const pad3 = n => String(n).padStart(3, "0");
+const pad3 = n => String(n).padStart(4, "0");  // o'quvchi ID'si — titulda 4 xonali
 const newUid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
 
 // Titul pastidagi 12 bitli kod → o'quvchi raqami (sheet.py dagi decode_number bilan bir xil); 0 — bo'sh titul
@@ -1375,6 +1375,16 @@ function cropSheet(sheet, area, scale, quality = 0.85) {
     for (let x = 0; x < w; x++, src++, dst += 4) { const v = sheet.warped[src]; px[dst] = px[dst + 1] = px[dst + 2] = v; px[dst + 3] = 255; }
   }
   ctx.putImageData(img, 0, 0);
+  return new Promise(resolve => c.toBlob(b => resolve(b), "image/jpeg", quality));
+}
+
+// Kulrang rasm ({W, H, data}) → JPEG (yozma kataklar va ism katagi — telefon alohida tekislagan)
+function grayJpeg(img, quality = 0.85) {
+  if (!img || img.W < 8 || img.H < 8) return Promise.resolve(null);
+  const c = document.createElement("canvas"); c.width = img.W; c.height = img.H;
+  const ctx = c.getContext("2d"), out = ctx.createImageData(img.W, img.H), px = out.data;
+  for (let i = 0, j = 0; i < img.data.length; i++, j += 4) { px[j] = px[j + 1] = px[j + 2] = img.data[i]; px[j + 3] = 255; }
+  ctx.putImageData(out, 0, 0);
   return new Promise(resolve => c.toBlob(b => resolve(b), "image/jpeg", quality));
 }
 
@@ -1502,45 +1512,72 @@ VIEWS.scan = async ({ id }) => {
     for (let i = 0; i < Math.max(qa.length, qb.length); i++) if (qa[i] !== qb[i]) diff++;
     return diff >= 3;  // bitta-ikkita xira doiracha — o'sha varaqning o'zi
   };
-  const analyze = () => new Promise(resolve => {
-    if (!worker) { try { resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, { edgeMarks: true, layout, page: 1 })); } catch (e) { resolve(null); } return; }
+  // Kadrni o'qish. full=false — faqat burchaklar (tez: varaq qimirlamay turganini bilish uchun);
+  // full=true — butun varaq + ushlanadigan titul uchun yozma kataklar va ism katagi (2 px/pt) rasmi
+  const AREAS = { written: (layout && (layout.written_labels || []).length) ? layout.written_area : null, name: layout && layout.name_area };
+  const analyze = (full = true) => new Promise(resolve => {
+    const options = { edgeMarks: true, layout, page: 1, skipRead: !full, areas: full ? AREAS : null, areaScale: 2 };
+    const direct = () => { try { resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, options)); } catch (e) { resolve(null); } };
+    if (!worker) return direct();
     const w = worker;
     w.onmessage = ({ data }) => resolve(data.error ? null : data);
-    createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: false }, [bitmap]))
-      .catch(() => { stopWorker(); resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, { edgeMarks: true, layout, page: 1 })); });
+    createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: !full, areas: options.areas, areaScale: 2 }, [bitmap]))
+      .catch(() => { stopWorker(); direct(); });
   });
+  // Ikki kadr orasida burchaklar qancha siljigan (kadr uzun tomonining ulushi)
+  const cornerShift = (a, b) => {
+    if (!a || !b || a.corners.length !== b.corners.length) return Infinity;
+    const size = Math.max(a.width, a.height);
+    return Math.max(...a.corners.map((c, i) => Math.hypot(c.x - b.corners[i].x, c.y - b.corners[i].y))) / size;
+  };
+  const STILL = 0.012;  // ~9 px 720 px kadrda — qo'l titrashi; undan ko'pi — varaq qimirlayapti
+  const doubtful = r => r.questions.some(q => q.status === "multiple" || q.status === "unsure") || r.sheet_number_status === "unclear";
 
   let swapSig = null, savedText = "", phase = "titul", queue = [];
   const idleText = () => savedText ? `${savedText} · keyingisini qo'ying` : "Titulni ramkaga to'liq sig'diring";
 
+  // Tez sikl: har kadrda faqat burchaklar (~0,1–0,3 s). Ikki kadr ketma-ket qimirlamasa — bitta to'liq
+  // o'qish va darhol saqlash. Shubhali doiracha bo'lsa — ishonch uchun yana bir marta o'qiladi.
+  // waitSwap — saqlangan varaq hali turibdi: yangisi ustiga qo'yilsa (imzo o'zgarsa) — u ham ushlanadi
   async function startLoop(waitSwap = false) {
     if (!local) return startServerLoop(waitSwap);
     if (phase === "essay") return;  // esse sahifasi kutilmoqda — «Keyingi titul» bosilganda davom etadi
     const my = ++loopToken; S.scanLoop = my;
-    let last = null;
+    let prev = null, confirm = null, movedSinceRead = true, lastReadAt = 0;
     setStatus(idleText(), savedText ? "ok" : "");
     while (my === loopToken && S.camera && document.body.contains(video)) {
       if (!video.videoWidth) { await new Promise(r => setTimeout(r, 200)); continue; }
       const started = performance.now();
-      const a = await analyze();
+      const probe = await analyze(false);
       if (my !== loopToken) return;
-      const corners = a && a.corners;
-      drawQuad(corners ? corners.map(c => [c.x / a.width, c.y / a.height]) : null);
-      if (!corners) { waitSwap = false; last = null; setStatus(idleText(), savedText ? "ok" : ""); }
-      else if (!a.read) { last = null; if (!waitSwap) setStatus("Telefonni qimirlatmang…"); }
+      const corners = probe && probe.corners;
+      drawQuad(corners ? corners.map(c => [c.x / probe.width, c.y / probe.height]) : null);
+      if (!corners) { waitSwap = false; prev = confirm = null; movedSinceRead = true; setStatus(idleText(), savedText ? "ok" : ""); }
       else {
-        const sig = signature(a.read.result);
-        if (waitSwap && !isNewSheet(sig, swapSig)) last = null;  // hali o'sha varaq turibdi
-        else if (sig === last) {  // barqaror — telefonga saqlaymiz
-          swapSig = sig;  // keep() esse rejimiga o'tishi mumkin — u shu titulni «yangi» deb o'ylamasin
-          try { await keep(a); }
-          catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); last = null; continue; }
-          if (my !== loopToken || phase === "essay") return;
-          waitSwap = true; swapSig = sig; last = null;
-        } else { waitSwap = false; last = sig; setStatus("Telefonni qimirlatmang…"); }
+        const still = cornerShift(probe, prev) < STILL;
+        if (!still) { movedSinceRead = true; confirm = null; if (!waitSwap) setStatus("Telefonni qimirlatmang…"); }
+        // Qimirlamayapti: to'liq o'qiymiz (o'sha varaq turgan bo'lsa — ko'pi bilan 1,5 soniyada bir)
+        else if (!waitSwap || movedSinceRead || performance.now() - lastReadAt > 1500) {
+          const a = await analyze(true);
+          if (my !== loopToken) return;
+          movedSinceRead = false; lastReadAt = performance.now();
+          if (a && a.read) {
+            const sig = signature(a.read.result);
+            if (waitSwap && !isNewSheet(sig, swapSig)) confirm = null;  // hali o'sha varaq turibdi
+            else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("Telefonni qimirlatmang…"); }
+            else {
+              swapSig = sig;  // keep() esse rejimiga o'tishi mumkin — u shu titulni «yangi» deb o'ylamasin
+              try { await keep(a); }
+              catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); confirm = null; continue; }
+              if (my !== loopToken || phase === "essay") return;
+              waitSwap = true; confirm = null;
+            }
+          }
+        }
       }
-      // Telefon qizib ketmasin: o'qish vaqtining bir qismicha dam (titul tez ushlanishi uchun qisqa)
-      await new Promise(r => setTimeout(r, Math.max(30, (performance.now() - started) * 0.35)));
+      prev = probe && probe.corners ? probe : null;
+      // Telefon qizib ketmasin: kadr vaqtining bir qismicha dam (titul tez ushlanishi uchun qisqa)
+      await new Promise(r => setTimeout(r, Math.max(30, (performance.now() - started) * 0.3)));
     }
   }
 
@@ -1554,9 +1591,10 @@ VIEWS.scan = async ({ id }) => {
     if (number && !student) idSource = "unknown";
     const variant = res.variant || (student && student.variant) || (t.variants.length === 1 ? t.variants[0] : null);
     const needWritten = (layout.written_labels || []).length > 0;
+    const crops = a.crops || {};
     const [written, name] = await Promise.all([
-      needWritten ? cropSheet(a.read.sheet, layout.written_area, READ_SCALE) : null,
-      student ? null : cropSheet(a.read.sheet, layout.name_area, READ_SCALE, 0.8),
+      needWritten ? (crops.written ? grayJpeg(crops.written) : cropSheet(a.read.sheet, layout.written_area, READ_SCALE)) : null,
+      student ? null : (crops.name ? grayJpeg(crops.name, 0.8) : cropSheet(a.read.sheet, layout.name_area, READ_SCALE, 0.8)),
     ]);
     const rec = {
       uid: newUid(), testId: testKey, created: Date.now(), payload: null, written, name, essays: [], error: null,
@@ -1827,10 +1865,10 @@ function showReview(r, d, allItems, box, onNext, local = null) {
   const taken = new Set(r.taken || []);  // oflayn skaner: telefonda boshqa titulga biriktirilgan o'quvchilar
   const free = d.students.filter(s => !s.scanned && !taken.has(s.id));
   const who = r.student
-    ? `<div class="row between"><span><b>№ ${String(r.student.number).padStart(3, "0")} · ${esc(r.student.name)}</b><br><small class="muted">${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
+    ? `<div class="row between"><span><b>№ ${pad3(r.student.number)} · ${esc(r.student.name)}</b><br><small class="muted">${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
        ${r.student.scanned ? `<span class="pill-tag wait">⚠️ Avval skanerlangan — saqlasangiz almashtiriladi</span>` : ""}`
     : `${r.name_image ? `<img src="${r.name_image}" alt="Ism katagi" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
-       <span class="muted small">${r.id_source === "unknown" ? `⚠️ ID ${String(r.id_read).padStart(3, "0")} o'qildi, lekin ro'yxatda bunday o'quvchi yo'q — tanlang yoki ismini yozing`
+       <span class="muted small">${r.id_source === "unknown" ? `⚠️ ID ${pad3(r.id_read)} o'qildi, lekin ro'yxatda bunday o'quvchi yo'q — tanlang yoki ismini yozing`
          : r.id_status === "unclear" ? "⚠️ ID doirachalari noaniq bo'yalgan — o'quvchini tanlang"
          : r.code_status === "blank" ? "Bo'sh titul, ID bo'yalmagan — o'quvchini tanlang yoki ismini yozing" : "Titul kodi o'qilmadi — o'quvchini tanlang"}</span>
        ${free.length ? `<select class="input" id="pick"><option value="">— Ro'yxatdan tanlang —</option>${free.map(s => `<option value="${s.id}">№ ${s.number} · ${esc(s.name)}</option>`).join("")}</select>` : ""}

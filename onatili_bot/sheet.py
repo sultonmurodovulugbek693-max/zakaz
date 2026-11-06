@@ -33,17 +33,20 @@ LEFT, RIGHT = 58, W - 58
 BUBBLE_R = 6.2
 LETTER_STEP = 17.5
 ROW_STEP = 18.5
-QUESTIONS_TOP = 240     # birinchi savol qatori markazi (tepadan)
+QUESTIONS_TOP = 320     # birinchi savol qatori markazi (tepadan)
 VARIANT_TOP = 132
-# O'quvchi ID'si: 3 qator (yuzlik, o'nlik, birlik) × 0–9 doiracha. Shaxsiy titulda oldindan bo'yalgan,
-# bo'sh titulda o'quvchi o'zi bo'yaydi — skaner varaq kimniki ekanini shundan ham taniydi
-ID_TOP, ID_ROW, ID_X0, ID_STEP, ID_R = 166, 15.5, 142, 18, 5.6
-ID_ROWS = ("Yuzlik", "O'nlik", "Birlik")
-MAX_STUDENTS = 999
+# O'quvchi ID'si (imtihon blankalaridagidek): tepada 4 ta katak — raqam yoziladi, ostida 4 ta tik ustun,
+# har ustunda 0–9 doirachalar — har ustunda bittasi bo'yaladi. Shaxsiy titulda oldindan bo'yalgan,
+# bo'sh titulda o'quvchi o'zi to'ldiradi — skaner varaq kimniki ekanini shundan ham taniydi
+ID_DIGITS = 4
+ID_BOX_TOP, ID_BOX = 146, 16          # raqam yoziladigan kataklar (tepasi, o'lchami)
+ID_TOP, ID_ROW = 174, 11.5            # 0-qator doirachalari markazi, qatorlar orasi
+ID_X0, ID_STEP, ID_R = 88, 20, 4.7    # 1-ustun markazi, ustunlar orasi, doiracha radiusi
+MAX_STUDENTS = 2047                   # titul pastidagi kod 11 bit
 BLOCK_ROWS = 5          # savollar 5 tadan blok; blok burchaklarida qora kvadratcha
 ANCHOR_SIZE = 6
 NAME_AREA = (100, 86, 392, 110)  # ism katagi (tepadan) — skanerda rasm qilib ko'rsatiladi
-WRITTEN_CELL_W, WRITTEN_CELL_H, WRITTEN_LABEL_W = 14.5, 22, 30  # yozma javobning harf kataklari
+WRITTEN_CELL_W, WRITTEN_CELL_H, WRITTEN_LABEL_W = 14.5, 21, 30  # yozma javobning harf kataklari
 
 INK = colors.HexColor("#1f2933")
 ACCENT = colors.HexColor("#1d6f42")
@@ -99,10 +102,10 @@ def layout(test: dict, variant_names: list[str]) -> dict:
         bubbles.append({"page": 1, "kind": "variant", "ref": "variant", "letter": name, "label": "variant",
                         "x": 142 + index * 32, "y": H - VARIANT_TOP, "r": 7})
 
-    for row in range(len(ID_ROWS)):
+    for column in range(ID_DIGITS):  # ref id0 — eng chap raqam (skaner ref tartibida o'qiydi)
         for digit in range(10):
-            bubbles.append({"page": 1, "kind": "id", "ref": f"id{row}", "label": "id", "letter": str(digit),
-                            "x": ID_X0 + digit * ID_STEP, "y": H - (ID_TOP + row * ID_ROW), "r": ID_R})
+            bubbles.append({"page": 1, "kind": "id", "ref": f"id{column}", "label": "id", "letter": str(digit),
+                            "x": ID_X0 + column * ID_STEP, "y": H - (ID_TOP + digit * ID_ROW), "r": ID_R})
 
     choices = choice_items(test["items"])
     columns, rows = _choice_grid(len(choices))
@@ -144,7 +147,7 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     written_top = choices_bottom + 34
     if texts:
         text_rows = math.ceil(len(texts) / 2)
-        box_h, box_gap = WRITTEN_CELL_H, 6
+        box_h, box_gap = WRITTEN_CELL_H, 5
         half = (RIGHT - LEFT - 12) / 2
         cells = int((half - WRITTEN_LABEL_W) // WRITTEN_CELL_W)
         for index, item in enumerate(texts):
@@ -198,38 +201,44 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     if student and student.get("name"):
         c.setFont("Sans-Bold", 12)
         c.drawString(x1 + 6, H - bottom + 8, student["name"][:40])
-    c.setFont("Sans-Bold", 11 if student else 9.5)
-    c.drawString(410, H - 104, f"ID: {student['number']:03d}" if student else "ID: ______")
+    if student:
+        c.setFont("Sans-Bold", 11)
+        c.drawString(410, H - 104, f"ID: {student['number']:0{ID_DIGITS}d}")
 
-    # ID doirachalari (yuzlik / o'nlik / birlik)
-    digits = f"{student['number']:03d}" if student else None
-    c.setFont("Sans-Bold", 9.5)
+    # ID: tepada raqam kataklari, ostida har raqam uchun 0–9 ustuni
+    digits = f"{student['number']:0{ID_DIGITS}d}" if student else None
     c.setFillColor(INK)
-    c.drawString(LEFT, H - ID_TOP - 3, "ID:")
+    c.setFont("Sans-Bold", 9.5)
+    c.drawString(LEFT, H - ID_BOX_TOP - ID_BOX / 2 - 3.5, "ID")
+    c.setStrokeColor(INK)
+    c.setLineWidth(0.8)
+    for column in range(ID_DIGITS):
+        x = ID_X0 + column * ID_STEP
+        c.rect(x - ID_BOX / 2, H - ID_BOX_TOP - ID_BOX, ID_BOX, ID_BOX, stroke=1, fill=0)
+        if digits:
+            c.setFont("Sans-Bold", 11)
+            c.drawCentredString(x, H - ID_BOX_TOP - ID_BOX + 4, digits[column])
     c.setFillColor(GRID)
     c.setFont("Sans-Bold", 6.5)
-    for digit in range(10):
-        c.drawCentredString(ID_X0 + digit * ID_STEP, H - ID_TOP + 9, str(digit))
+    for digit in range(10):  # chap tomonda raqamlar — qaysi qator qaysi raqam
+        c.drawRightString(ID_X0 - ID_R - 4, H - (ID_TOP + digit * ID_ROW) - 2.3, str(digit))
     for bubble in spec["bubbles"]:
         if bubble["kind"] != "id":
             continue
-        row = int(bubble["ref"][2:])
-        if bubble["letter"] == "0":
-            c.setFillColor(GRID)
-            c.setFont("Sans", 6.5)
-            c.drawRightString(ID_X0 - 10, bubble["y"] - 2.3, ID_ROWS[row])
-        filled = bool(digits) and digits[row] == bubble["letter"]
+        column = int(bubble["ref"][2:])
+        filled = bool(digits) and digits[column] == bubble["letter"]
         _bubble(c, bubble["x"], bubble["y"], bubble["r"], "", filled)
     c.setFillColor(INK)
-    c.setFont("Sans", 8)
-    help_x = ID_X0 + 10 * ID_STEP + 10
-    if student:
-        c.drawString(help_x, H - ID_TOP - 3, "ID'ingiz oldindan belgilangan —")
-        c.drawString(help_x, H - ID_TOP - ID_ROW - 3, "bu doirachalarga tegmang.")
-    else:
-        c.drawString(help_x, H - ID_TOP - 3, "O'qituvchi bergan ID'ni bo'yang,")
-        c.drawString(help_x, H - ID_TOP - ID_ROW - 3, "masalan 007: yuzlik 0, o'nlik 0,")
-        c.drawString(help_x, H - ID_TOP - 2 * ID_ROW - 3, "birlik 7.")
+    help_x = ID_X0 + ID_DIGITS * ID_STEP + 8
+    lines = (["ID'ingiz oldindan yozilgan va bo'yalgan —", "bu kataklarga tegmang."] if student else
+             ["O'qituvchi bergan ID'ni to'ldiring:",
+              "1. Tepadagi 4 ta katakka raqamni yozing.",
+              "2. Har ustunda shu raqamning doirachasini bo'yang.",
+              "Masalan, ID 0007: birinchi uchta ustunda 0 ni,",
+              "to'rtinchi ustunda 7 ni bo'yaysiz."])
+    for index, line in enumerate(lines):
+        c.setFont("Sans-Bold" if index == 0 else "Sans", 8)
+        c.drawString(help_x, H - ID_BOX_TOP - 10 - index * 13, line)
 
     # Variant
     c.drawString(LEFT, H - VARIANT_TOP - 3, "Variant:")

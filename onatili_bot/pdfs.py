@@ -91,7 +91,7 @@ def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: floa
     c.drawRightString(width - margin, y, f"Test kodi: {test['code']}")
     if student:
         c.setFont("Sans-Bold", 11)
-        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  ID {student['number']:03d}")
+        c.drawString(margin + 19 * mm, y + 1, f"{student.get('name', '')[:40]}  ·  ID {student['number']:04d}")
         c.setFont("Sans-Bold", 10)
     y -= 7 * mm
     topic = (test.get("essay_topic") or "").strip()

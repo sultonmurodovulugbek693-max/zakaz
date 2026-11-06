@@ -12,7 +12,7 @@ const A4_SHEET_PAGE = {
   edgeMarks: 10,
   edgeMarkSize: 8,
   nameBox: true,
-  readScale: 2,
+  readScale: 1.5,  // 1 punkt = 1,5 piksel: aniqlik o'sha (sinovda farq yo'q), o'qish ~30% tez
 };
 // Skanerlanayotgan titul o'lchami: ixcham titul (6-versiya) A4 ning 1/3, 1/2 qismi yoki to'liq A4 —
 // /scan/layout dagi sheet_page bo'yicha; eski titullar — A4
@@ -384,6 +384,47 @@ function refineCorner(gray, width, height, x, y, radius) {
     }
   }
   return count ? { x: sumX / count, y: sumY / count } : { x, y };
+}
+
+// Varaqning bir qismini (punktlarda, tepadan: [x1, y1, x2, y2]) alohida, yuqoriroq sifatda tekislash —
+// AI o'qiydigan yozma kataklar uchun (butun varaq esa tezlik uchun kichikroq masshtabda o'qiladi)
+function warpArea(gray, width, height, corners, area, scale) {
+  const page = SHEET_PAGE;
+  const pageCorners = [
+    [page.corner, page.corner],
+    [page.width - page.corner, page.corner],
+    [page.width - page.corner, page.height - page.corner],
+    [page.corner, page.height - page.corner],
+  ].map(([x, y]) => [x * scale, y * scale]);
+  const h = perspectiveMatrix(pageCorners, corners.map((corner) => [corner.x, corner.y]));
+  if (!h || !area) return null;
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+  const [x1, y1, x2, y2] = area.map((value) => Math.round(value * scale));
+  const W = Math.max(1, x2 - x1);
+  const H = Math.max(1, y2 - y1);
+  const data = new Uint8ClampedArray(W * H);
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < W; x += 1) {
+      const px = x + x1;
+      const py = y + y1;
+      const w = h6 * px + h7 * py + 1;
+      const u = (h0 * px + h1 * py + h2) / w;
+      const v = (h3 * px + h4 * py + h5) / w;
+      const u0 = Math.floor(u);
+      const v0 = Math.floor(v);
+      if (u0 < 0 || v0 < 0 || u0 >= width - 1 || v0 >= height - 1) {
+        data[y * W + x] = 255;
+        continue;
+      }
+      const fx = u - u0;
+      const fy = v - v0;
+      const i = v0 * width + u0;
+      const top = gray[i] + (gray[i + 1] - gray[i]) * fx;
+      const bottom = gray[i + width] + (gray[i + width + 1] - gray[i + width]) * fx;
+      data[y * W + x] = top + (bottom - top) * fy;
+    }
+  }
+  return { W, H, data };
 }
 
 // Tekislangan varaq: qora-oq (1 — qora) va kulrang nusxa; bir kadr uchun bir marta tayyorlanadi
@@ -898,6 +939,13 @@ function analyzeFrame(source, sourceWidth, sourceHeight, options) {
   }
   // Natija ekraniga faqat tekislangan kulrang varaq kerak
   answer.read = { result, sheet: { W: sheet.W, H: sheet.H, warped: sheet.warped } };
+  // areas — {nomi: [x1, y1, x2, y2]}: ushlangan titulning yozma kataklari va ism katagi (2 px/pt)
+  if (options.areas) {
+    answer.crops = {};
+    for (const [name, area] of Object.entries(options.areas)) {
+      if (area) answer.crops[name] = warpArea(gray, fullWidth, fullHeight, full, area, options.areaScale || 2);
+    }
+  }
   return answer;
 }
 
@@ -918,6 +966,7 @@ function createScanWorker() {
       findSheetCorners,
       cornersFromEdgeMarks,
       refineCorner,
+      warpArea,
       prepareSheetFrame,
       slidingMaxBox,
       slidingMax2D,
@@ -941,15 +990,17 @@ function createScanWorker() {
         READ_SCALE = SHEET_PAGE.readScale || 2;
         return;
       }
-      const { bitmap, edgeMarks, skipRead } = data;
+      const { bitmap, edgeMarks, skipRead, areas, areaScale } = data;
       let answer;
       try {
-        answer = analyzeFrame(bitmap, bitmap.width, bitmap.height, { edgeMarks, skipRead, layout, page });
+        answer = analyzeFrame(bitmap, bitmap.width, bitmap.height, { edgeMarks, skipRead, layout, page, areas, areaScale });
       } catch (error) {
         answer = { error: String(error) };
       }
       bitmap.close();
-      postMessage(answer, answer.read ? [answer.read.sheet.warped.buffer] : []);
+      const transfer = answer.read ? [answer.read.sheet.warped.buffer] : [];
+      for (const crop of Object.values(answer.crops || {})) if (crop) transfer.push(crop.data.buffer);
+      postMessage(answer, transfer);
     };`,
   ].join("\n");
   try {
