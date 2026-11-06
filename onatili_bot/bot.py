@@ -386,7 +386,7 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     except db.IntegrityError:  # shu test uchun javob allaqachon bor (SQLite ham, PostgreSQL ham)
         return None
     if test["fmt"] == "milliy":
-        status = ("pending" if essay_ai.enabled() else "manual") if (essay_text or photos) else "none"
+        status = ("pending" if essay_ai.essay_enabled() else "manual") if (essay_text or photos) else "none"
         await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
         if essay_cost:
             await asyncio.to_thread(db.add_essay_cost, attempt["id"], essay_cost)
@@ -492,10 +492,12 @@ async def essay_worker(bot: Bot) -> None:
     AI navbati: avval skanerlangan titullarning yozma javoblari (tez, kichik rasm), keyin esselar.
     Xato bo'lsa — keyinroq qayta urinadi, hech narsa yo'qolmaydi.
     """
-    if not essay_ai.enabled():
-        logger.info("AI esse tekshiruvi o'chiq (AI_PROVIDER=%s)", essay_ai.AI_PROVIDER)
+    if not essay_ai.enabled() and not essay_ai.essay_enabled():
+        logger.info("AI o'chiq (AI_PROVIDER=%s, ESSAY_PROVIDER=%s)", essay_ai.AI_PROVIDER, essay_ai.ESSAY_PROVIDER)
         return
-    logger.info("AI esse tekshiruvi yoqildi: %s", essay_ai.provider_name())
+    logger.info("AI yoqildi: yozma javoblar — %s, esse — %s",
+                essay_ai.provider_name() if essay_ai.enabled() else "o'chiq",
+                essay_ai.essay_provider_name() if essay_ai.essay_enabled() else "o'chiq")
     delay, purged_at, down_since, alerted = 10, 0.0, None, False
     while True:
         try:
@@ -503,7 +505,7 @@ async def essay_worker(bot: Bot) -> None:
                 purged_at = time.time()
                 if removed := await asyncio.to_thread(db.purge_written_images):
                     logger.info("Eski yozma kataklar rasmlari o'chirildi: %s ta", removed)
-            jobs = await asyncio.to_thread(db.pending_written, 40)
+            jobs = await asyncio.to_thread(db.pending_written, 40) if essay_ai.enabled() else []
             groups: dict[int, list[dict]] = {}
             for job in jobs:  # bitta testning titullari — bitta so'rovda (WRITTEN_BATCH tadan)
                 groups.setdefault(job["test_id"], []).append(job)
@@ -514,7 +516,7 @@ async def essay_worker(bot: Bot) -> None:
             if jobs:  # navbatda yana titul bo'lishi mumkin — esselardan oldin shularni tugatamiz
                 delay = 10
                 continue
-            for essay in await asyncio.to_thread(db.pending_essays, 5):
+            for essay in (await asyncio.to_thread(db.pending_essays, 5) if essay_ai.essay_enabled() else []):
                 await grade_one(bot, essay)
                 await asyncio.sleep(2)
             delay, down_since, alerted = 10, None, False

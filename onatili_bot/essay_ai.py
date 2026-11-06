@@ -1,10 +1,13 @@
 """
 Esseni AI bilan baholash (45-savol, 0–24 ball).
 
-Ikki xizmat qo'llab-quvvatlanadi, .env dagi AI_PROVIDER bilan tanlanadi:
+Ikki xizmat qo'llab-quvvatlanadi:
   gemini — Google Gemini API (bepul tarifi bor; GEMINI_API_KEY)
   claude — Anthropic Claude API (pullik; ANTHROPIC_API_KEY)
   off    — AI o'chirilgan, esseni o'qituvchi o'zi baholaydi
+
+AI_PROVIDER — titulning yozma javoblarini o'qish (ko'p va arzon so'rov — bepul Gemini yetadi).
+ESSAY_PROVIDER — esseni baholash (bo'sh bo'lsa — AI_PROVIDER). Sifat muhim bo'lsa: ESSAY_PROVIDER=claude.
 
 MEZONLAR — UZBMB rasmiy namunaviy testidagi esse talablari asosida tuzilgan
 (12 mezon × 0–2 ball = 24). Rasmiy baholash mezonlari olinsa, faqat RUBRIC
@@ -28,10 +31,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-flash-latest"
 # Asosiy model band yoki limitda bo'lsa — navbat bilan shular (vergul bilan bir nechta)
 GEMINI_FALLBACK = [m.strip() for m in (os.getenv("GEMINI_FALLBACK") or "gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",") if m.strip()]
+ESSAY_PROVIDER = (os.getenv("ESSAY_PROVIDER") or AI_PROVIDER).strip().lower()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-opus-5-5"
-# Claude Opus 5.5 narxi: 1 mln token — o'qish $4, yozish $20 (thinking ham yozish hisobida)
-CLAUDE_PRICE_IN, CLAUDE_PRICE_OUT = 4.0, 20.0
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-sonnet-5-5"
+# Narx: 1 mln token uchun $ (o'qish, yozish); thinking ham yozish hisobida. Sarfni ko'rsatish uchun
+CLAUDE_PRICES = {"claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0), "claude-haiku-5-5": (0.10, 0.50)}
 
 ESSAY_MAX = 24
 
@@ -115,6 +119,13 @@ RESULT_SCHEMA = {
 }
 
 
+RESULT_SCHEMA_TEXT = {
+    **RESULT_SCHEMA,
+    "properties": {k: v for k, v in RESULT_SCHEMA["properties"].items() if k != "transcription"},
+    "required": [k for k in RESULT_SCHEMA["required"] if k != "transcription"],
+}
+
+
 class AIError(Exception):
     """Baholash bajarilmadi. retry=True — keyinroq qayta urinish mumkin (limit, tarmoq)."""
 
@@ -123,16 +134,30 @@ class AIError(Exception):
         self.retry = retry
 
 
-def enabled() -> bool:
-    if AI_PROVIDER == "gemini":
+def _ready(provider: str) -> bool:
+    if provider == "gemini":
         return bool(GEMINI_API_KEY)
-    if AI_PROVIDER == "claude":
+    if provider == "claude":
         return bool(ANTHROPIC_API_KEY)
     return False
 
 
-def provider_name() -> str:
-    return {"gemini": "Gemini", "claude": "Claude"}.get(AI_PROVIDER, "—")
+def enabled() -> bool:
+    """Titulning yozma javoblarini AI o'qiydimi."""
+    return _ready(AI_PROVIDER)
+
+
+def essay_enabled() -> bool:
+    """Esseni AI baholaydimi."""
+    return _ready(ESSAY_PROVIDER)
+
+
+def provider_name(provider: str | None = None) -> str:
+    return {"gemini": "Gemini", "claude": "Claude"}.get(provider or AI_PROVIDER, "—")
+
+
+def essay_provider_name() -> str:
+    return provider_name(ESSAY_PROVIDER)
 
 
 def _user_text(topic: str, essay_text: str | None) -> str:
@@ -225,7 +250,8 @@ async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schem
 
 # ---------- Claude (rasmiy anthropic SDK) ----------
 
-async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None) -> tuple[str, dict]:
+async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
+                  effort: str = "medium") -> tuple[str, dict]:
     import anthropic
 
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
@@ -238,7 +264,7 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
         "max_tokens": 16000,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": content}],
-        "output_config": {"effort": "medium", **({"format": {"type": "json_schema", "schema": schema}} if schema else {})},
+        "output_config": {"effort": effort, **({"format": {"type": "json_schema", "schema": schema}} if schema else {})},
         # Xavfsizlik filtri rad etsa, so'rov boshqa modelda avtomatik qayta bajariladi
         "betas": ["server-side-fallback-2026-07-01"],
         "fallbacks": "default",
@@ -265,26 +291,34 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
     usage = response.usage
     tokens_in = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25 \
         + (getattr(usage, "cache_read_input_tokens", 0) or 0) * 0.1
-    cost = tokens_in * CLAUDE_PRICE_IN / 1e6 + (usage.output_tokens or 0) * CLAUDE_PRICE_OUT / 1e6
+    price_in, price_out = CLAUDE_PRICES.get(CLAUDE_MODEL, CLAUDE_PRICES["claude-opus-5-5"])
+    cost = tokens_in * price_in / 1e6 + (usage.output_tokens or 0) * price_out / 1e6
     return out, {"in": usage.input_tokens, "out": usage.output_tokens, "cost": round(cost, 5)}
 
 
-async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None) -> tuple[str, dict]:
-    if not enabled():
-        raise AIError("AI sozlanmagan (AI_PROVIDER va API kalit)", retry=False)
-    if AI_PROVIDER == "claude":
-        return await _claude(system, text, images, schema)
+async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
+                provider: str | None = None, effort: str = "medium") -> tuple[str, dict]:
+    provider = provider or AI_PROVIDER
+    if not _ready(provider):
+        raise AIError("AI sozlanmagan (AI_PROVIDER / ESSAY_PROVIDER va API kalit)", retry=False)
+    if provider == "claude":
+        return await _claude(system, text, images, schema, effort)
     return await _gemini(system, text, images, schema)
 
 
 async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, str]] | None = None) -> dict:
     """Esseni baholaydi: {"score", "criteria", "comment", "outline", "transcription", "cost", "provider"}."""
-    out, usage = await _call(SYSTEM_PROMPT, _user_text(topic, essay_text), images or [], RESULT_SCHEMA)
+    # Esse — ESSAY_PROVIDER'da, chuqurroq tahlil bilan (effort "high"); matnli esse qayta ko'chirilmaydi
+    schema = RESULT_SCHEMA_TEXT if essay_text else RESULT_SCHEMA
+    out, usage = await _call(SYSTEM_PROMPT, _user_text(topic, essay_text), images or [], schema,
+                             provider=ESSAY_PROVIDER, effort="high")
     try:
         result = finalize(json.loads(out))
     except (json.JSONDecodeError, ValueError, TypeError) as error:
         raise AIError(f"AI javobini o'qib bo'lmadi: {out[:200]}", retry=True) from error
-    result.update(cost=usage["cost"], provider=provider_name())
+    if essay_text and not result["transcription"]:
+        result["transcription"] = essay_text.strip()
+    result.update(cost=usage["cost"], provider=essay_provider_name())
     return result
 
 

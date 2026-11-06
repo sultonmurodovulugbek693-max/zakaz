@@ -161,7 +161,7 @@ async def bootstrap(request: web.Request) -> web.Response:
             "announced": bool(a["closed"]), "created_at": a["created_at"], "theme": a["theme"] or "classic",
         } for a in attempts],
         "tests": teacher_tests,
-        "ai": essay_ai.enabled(),
+        "ai": essay_ai.essay_enabled(),
         "themes": THEMES,
     })
 
@@ -231,7 +231,7 @@ async def test_info(request: web.Request) -> web.Response:
         mine = await run(db.offline_essay_of_user, test["id"], user["id"])
         return ok({
             "code": test["code"], "title": test["title"], "fmt": test["fmt"], "mode": "offline",
-            "closed": bool(test["closed"]), "essay_topic": test.get("essay_topic"), "ai": essay_ai.enabled(),
+            "closed": bool(test["closed"]), "essay_topic": test.get("essay_topic"), "ai": essay_ai.essay_enabled(),
             "last_name": await run(db.last_name_used, user["id"]),
             "essay_sent": {"number": mine["number"], "words": len(mine["text"].split()), "name": mine["name"]} if mine else None,
         })
@@ -244,7 +244,7 @@ async def test_info(request: web.Request) -> web.Response:
         "format": format_title(test["fmt"], test["count"]), "items": public_items(test),
         "variants": list(keys), "closed": bool(test["closed"]), "theme": test.get("theme") or "classic",
         "essay_topic": test.get("essay_topic"), "submitted": previous["id"] if previous else None,
-        "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.enabled(),
+        "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
     })
 
 
@@ -495,7 +495,7 @@ async def teacher_test(request: web.Request) -> web.Response:
         "students": [student_view(s) for s in await run(db.list_students, test["id"])],
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
-        "ai": essay_ai.enabled(), "ai_provider": essay_ai.provider_name(),
+        "ai": essay_ai.essay_enabled(), "ai_provider": essay_ai.essay_provider_name(),
         "waiting_essays": await run(db.waiting_offline_essays, test["id"])
         if test["fmt"] == "milliy" and test.get("mode") == "offline" else 0,
     })
@@ -958,7 +958,7 @@ async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
     essay = await run(db.get_offline_essay, test["id"], number)
     if not essay:
         return False
-    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if essay_ai.enabled() else "manual")
+    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if essay_ai.essay_enabled() else "manual")
     return True
 
 
@@ -1028,7 +1028,7 @@ async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]
         page = f" · {index}-bet" if len(pages) > 1 else ""
         file_ids.append(await HOOKS["store_photo"](user["id"], data,
                                                    f"📝 Esse · {attempt['student_name']}{page} · {test['title']}"))
-    status = "pending" if essay_ai.enabled() else "manual"
+    status = "pending" if essay_ai.essay_enabled() else "manual"
     if not await run(db.get_essay, attempt["id"]):
         await run(db.create_essay, attempt["id"], None, file_ids, status)
     else:
