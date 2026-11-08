@@ -1015,7 +1015,6 @@ VIEWS.create = async () => {
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
     <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
-    <div class="card"><div class="field"><label for="quick">Tez kiritish</label><div class="row"><input class="input" id="quick" placeholder="abcdabcd… yoki 1a2b3c…" autocomplete="off"><button class="btn sm ghost" id="apply">To'ldirish</button></div></div></div>
     ${bubbleSheet(items, key)}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">ma'nodosh — ixtiyoriy</span></div>
       <div class="card">${texts.map(i => {
@@ -1059,13 +1058,6 @@ VIEWS.create = async () => {
   document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; haptic("select"); rerender(); });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
   bindChannelEditor(st.channels, async () => {});  // yaratishda serverga saqlash «Saqlash» bosilganda
-  document.getElementById("apply").onclick = () => {
-    const raw = document.getElementById("quick").value.toLowerCase().replace(/\s/g, "").replace(/[абвсдеф]/g, c => ({ "а": "a", "б": "b", "в": "b", "с": "c", "д": "d", "е": "e", "ф": "f" }[c]));
-    const ch = items.filter(i => i.kind === "choice");
-    if (/\d/.test(raw)) { (raw.match(/(\d+)([a-f])/g) || []).forEach(p => { const m = p.match(/(\d+)([a-f])/); key[m[1]] = m[2].toUpperCase(); }); }
-    else { raw.split("").forEach((c, i) => { if (ch[i] && "abcdef".slice(0, ch[i].options).includes(c)) key[ch[i].label] = c.toUpperCase(); }); }
-    collect(); haptic("success"); rerender();
-  };
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
