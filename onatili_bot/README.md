@@ -20,7 +20,7 @@ yozma javoblar va esseni AI tekshiradi.
 - **Natijani tuzatish**: «👥 Natijalar»da o'quvchini bosing — javoblari, kalit bilan solishtiruv,
   AI o'qigan yozma kataklar rasmi. Tuzatilsa, ball va Rasch qayta hisoblanadi.
 - **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
-- **Oflayn kursga ro'yxat**: `/start` dagi tugma — ilovaning alohida ekrani, ariza adminga boradi.
+- **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.
 
 ## Titul va skaner
 - **Sinflar** («👥 Sinflarim»): o'qituvchi sinf yaratadi, o'quvchilarni yozib yoki Excel'dan qo'shadi —
@@ -80,13 +80,17 @@ Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va
   o'qituvchining o'ziga (qo'lda) qoladi.
 
 ## Oflayn kursga ro'yxatdan o'tish
-Oflayn «Ona tili» kursiga yozilmoqchi bo'lganlar uchun — bot ichidagi qisqa ariza.
-- O'quvchi botga `/start` (yoki `/royxat`) yozadi → «📝 Ro'yxatdan o'tish» tugmasi → ilovaning **alohida
-  ekrani** ochiladi: ism-familiya, telefon raqam, yosh, yashash joyi (ixtiyoriy).
-- Ariza **barcha adminlarga** Telegram orqali boradi (username yoki ID bilan) — keyingi muloqot admin va
-  o'quvchi orasida, botdan tashqarida davom etadi.
-- Bitta foydalanuvchi — bitta ariza: qaytadan yuborsa, eskisi yangilanadi va adminga «yangilandi» deb keladi.
-- Admin `/arizalar` bilan butun ro'yxatni ko'radi.
+Oflayn «Ona tili» kursi uchun — bot ichidagi qisqa ariza. `/start` (yoki `/royxat`) → «📝 Ro'yxatdan
+o'tish» tugmasi → ilovaning **alohida ekrani**. Avval kim ekanligi so'raladi:
+- **👩‍🏫 O'qituvchi**: ism, familiya, telefon va **dars beradigan tuman(lar)** — bir nechta bo'lsa hammasi.
+  Shu bilan o'ziga «joy ochadi»: o'sha tumanlardagi o'quvchilarning arizasi to'g'ridan-to'g'ri unga keladi.
+- **🧑‍🎓 O'quvchi**: ism, familiya, telefon, yosh va **yashash joyi** — viloyat → tuman ro'yxatdan tanlanadi
+  (qidiruv bor; kurs bor tumanlar «kurs bor» deb belgilanadi).
+- Ariza **o'sha tumandagi o'qituvchilarga** va barcha adminlarga boradi — keyingi muloqot ular orasida,
+  botdan tashqarida davom etadi. Tumanda o'qituvchi bo'lmasa, ariza faqat adminlarga boradi.
+- Viloyat va tumanlar ro'yxati — `places.py` (14 viloyat, 200+ tuman; nom o'zgarsa shu yerda tahrirlanadi).
+- Bitta foydalanuvchi — bitta ariza: qaytadan yuborsa, eskisi yangilanadi (o'qituvchining joylari ham
+  shu ro'yxat bilan almashtiriladi). Admin `/arizalar` bilan hammasini ko'radi.
 
 ## Xizmat ishlari (o'zi bajariladi)
 - **Uyg'oq tutish**: Render'ning bepul tarifida server 15 daqiqa so'rovsiz qolsa uxlaydi va bot javob

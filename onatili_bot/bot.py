@@ -42,6 +42,7 @@ import db
 import excel
 import essay_ai
 import ops
+import places as places_data
 import plans
 import pdfs
 import sheet
@@ -125,8 +126,11 @@ async def send_register_prompt(message: Message) -> None:
     await message.answer(
         ("✅ <b>Siz ro'yxatdan o'tgansiz</b>\nMa'lumotlaringizni o'zgartirmoqchi bo'lsangiz — tugmani bosing 👇"
          if registered else
-         "📝 <b>Oflayn «Ona tili» kursiga ro'yxatdan o'tish</b>\n"
-         "Ism-familiya, telefon raqam, yosh va yashash joyingizni qoldiring — biz siz bilan bog'lanamiz 👇"),
+         "📝 <b>Oflayn «Ona tili» kursi</b>\n"
+         "Avval kim ekanligingizni tanlaysiz:\n"
+         "🧑‍🎓 <b>O'quvchi</b> — yashash joyingizni (viloyat, tuman) tanlaysiz, arizangiz o'sha tumandagi "
+         "o'qituvchilarga boradi\n"
+         "👩‍🏫 <b>O'qituvchi</b> — dars beradigan tumanlaringizni belgilaysiz, o'quvchilar sizga keladi 👇"),
         reply_markup=markup,
     )
 
@@ -372,9 +376,12 @@ async def cmd_registrations(message: Message) -> None:
     lines = [f"📝 <b>Oflayn kursga yozilganlar</b>: {total} ta\n"]
     for reg in regs:
         who = f"@{esc(reg['username'])}" if reg.get("username") else f"<code>{reg['tg_id']}</code>"
-        lines.append(f"👤 <b>{esc(reg['full_name'])}</b> · {reg['age']} yosh · {who}\n"
+        mark = "👩‍🏫" if reg.get("role") == "teacher" else "🧑‍🎓"
+        where = places_data.label(reg.get("region") or "", reg.get("district") or "")
+        lines.append(f"{mark} <b>{esc(reg['full_name'])}</b>"
+                     + (f" · {reg['age']} yosh" if reg.get("age") else "") + f" · {who}\n"
                      f"    📞 {esc(reg['phone'])}"
-                     + (f" · 📍 {esc(reg['address'])}" if reg.get("address") else "")
+                     + (f" · 📍 {esc(where)}" if where else "")
                      + f" · {reg['created_at']}")
     chunk = ""
     for line in "\n".join(lines).split("\n"):
@@ -838,21 +845,36 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
         logger.warning("Esse bali o'quvchiga yuborilmadi")
 
 
-def _registration_text(reg: dict, username: str | None, again: bool) -> str:
+def _registration_text(reg: dict, username: str | None, again: bool, places: list[dict], for_teacher: bool) -> str:
     contact = (f"\n💬 @{esc(username)}" if username
                else f"\n🆔 <code>{reg['tg_id']}</code> (username yo'q — telefoniga qo'ng'iroq qiling)")
-    return (f"📝 <b>{'Ariza yangilandi' if again else 'Yangi ariza'}</b> · Oflayn «Ona tili» kursi\n{LINE}\n"
+    teacher = reg.get("role") == "teacher"
+    title = ("👩‍🏫 Yangi o'qituvchi" if teacher else
+             ("🧑‍🎓 Sizning tumaningizga yangi o'quvchi" if for_teacher else "🧑‍🎓 Yangi o'quvchi"))
+    where = "\n".join(f"📍 {esc(places_data.label(p['region'], p['district']))}" for p in places) \
+        or f"📍 {esc(places_data.label(reg.get('region') or '', reg.get('district') or ''))}"
+    return (f"📝 <b>{title}</b>{' · ariza yangilandi' if again else ''}\n{LINE}\n"
             f"👤 {esc(reg['full_name'])}\n"
-            f"📞 {esc(reg['phone'])}\n"
-            f"🎂 {reg['age']} yosh"
-            + (f"\n📍 {esc(reg['address'])}" if reg.get("address") else "")
-            + contact)
+            f"📞 {esc(reg['phone'])}"
+            + (f"\n🎂 {reg['age']} yosh" if reg.get("age") else "")
+            + f"\n{where}" + contact)
 
 
-async def registration_notice(bot: Bot, reg: dict, username: str | None, again: bool) -> None:
-    """Oflayn kursga yangi ariza — barcha adminlarga. Keyingi muloqot admin va o'quvchi orasida."""
-    text = _registration_text(reg, username, again)
+async def registration_notice(bot: Bot, reg: dict, username: str | None, again: bool,
+                              teachers: list[dict]) -> None:
+    """Ariza — shu tumandagi o'qituvchilarga va barcha adminlarga. Keyingi muloqot ular orasida."""
+    places = await asyncio.to_thread(db.list_teacher_places, reg["tg_id"]) if reg.get("role") == "teacher" else []
+    for teacher in teachers:  # o'quvchining arizasi — tumanidagi o'qituvchilarga
+        try:
+            await bot.send_message(teacher["tg_id"], _registration_text(reg, username, again, places, True))
+        except Exception:
+            logger.warning("O'qituvchiga ariza yuborilmadi: %s", teacher["tg_id"])
+    text = _registration_text(reg, username, again, places, False)
+    if teachers:
+        text += f"\n\n👩‍🏫 Shu tumandagi {len(teachers)} ta o'qituvchiga yuborildi."
     for admin_id in ADMIN_IDS:
+        if any(t["tg_id"] == admin_id for t in teachers):
+            continue  # admin shu tumanning o'qituvchisi — ikki marta kelmasin
         try:
             await bot.send_message(admin_id, text)
         except Exception:
@@ -1107,7 +1129,7 @@ async def main() -> None:
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),
-        registration_notice=lambda reg, username, again: registration_notice(bot, reg, username, again),
+        registration_notice=lambda reg, username, again, teachers: registration_notice(bot, reg, username, again, teachers),
         missing=lambda user_id: subscription.missing_channels(bot, user_id),
         missing_in=lambda user_id, channels, recheck=False: test_channels_missing(bot, user_id, channels, recheck),
         resolve_channel=lambda ref: subscription.resolve_channel(bot, ref),

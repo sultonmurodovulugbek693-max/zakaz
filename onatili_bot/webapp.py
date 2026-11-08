@@ -25,6 +25,7 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 
 import db
 import essay_ai
+import places as places_data
 import plans
 import sheet
 import sheet_styles
@@ -1004,35 +1005,62 @@ async def students_from_class(request: web.Request) -> web.Response:
 
 
 # ---------- Ro'yxatdan o'tish (oflayn «Ona tili» kursi) ----------
-# O'quvchi botda /start bosib «Ro'yxatdan o'tish» tugmasini bosadi — ilovaning alohida ekrani ochiladi.
-# Ism, telefon, yosh va manzilini qoldiradi; ariza adminga Telegram orqali boradi va keyingi
-# muloqot (uchrashuv, dars vaqti) ilova ishtirokisiz davom etadi.
+# Botda /start → «Ro'yxatdan o'tish» → ilovaning alohida ekrani.
+#   • O'qituvchi: ism, familiya, telefon va dars beradigan tuman(lar)ini belgilaydi («joy ochadi»).
+#   • O'quvchi: ism, familiya, telefon, yosh va o'z tumanini tanlaydi — tumanda kurs bo'lsa ko'rinadi.
+# Ariza shu tumandagi o'qituvchilarga va adminlarga boradi; keyingi muloqot ular orasida davom etadi.
 
 MIN_AGE, MAX_AGE = 5, 99
+MAX_PLACES = 20  # bitta o'qituvchi nechta tumanda dars bera oladi
 
 
-def registration_view(reg: dict | None) -> dict | None:
+def registration_view(reg: dict | None, places: list[dict] | None = None) -> dict | None:
     if not reg:
         return None
-    return {"first_name": reg.get("first_name") or "", "last_name": reg.get("last_name") or "",
-            "full_name": reg["full_name"], "phone": reg["phone"], "age": reg["age"],
-            "address": reg["address"] or "", "created_at": reg["created_at"]}
+    view = {"role": reg.get("role") or "student", "first_name": reg.get("first_name") or "",
+            "last_name": reg.get("last_name") or "", "full_name": reg["full_name"], "phone": reg["phone"],
+            "age": reg["age"], "region": reg.get("region") or "", "district": reg.get("district") or "",
+            "created_at": reg["created_at"]}
+    if places is not None:
+        view["places"] = places
+    return view
 
 
 async def registration_get(request: web.Request) -> web.Response:
-    """Ism Telegram profilidan olinmaydi — foydalanuvchi o'zi kiritadi."""
+    """Ism Telegram profilidan olinmaydi — foydalanuvchi o'zi kiritadi.
+
+    Ilovaga manzillar ro'yxati va qaysi tumanlarda kurs borligi ham beriladi.
+    """
     user = await auth(request)
     reg = await run(db.get_registration, user["id"])
-    return ok({"registration": registration_view(reg)})
+    places = await run(db.list_teacher_places, user["id"]) if reg and reg.get("role") == "teacher" else None
+    return ok({
+        "registration": registration_view(reg, places),
+        "regions": places_data.REGIONS,
+        "with_courses": await run(db.districts_with_teachers),
+    })
+
+
+def clean_places(raw, single: bool = False) -> list[tuple[str, str]]:
+    """Ilovadan kelgan joylar: faqat ma'lumotnomadagi viloyat/tumanlar qoladi (takrorsiz)."""
+    out: list[tuple[str, str]] = []
+    for item in (raw or [])[:MAX_PLACES]:
+        if not isinstance(item, dict):
+            continue
+        region, district = clean_text(item.get("region"), 60), clean_text(item.get("district"), 60)
+        if places_data.valid(region, district) and (region, district) not in out:
+            out.append((region, district))
+    return out[:1] if single else out
 
 
 async def registration_save(request: web.Request) -> web.Response:
     user = await auth(request)
     payload = await body(request)
+    role = "teacher" if payload.get("role") == "teacher" else "student"
     first_name = clean_text(payload.get("first_name"), 40)
     last_name = clean_text(payload.get("last_name"), 40)
     phone = clean_text(payload.get("phone"), 30)
-    address = clean_text(payload.get("address"), 200)
+    places = clean_places(payload.get("places"), single=role == "student")
     try:
         age = int(str(payload.get("age") or "").strip() or 0)
     except ValueError:
@@ -1043,17 +1071,25 @@ async def registration_save(request: web.Request) -> web.Response:
         raise ApiError(400, "Familiyangizni yozing")
     if len(phone) < 7:
         raise ApiError(400, "Telefon raqamingizni yozing")
-    if not MIN_AGE <= age <= MAX_AGE:
+    if role == "student" and not MIN_AGE <= age <= MAX_AGE:
         raise ApiError(400, f"Yoshingizni yozing ({MIN_AGE}–{MAX_AGE})")
+    if not places:
+        raise ApiError(400, "Dars beradigan tumanni tanlang" if role == "teacher"
+                            else "Yashash joyingizni (viloyat va tuman) tanlang")
+    region, district = places[0]
     await run(db.remember_user, user["id"], user["name"], user["username"])
     again = bool(await run(db.get_registration, user["id"]))
-    reg = await run(db.save_registration, user["id"], first_name, last_name, phone, age, address)
+    reg = await run(db.save_registration, user["id"], role, first_name, last_name, phone,
+                    age if role == "student" else None, region, district)
+    saved = await run(db.set_teacher_places, user["id"], places) if role == "teacher" else []
+    teachers = [] if role == "teacher" else await run(db.teachers_in, region, district)
     if "registration_notice" in HOOKS:
         try:
-            await HOOKS["registration_notice"](reg, user.get("username"), again)
+            await HOOKS["registration_notice"](reg, user.get("username"), again, teachers)
         except Exception:
-            logger.warning("Adminga ro'yxat haqida xabar yuborilmadi", exc_info=True)
-    return ok({"registration": registration_view(reg), "again": again})
+            logger.warning("Ro'yxat haqida xabar yuborilmadi", exc_info=True)
+    return ok({"registration": registration_view(reg, saved if role == "teacher" else None),
+               "again": again, "teachers": len(teachers)})
 
 
 async def sheets(request: web.Request) -> web.Response:

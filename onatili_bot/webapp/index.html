@@ -1502,63 +1502,152 @@ VIEWS.klass = async ({ id }) => {
 
 // ---------- Oflayn «Ona tili» kursiga ro'yxatdan o'tish ----------
 // Botdagi /start («📝 Ro'yxatdan o'tish» tugmasi) shu ekranni ochadi: ?v=register.
-// Ariza adminga Telegram orqali boradi, keyingi muloqot ular orasida davom etadi.
+//   • O'qituvchi dars beradigan tumanlarini belgilaydi — o'ziga «joy ochadi».
+//   • O'quvchi o'z tumanini tanlaydi; arizasi o'sha tumandagi o'qituvchilarga va adminga boradi.
+
+// Viloyat → tuman tanlagich. Qidiruv barcha tumanlar bo'yicha; kurs bor tumanlar belgilab ko'rsatiladi
+function placePicker(regions, withCourses, onPick) {
+  const has = new Set((withCourses || []).map(p => p.region + "|" + p.district));
+  const modal = openModal("📍 Manzilni tanlang", `
+    <input class="input" id="pp-find" placeholder="Tuman yoki viloyat nomini yozing" autocomplete="off">
+    <div class="list" id="pp-list" style="max-height:52vh;overflow:auto"></div>`);
+  const list = modal.querySelector("#pp-list"), find = modal.querySelector("#pp-find");
+  let region = null;
+  const badge = (r, d) => has.has(r + "|" + d) ? `<span class="pill-tag done">kurs bor</span>` : "";
+  function draw() {
+    const q = find.value.trim().toLowerCase();
+    if (q) {
+      const hits = [];
+      Object.keys(regions).forEach(r => regions[r].forEach(d => {
+        if ((d + " " + r).toLowerCase().includes(q)) hits.push([r, d]);
+      }));
+      list.innerHTML = hits.slice(0, 60).map(([r, d]) => `<button type="button" class="item" data-r="${esc(r)}" data-d="${esc(d)}">
+          <span class="ico">📍</span><span><b>${esc(d)}</b><small>${esc(r)}</small></span>${badge(r, d)}</button>`).join("")
+        || `<div class="card empty">Topilmadi</div>`;
+    } else if (region) {
+      list.innerHTML = `<button type="button" class="item" data-back><span class="ico">↩️</span><span><b>Viloyatlar</b><small>${esc(region)}</small></span></button>`
+        + regions[region].map(d => `<button type="button" class="item" data-r="${esc(region)}" data-d="${esc(d)}">
+            <span class="ico">📍</span><span><b>${esc(d)}</b></span>${badge(region, d)}</button>`).join("");
+    } else {
+      list.innerHTML = Object.keys(regions).map(r => {
+        const n = regions[r].filter(d => has.has(r + "|" + d)).length;
+        return `<button type="button" class="item" data-region="${esc(r)}"><span class="ico">🗺</span>
+          <span><b>${esc(r)}</b><small>${regions[r].length} ta tuman${n ? ` · ${n} tasida kurs bor` : ""}</small></span><span class="muted">›</span></button>`;
+      }).join("");
+    }
+    list.querySelectorAll("[data-region]").forEach(x => x.onclick = () => { region = x.dataset.region; haptic("select"); draw(); });
+    list.querySelectorAll("[data-back]").forEach(x => x.onclick = () => { region = null; draw(); });
+    list.querySelectorAll("[data-d]").forEach(x => x.onclick = () => { modal.remove(); haptic("select"); onPick(x.dataset.r, x.dataset.d); });
+  }
+  find.oninput = draw;
+  draw();
+}
 
 VIEWS.register = async () => {
   loading();
   let r; try { r = await api("/api/register"); } catch (e) { return fail(e); }
-  const saved = r.registration;
-  const draftKey = "reg-draft";
+  const saved = r.registration, draftKey = "reg-draft";
   let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
+  const form = {
+    role: (saved && saved.role) || draft.role || "student",
+    places: (saved && saved.places) || (saved && saved.region ? [{ region: saved.region, district: saved.district }] : null) || draft.places || [],
+  };
   const value = field => esc((saved && saved[field]) || draft[field] || "");
-  $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Kurs</span>
-      <h1>${saved ? "Ma'lumotlaringiz" : "Oflayn kursga yozilish"}</h1>
-      <span class="muted small">${saved
-        ? "Arizangiz qabul qilingan. O'zgartirish kerak bo'lsa — tuzatib, qayta yuboring."
-        : "Ism-familiya, telefon raqam, yosh va yashash joyingizni qoldiring — tez orada siz bilan bog'lanamiz."}</span></div>
-    ${saved ? `<div class="card" style="border:1.5px solid var(--good)">✅ Ro'yxatdan o'tgansiz · ${esc(saved.created_at)}</div>` : ""}
-    <div class="card">
-      <div class="field"><label for="g-name">Ism</label>
-        <input class="input" id="g-name" autocomplete="given-name" value="${value("first_name")}" placeholder="Masalan: Ali"></div>
-      <div class="field"><label for="g-surname">Familiya</label>
-        <input class="input" id="g-surname" autocomplete="family-name" value="${value("last_name")}" placeholder="Masalan: Valiyev"></div>
-      <div class="field"><label for="g-phone">Telefon raqam</label>
-        <input class="input" id="g-phone" type="tel" inputmode="tel" autocomplete="tel" value="${value("phone")}" placeholder="+998 90 123 45 67"></div>
-      <div class="field"><label for="g-age">Yosh</label>
-        <input class="input" id="g-age" inputmode="numeric" maxlength="2" value="${value("age")}" placeholder="Masalan: 16"></div>
-      <div class="field"><label for="g-addr">Yashash joyi <span class="muted">(ixtiyoriy)</span></label>
-        <input class="input" id="g-addr" autocomplete="address-level2" value="${value("address")}" placeholder="Shahar / tuman, mahalla"></div>
-    </div>
-    <div class="sticky-bottom"><div><button class="btn block" id="g-send">${saved ? "Saqlash" : "Ro'yxatdan o'tish"}</button></div></div>
-  </div>`;
-  const name = document.getElementById("g-name"), surname = document.getElementById("g-surname"),
-        phone = document.getElementById("g-phone"), age = document.getElementById("g-age"),
-        addr = document.getElementById("g-addr");
-  const save = () => store(draftKey, JSON.stringify({ first_name: name.value, last_name: surname.value, phone: phone.value, age: age.value, address: addr.value }));
-  [name, surname, phone, addr].forEach(el => el.oninput = save);
-  age.oninput = () => { age.value = age.value.replace(/\D/g, "").slice(0, 2); save(); };
-  const btn = document.getElementById("g-send");
-  btn.onclick = async () => {
-    const first_name = name.value.trim(), last_name = surname.value.trim();
-    const tel = phone.value.trim(), years = +age.value, address = addr.value.trim();
-    if (first_name.length < 2) { toast("Ismingizni yozing"); haptic("error"); return name.focus(); }
-    if (last_name.length < 2) { toast("Familiyangizni yozing"); haptic("error"); return surname.focus(); }
-    if (tel.length < 7) { toast("Telefon raqamingizni yozing"); haptic("error"); return phone.focus(); }
-    if (!(years >= 5 && years <= 99)) { toast("Yoshingizni yozing (5–99)"); haptic("error"); return age.focus(); }
-    btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+  const fields = () => {
+    const get = id => { const el = document.getElementById(id); return el ? el.value : ""; };
+    return { first_name: get("g-name"), last_name: get("g-surname"), phone: get("g-phone"), age: get("g-age") };
+  };
+  const keep = () => store(draftKey, JSON.stringify({ ...fields(), role: form.role, places: form.places }));
+
+  function paint() {
+    const teacher = form.role === "teacher";
+    $app.innerHTML = `<div class="view">
+      <div class="hero"><span class="brand"><i>O</i>Ona tili · Kurs</span>
+        <h1>${saved ? "Ma'lumotlaringiz" : "Ro'yxatdan o'tish"}</h1>
+        <span class="muted small">${saved ? "Arizangiz qabul qilingan. O'zgartirsangiz — qayta yuboring."
+          : "Avval kim ekanligingizni tanlang."}</span></div>
+      ${saved ? `<div class="card" style="border:1.5px solid var(--good)">✅ Ro'yxatdan o'tgansiz · ${esc(saved.created_at)}</div>` : ""}
+      <div class="card"><div class="field"><label>Kim sifatida</label><div class="chips">
+        <button type="button" class="chip ${teacher ? "" : "on"}" data-role="student">🧑‍🎓 O'quvchi</button>
+        <button type="button" class="chip ${teacher ? "on" : ""}" data-role="teacher">👩‍🏫 O'qituvchi</button></div>
+        <span class="muted small">${teacher
+          ? "Dars beradigan tumanlaringizni belgilaysiz — o'sha tumandagi o'quvchilarning arizasi sizga keladi."
+          : "Yashash joyingizni tanlaysiz — arizangiz o'sha tumandagi o'qituvchilarga boradi."}</span></div></div>
+      <div class="card">
+        <div class="field"><label for="g-name">Ism</label>
+          <input class="input" id="g-name" autocomplete="given-name" value="${value("first_name")}" placeholder="Masalan: Ali"></div>
+        <div class="field"><label for="g-surname">Familiya</label>
+          <input class="input" id="g-surname" autocomplete="family-name" value="${value("last_name")}" placeholder="Masalan: Valiyev"></div>
+        <div class="field"><label for="g-phone">Telefon raqam</label>
+          <input class="input" id="g-phone" type="tel" inputmode="tel" autocomplete="tel" value="${value("phone")}" placeholder="+998 90 123 45 67"></div>
+        ${teacher ? "" : `<div class="field"><label for="g-age">Yosh</label>
+          <input class="input" id="g-age" inputmode="numeric" maxlength="2" value="${value("age")}" placeholder="Masalan: 16"></div>`}
+      </div>
+      <div class="card"><div class="field">
+        <label>${teacher ? "Dars beradigan joylaringiz" : "Yashash joyingiz"}</label>
+        <div class="list">${form.places.map((p, i) => `<div class="item" style="cursor:default">
+            <span class="ico">📍</span><span><b>${esc(p.district)}</b><small>${esc(p.region)}</small></span>
+            <button type="button" class="btn plain sm" data-drop="${i}" aria-label="O'chirish">✕</button></div>`).join("")
+          || `<div class="card empty" style="padding:16px">Hali tanlanmagan</div>`}</div>
+        <button type="button" class="btn ghost block" id="g-add" style="margin-top:10px">${teacher
+          ? "➕ Tuman qo'shish" : (form.places.length ? "📍 Boshqa joyni tanlash" : "📍 Viloyat va tumanni tanlash")}</button>
+        ${teacher ? `<span class="muted small">Bir nechta tumanda dars bersangiz — hammasini qo'shing.</span>` : ""}
+      </div></div>
+      <div class="sticky-bottom"><div><button class="btn block" id="g-send">${saved ? "Saqlash" : "Ro'yxatdan o'tish"}</button></div></div>
+    </div>`;
+    const age = document.getElementById("g-age");
+    ["g-name", "g-surname", "g-phone"].forEach(id => document.getElementById(id).oninput = keep);
+    if (age) age.oninput = () => { age.value = age.value.replace(/\D/g, "").slice(0, 2); keep(); };
+    document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => {
+      if (form.role === x.dataset.role) return;
+      Object.assign(draft, fields());
+      form.role = x.dataset.role;
+      if (form.role === "student" && form.places.length > 1) form.places = form.places.slice(0, 1);
+      haptic("select"); keep(); paint();
+    });
+    document.querySelectorAll("[data-drop]").forEach(x => x.onclick = () => {
+      Object.assign(draft, fields());
+      form.places.splice(+x.dataset.drop, 1); keep(); paint();
+    });
+    document.getElementById("g-add").onclick = () => {
+      Object.assign(draft, fields());
+      placePicker(r.regions, r.with_courses, (region, district) => {
+        if (form.role === "student") form.places = [{ region, district }];
+        else if (!form.places.some(p => p.region === region && p.district === district)) form.places.push({ region, district });
+        keep(); paint();
+      });
+    };
+    document.getElementById("g-send").onclick = send;
+  }
+
+  async function send() {
+    const teacher = form.role === "teacher", data = fields();
+    const first_name = data.first_name.trim(), last_name = data.last_name.trim(), tel = data.phone.trim(), years = +data.age;
+    if (first_name.length < 2) { toast("Ismingizni yozing"); haptic("error"); return document.getElementById("g-name").focus(); }
+    if (last_name.length < 2) { toast("Familiyangizni yozing"); haptic("error"); return document.getElementById("g-surname").focus(); }
+    if (tel.length < 7) { toast("Telefon raqamingizni yozing"); haptic("error"); return document.getElementById("g-phone").focus(); }
+    if (!teacher && !(years >= 5 && years <= 99)) { toast("Yoshingizni yozing (5–99)"); haptic("error"); return document.getElementById("g-age").focus(); }
+    if (!form.places.length) { toast(teacher ? "Dars beradigan tumanni tanlang" : "Viloyat va tumanni tanlang"); haptic("error"); return; }
+    const btn = document.getElementById("g-send"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      const res = await api("/api/register", { first_name, last_name, phone: tel, age: years, address });
+      const res = await api("/api/register", { role: form.role, first_name, last_name, phone: tel,
+        age: teacher ? null : years, places: form.places });
       store(draftKey, "{}"); S.boot = null; haptic("success");
       S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
+      const where = form.places.map(p => `${p.district}, ${p.region}`).join(" · ");
       $app.innerHTML = `<div class="view"><div class="card success">
         <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
         <h1>${res.again ? "Ma'lumotlaringiz yangilandi" : "Ro'yxatdan o'tdingiz!"}</h1>
-        <p class="muted">Oflayn «Ona tili» kursi<br>Ma'lumotlaringiz yuborildi — tez orada siz bilan bog'lanamiz.</p>
+        <p class="muted">${esc(where)}<br>${teacher
+          ? "Shu tumanlardagi o'quvchilarning arizalari sizga keladi."
+          : (res.teachers ? `Arizangiz shu tumandagi ${res.teachers} ta o'qituvchiga yuborildi — tez orada bog'lanishadi.`
+             : "Arizangiz yuborildi — tez orada siz bilan bog'lanamiz.")}</p>
         <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
       document.getElementById("home").onclick = () => render();
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = saved ? "Saqlash" : "Ro'yxatdan o'tish"; }
-  };
+  }
+
+  paint();
 };
 
 // Titulli testga sinf o'quvchilarini qo'shish (doimiy ID'lari bilan)

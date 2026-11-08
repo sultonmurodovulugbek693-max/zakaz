@@ -223,14 +223,27 @@ SCHEMA = [
     f"""CREATE TABLE IF NOT EXISTS registrations (
         id         {ID},
         tg_id      {BIG} UNIQUE NOT NULL,
+        role       TEXT NOT NULL DEFAULT 'student',
         first_name TEXT,
         last_name  TEXT,
         full_name  TEXT NOT NULL,
         phone      TEXT NOT NULL,
         age        INTEGER,
+        region     TEXT,
+        district   TEXT,
         address    TEXT,
         created_at TEXT,
         updated_at TEXT
+    )""",
+    # O'qituvchi dars beradigan joylar («joy ochadi»): bir nechta tuman bo'lishi mumkin.
+    # O'quvchi shu tumanni tanlasa — arizasi o'sha tumandagi o'qituvchilarga boradi
+    f"""CREATE TABLE IF NOT EXISTS teacher_places (
+        id         {ID},
+        tg_id      {BIG} NOT NULL,
+        region     TEXT NOT NULL,
+        district   TEXT NOT NULL,
+        created_at TEXT,
+        UNIQUE (tg_id, region, district)
     )""",
 ]
 
@@ -245,6 +258,9 @@ MIGRATIONS = [
     ("users", "role", "TEXT"),  # oxirgi tanlangan ekran: student | teacher
     ("registrations", "first_name", "TEXT"),  # ism va familiya alohida so'raladi
     ("registrations", "last_name", "TEXT"),
+    ("registrations", "role", "TEXT NOT NULL DEFAULT 'student'"),  # o'quvchi | o'qituvchi
+    ("registrations", "region", "TEXT"),  # manzil endi ro'yxatdan tanlanadi (places.py)
+    ("registrations", "district", "TEXT"),
 ]
 
 
@@ -807,23 +823,62 @@ def update_class_student(class_id: int, student_id: int, name: str | None = None
 
 # ---------- Ro'yxatdan o'tish (oflayn «Ona tili» kursi) ----------
 
-def save_registration(tg_id: int, first_name: str, last_name: str, phone: str, age: int | None,
-                      address: str) -> dict:
+def save_registration(tg_id: int, role: str, first_name: str, last_name: str, phone: str,
+                      age: int | None, region: str, district: str) -> dict:
     """Yangi ariza yoki borini yangilash (bitta foydalanuvchi — bitta ariza).
 
     full_name — ism va familiyadan yig'iladi: ro'yxatlar va adminga xabarlarda shu ishlatiladi.
+    O'qituvchida region/district — birinchi joyi (qolganlari teacher_places jadvalida).
     """
     full_name = f"{first_name} {last_name}".strip()
     with connect() as conn:
         row = conn.execute(
-            "INSERT INTO registrations (tg_id, first_name, last_name, full_name, phone, age, address, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(tg_id) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name, "
-            "full_name = excluded.full_name, phone = excluded.phone, age = excluded.age, "
-            "address = excluded.address, updated_at = excluded.updated_at RETURNING *",
-            (tg_id, first_name, last_name, full_name, phone, age, address, _now(), _now()),
+            "INSERT INTO registrations (tg_id, role, first_name, last_name, full_name, phone, age, "
+            "region, district, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET role = excluded.role, first_name = excluded.first_name, "
+            "last_name = excluded.last_name, full_name = excluded.full_name, phone = excluded.phone, "
+            "age = excluded.age, region = excluded.region, district = excluded.district, "
+            "updated_at = excluded.updated_at RETURNING *",
+            (tg_id, role, first_name, last_name, full_name, phone, age, region, district, _now(), _now()),
         ).fetchone()
     return dict(row)
+
+
+# ---------- O'qituvchining dars beradigan joylari ----------
+
+def set_teacher_places(tg_id: int, places: list[tuple[str, str]]) -> list[dict]:
+    """O'qituvchining joylari to'liq almashtiriladi (ro'yxatni qayta yuborganda eskisi qolmaydi)."""
+    with connect() as conn:
+        conn.execute("DELETE FROM teacher_places WHERE tg_id = ?", (tg_id,))
+        for region, district in places:
+            conn.execute("INSERT INTO teacher_places (tg_id, region, district, created_at) VALUES (?, ?, ?, ?) "
+                         "ON CONFLICT(tg_id, region, district) DO NOTHING", (tg_id, region, district, _now()))
+    return list_teacher_places(tg_id)
+
+
+def list_teacher_places(tg_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT region, district FROM teacher_places WHERE tg_id = ? ORDER BY region, district",
+                            (tg_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def teachers_in(region: str, district: str) -> list[dict]:
+    """Shu tumanda dars beradigan o'qituvchilar — o'quvchining arizasi shularga boradi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.tg_id, r.full_name, r.phone, u.username FROM teacher_places p "
+            "LEFT JOIN registrations r ON r.tg_id = p.tg_id LEFT JOIN users u ON u.tg_id = p.tg_id "
+            "WHERE p.region = ? AND p.district = ?", (region, district)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def districts_with_teachers() -> list[dict]:
+    """Kurs bor joylar (o'quvchi tanlashda belgilab ko'rsatiladi)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT region, district, COUNT(*) AS teachers FROM teacher_places "
+                            "GROUP BY region, district").fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_registration(tg_id: int) -> dict | None:
