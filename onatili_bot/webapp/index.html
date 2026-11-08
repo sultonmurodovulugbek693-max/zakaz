@@ -121,6 +121,24 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .quick-action:active { transform: scale(.94); }
 .quick-action i { width: 44px; height: 44px; display: grid; place-items: center; font-size: 21px; font-style: normal; border-radius: 14px; background: #eaf7ee; }
 html.dark .quick-action i { background: #20302a; }
+
+/* Asosiy amal kartalari (bosh sahifada) */
+.big-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.big-act { display: grid; gap: 6px; justify-items: start; text-align: left; padding: 18px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; font: inherit; transition: transform .15s, border-color .2s; }
+.big-act:active { transform: scale(.97); }
+.big-act:hover, .big-act:focus-visible { border-color: var(--accent); }
+.big-act i { width: 46px; height: 46px; display: grid; place-items: center; font-size: 22px; font-style: normal; border-radius: 16px; background: var(--accent-soft); margin-bottom: 2px; }
+.big-act b { font-size: 15.5px; }
+.big-act small { color: var(--muted); font-size: 12px; line-height: 1.3; }
+
+/* Pastki navigatsiya: asosiy bo'limlar har doim bir bosishda */
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: none; background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: saturate(1.4) blur(14px); border-top: 1px solid var(--line); padding: 7px 12px calc(7px + var(--safe-bottom)); }
+.tabbar[data-on] { display: block; }
+.tabbar > div { max-width: 640px; margin: 0 auto; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px 5px; border: 0; background: none; color: var(--muted); font: 700 11px var(--font-body); cursor: pointer; border-radius: 14px; transition: color .2s, background .2s, transform .15s; }
+.tab i { font-style: normal; font-size: 19px; line-height: 1.1; }
+.tab.on { color: var(--accent); background: var(--accent-soft); }
+.tab:active { transform: scale(.93); }
 .plan-card { gap: 10px; }
 .plan-card .plan-use { display: grid; gap: 4px; }
 .plan-card.plan-off { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
@@ -234,7 +252,9 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .thead { display: grid; gap: 8px; }
 .thead .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .codechip { border: 0; background: var(--accent-soft); color: var(--accent); font: 700 13px var(--font-body); letter-spacing: .06em; padding: 4px 10px; border-radius: 99px; cursor: pointer; }
-.tabs.bar { background: transparent; padding: 0 0 2px; border-radius: 0; gap: 4px; box-shadow: inset 0 -1.5px 0 var(--line); }
+/* Test sahifasidagi bo'lim tugmalari — pastga tushganda ham tepada turadi */
+.tabs.bar { position: sticky; top: 0; z-index: 15; background: var(--bg); padding: 6px 0 2px; border-radius: 0; gap: 4px; box-shadow: inset 0 -1.5px 0 var(--line); }
+.topbar:not([hidden]) ~ #app .tabs.bar { top: 48px; }
 .tabs.bar button { background: transparent; border-radius: 0; padding: 10px 12px; font-size: 14px; flex: 1 0 auto; box-shadow: inset 0 -2.5px 0 transparent; transition: color .2s, box-shadow .2s; }
 .tabs.bar button.on { background: transparent; color: var(--accent); box-shadow: inset 0 -2.5px 0 var(--accent); }
 .tabs.bar .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: var(--warn); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
@@ -385,6 +405,7 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 <body>
 <div class="topbar" id="topbar" hidden><button type="button" class="back" id="back" aria-label="Orqaga">‹ Orqaga</button></div>
 <div id="app"></div>
+<nav class="tabbar" id="tabbar" aria-label="Bo'limlar"><div></div></nav>
 <div class="toast" id="toast" role="status"></div>
 <script>
 "use strict";
@@ -509,11 +530,34 @@ async function render(soft = false) {
   const home = APP && !(tg && tg.initData) ? VIEWS.appHome : VIEWS.home;
   try { await (view === "home" ? home : VIEWS[view] || home)(params); }
   finally {
+    paintTabs(view);
     if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
     S.soft = false;
   }
 }
 const rerender = () => render(true);
+
+// ---------- Pastki navigatsiya ----------
+// Asosiy bo'limlar har doim bir bosishda; ichki ekranlarda (test yechish, yaratish, skaner) panel yashiriladi
+const TABS = {
+  teacher: [["home", "🏠", "Bosh"], ["tests", "📝", "Testlar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"]],
+  student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
+};
+function paintTabs(view) {
+  const bar = document.getElementById("tabbar");
+  // Rol tanlash va majburiy obuna ekranlarida panel chiqmaydi
+  const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
+  const tabs = ready ? (TABS[S.role] || TABS.student) : null;
+  if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return; }
+  bar.setAttribute("data-on", "1");
+  bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
+    `<button type="button" class="tab ${key === view ? "on" : ""}" data-tab-to="${key}"><i>${icon}</i>${label}</button>`).join("");
+  bar.querySelectorAll("[data-tab-to]").forEach(x => x.onclick = () => {
+    const to = x.dataset.tabTo;
+    if (to === S.current.view) return window.scrollTo({ top: 0, behavior: "smooth" });
+    haptic("select"); S.stack = []; go(to, {}, true);
+  });
+}
 
 // ---------- Ilova dizaynlari (ranglar, shriftlar, burchaklar) ----------
 // [nomi, fon, karta, matn, ikkinchi matn, asosiy rang, ikkinchi rang, karta burchagi, tugma burchagi, matn shrifti, sarlavha shrifti]
@@ -562,7 +606,8 @@ function applyUiTheme(key) {
 
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
-const RESUMABLE = { student: ["answer", "result"], teacher: ["teacher", "classes", "klass", "result"] };
+const RESUMABLE = { student: ["answer", "result", "myresults", "profile"],
+                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
   if (view === "home") return store("lastView", "");
@@ -675,6 +720,24 @@ function rolePicker() {
   document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => { setRole(el.dataset.pick); render(); });
 }
 
+// Ro'yxat qatorlari — bosh sahifada ham, «Testlar»/«Natijalar» bo'limlarida ham shu ko'rinish
+const attemptItem = a => `<button class="item" data-attempt="${a.id}" data-announced="${a.announced ? 1 : 0}">
+    <span class="ico">${a.announced ? "📊" : "⏳"}</span>
+    <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
+    <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`;
+
+const testItem = t => `<div class="item test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" role="button" tabindex="0">
+    <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
+    <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Oflayn" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
+      <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
+    <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`;
+
+// Bo'lim ekranlarining umumiy «qobig'i»: tepada sarlavha, ichida ro'yxat
+async function boot() {
+  if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { fail(e); return null; } }
+  return S.boot.subscribe ? (subscribeGate(S.boot.subscribe), null) : S.boot;
+}
+
 VIEWS.home = async () => {
   if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { return fail(e); } }
   if (S.boot.subscribe) return subscribeGate(S.boot.subscribe);
@@ -685,15 +748,6 @@ VIEWS.home = async () => {
   }
   const b = S.boot, role = S.role;
   const first = (b.user.name || "").split(" ")[0];
-  const attempts = b.attempts.map(a => `<button class="item" data-attempt="${a.id}" data-announced="${a.announced ? 1 : 0}">
-      <span class="ico">${a.announced ? "📊" : "⏳"}</span>
-      <span><b>${esc(a.title)}</b><small>Kod ${a.code} · ${esc(a.created_at)}</small></span>
-      <span class="pill-tag ${a.announced ? "done" : "wait"}">${a.announced ? "Natija tayyor" : "Kutilmoqda"}</span></button>`).join("");
-  const tests = b.tests.map(t => `<div class="item test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" role="button" tabindex="0">
-      <span class="ico">${t.mode === "offline" ? "📄" : "📱"}</span>
-      <span><b>${esc(t.title)}</b><small>${t.mode === "offline" ? "Oflayn" : "Onlayn"} · kod ${t.code} · 👥 ${t.students}${t.avg != null ? ` · o'rtacha ${num(t.avg)}` : ""}</small>
-        <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
-      <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`).join("");
   const openTests = b.tests.filter(t => !t.closed).length, results = b.tests.reduce((n, t) => n + t.students, 0);
   // Tepada salomlashish va rol tugmasi (bosilsa — boshqa rolga o'tadi)
   const stats = role === "student"
@@ -706,30 +760,38 @@ VIEWS.home = async () => {
       <div class="hero-hello">Salom, ${esc(first)} 👋<small>${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</small></div>
       <div class="hero-stats">${stats.map(([n, label, sun]) => `<div class="hero-stat ${sun ? "is-sun" : ""}"><b>${n}</b><small>${label}</small></div>`).join("")}</div>
     </section>`;
+  // Bosh sahifa — asosiy amal; ro'yxatlarning to'lig'i pastki paneldagi alohida bo'limlarda
+  const recent = role === "student" ? b.attempts.slice(0, 4) : b.tests.slice(0, 4);
+  const recentHTML = recent.map(role === "student" ? attemptItem : testItem).join("");
   $app.innerHTML = `<div class="view">${top}
     ${role === "student" ? `
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
         <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
         <button class="btn block" id="start" disabled>Boshlash →</button></div>
-      <div class="section-title"><h2>Mening testlarim</h2><span class="muted small">${b.attempts.length} ta</span></div>
-      <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
+      ${recent.length ? `<div class="section-title"><h2>So'nggi testlarim</h2>
+        <button type="button" class="btn plain sm" data-go="myresults">Hammasi ›</button></div>
+      <div class="list">${recentHTML}</div>` : `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}`
     : `
-      <div class="quick-actions">
-        <button type="button" class="quick-action" data-new="online"><i>📱</i>Onlayn test</button>
-        <button type="button" class="quick-action" data-new="offline"><i>📄</i>Oflayn test</button>
-        <button type="button" class="quick-action" id="my-classes"><i>👥</i>Sinflar${b.classes ? ` · ${b.classes}` : ""}</button>
-        <button type="button" class="quick-action" id="plan-quick"><i>${b.plan && b.plan.unlimited ? "♾" : "💎"}</i>${b.plan && b.plan.unlimited ? "Bepul" : "Obuna"}</button>
+      <div class="big-acts">
+        <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
+        <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>
       ${planCard(b.plan)}
-      <div class="section-title"><h2>Testlarim</h2><span class="muted small" id="tests-count">${b.tests.length} ta</span></div>
-      <div class="list">${tests || `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b><span>Yuqoridagi «Onlayn test» yoki «Oflayn test»ni bosing — bir necha daqiqada tayyor.</span></div>`}</div>`}
+      ${recent.length ? `<div class="section-title"><h2>So'nggi testlar</h2>
+        <button type="button" class="btn plain sm" data-go="tests">Hammasi · ${b.tests.length} ›</button></div>
+      <div class="list">${recentHTML}</div>` : `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b>
+        <span>Yuqoridagi «Onlayn test» yoki «Oflayn test»ni bosing — bir necha daqiqada tayyor.</span></div>`}`}
   </div>`;
-  document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
+  bindHomeActions();
+  document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); S.stack = []; rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
-  const mc = document.getElementById("my-classes"); if (mc) mc.onclick = () => { haptic("light"); go("classes"); };
-  const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => planModal();
-  const pq = document.getElementById("plan-quick"); if (pq) pq.onclick = () => { haptic("light"); planModal(); };
+  const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => go("plan");
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
+};
+
+// Ro'yxat qatorlari va test kodi maydonining bog'lanishi (bosh sahifa va bo'lim ekranlari uchun bir xil)
+function bindHomeActions() {
+  document.querySelectorAll("[data-go]").forEach(x => x.onclick = () => { haptic("light"); S.stack = []; go(x.dataset.go, {}, true); });
   const code = document.getElementById("code");
   if (code) {
     const start = document.getElementById("start");
@@ -757,6 +819,75 @@ VIEWS.home = async () => {
         if (!S.boot.tests.length) rerender();
       }, 420);
     } catch (err) { toast(err.message); haptic("error"); }
+  });
+}
+
+// ---------- Pastki paneldagi bo'limlar ----------
+
+VIEWS.tests = async () => {
+  const b = await boot(); if (!b) return;
+  if (S.role !== "teacher") return go("home", {}, true);
+  const q = (S.testFilter || "").trim().toLowerCase();
+  const list = b.tests.filter(t => !q || (t.title + " " + t.code).toLowerCase().includes(q));
+  $app.innerHTML = `<div class="view">
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Testlar</span>
+      <h1>Testlarim</h1></div></div>
+    <div class="big-acts">
+      <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi</small></button>
+      <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul va skaner</small></button>
+    </div>
+    ${b.tests.length > 5 ? `<input class="input" id="t-find" placeholder="🔎 Test nomi yoki kodi" value="${esc(S.testFilter || "")}" autocomplete="off">` : ""}
+    <div class="section-title"><h2>Hammasi</h2><span class="muted small" id="tests-count">${list.length} ta</span></div>
+    <div class="list">${list.map(testItem).join("") || `<div class="card empty"><div class="big">🗂</div><b>${q ? "Topilmadi" : "Hali test yo'q"}</b>
+      <span>${q ? "Boshqa nom yoki kod bilan qidiring." : "Yuqoridagi tugmalardan birini bosing."}</span></div>`}</div>
+  </div>`;
+  bindHomeActions();
+  document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
+  const find = document.getElementById("t-find");
+  if (find) find.oninput = () => {
+    const needle = find.value.trim().toLowerCase();
+    S.testFilter = find.value;
+    let shown = 0;
+    document.querySelectorAll("[data-test]").forEach(el => {
+      const hit = !needle || el.textContent.toLowerCase().includes(needle);
+      el.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    });
+    const count = document.getElementById("tests-count"); if (count) count.textContent = `${shown} ta`;
+  };
+};
+
+VIEWS.myresults = async () => {
+  const b = await boot(); if (!b) return;
+  const ready = b.attempts.filter(a => a.announced).length;
+  $app.innerHTML = `<div class="view">
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Natijalar</span>
+      <h1>Mening testlarim</h1><span class="muted small">${b.attempts.length} ta topshirilgan · ${ready} ta natija tayyor</span></div></div>
+    <div class="list">${b.attempts.map(attemptItem).join("") || `<div class="card empty"><div class="big">📭</div><b>Hali test topshirmagansiz</b>
+      <span>«Bosh» bo'limida o'qituvchingiz bergan kodni kiriting.</span></div>`}</div>
+  </div>`;
+  bindHomeActions();
+};
+
+VIEWS.profile = async () => {
+  const b = await boot(); if (!b) return;
+  const me = (b.user && b.user.id) || "";
+  $app.innerHTML = `<div class="view">
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Profil</span>
+      <h1>${esc(b.user.name || "Men")}</h1><span class="muted small">${b.user.username ? "@" + esc(b.user.username) : "Telegram akkaunt"}</span></div></div>
+    <button type="button" class="item" data-switch-role><span class="ico">⇄</span>
+      <span><b>${S.role === "student" ? "O'qituvchi" : "O'quvchi"} rejimiga o'tish</b>
+        <small>Hozir: ${S.role === "student" ? "o'quvchi" : "o'qituvchi"}</small></span><span class="muted">›</span></button>
+    <div class="item" style="cursor:default"><span class="ico">${b.registered ? "✅" : "📝"}</span>
+      <span><b>Oflayn kurs</b><small>${b.registered ? "Ro'yxatdan o'tgansiz" : "Botdagi /royxat orqali yozilasiz"}</small></span></div>
+    <div class="row between card" style="padding:12px 14px;display:flex"><span>Sizning ID: <b>${esc(String(me))}</b></span>
+      <button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
+    ${b.admin_contact ? `<a class="btn ghost block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish</a>` : ""}
+  </div>`;
+  document.getElementById("copy-me").onclick = () => navigator.clipboard
+    ? navigator.clipboard.writeText(String(me)).then(() => toast("ID nusxalandi"), () => toast(String(me))) : toast(String(me));
+  document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => {
+    haptic("select"); setRole(S.role === "student" ? "teacher" : "student"); S.stack = []; go("home", {}, true);
   });
 };
 
@@ -1360,38 +1491,64 @@ function planCard(p) {
       <button type="button" class="btn ${p.active ? "ghost" : ""} sm" id="plan-open">${p.active ? "Obunani uzaytirish" : "💎 Obunani yangilash"}</button></div>`;
 }
 
-function planModal() {
-  const b = S.boot || {}, p = b.plan || {}, me = (b.user && b.user.id) || "";
+// Obuna — pastki paneldagi alohida bo'lim (oldin modal edi)
+VIEWS.plan = async () => {
+  const b = await boot(); if (!b) return;
+  const p = b.plan || {}, me = (b.user && b.user.id) || "";
   const contact = b.admin_contact ? `<a class="btn ghost block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish (@${esc(b.admin_contact)})</a>` : "";
   if (p.unlimited) {
-    openModal("♾ Bepul", `<span class="muted small">Sizga hamma narsa <b>bepul va cheksiz</b> — obuna sotib olish shart emas.</span>${contact}`);
+    $app.innerHTML = `<div class="view">
+      <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Obuna</span><h1>♾ Bepul</h1></div></div>
+      <div class="card"><b>Sizga hamma narsa bepul va cheksiz</b>
+        <span class="muted small">Obuna sotib olish shart emas: testlar, titullar va AI tekshiruvi cheklanmagan.</span></div>
+      ${contact}</div>`;
     return;
   }
   const rows = (b.plans || []).map(x => `<button type="button" class="item" data-period="${x.key}"><span class="ico">💎</span>
-      <span><b>${esc(x.name)}</b>${x.discount ? `<small>🔥 ${x.discount}% chegirma</small>` : ""}</span>
-      <b style="white-space:nowrap">${x.discount ? `<s class="muted" style="font-weight:500">${sum(x.price)}</s> ` : ""}${sum(x.final)} so'm</b></button>`).join("");
+      <span><b>${esc(x.name)}</b>${x.discount ? `<span class="pill-tag done" style="display:inline-block;margin-top:4px">🔥 −${x.discount}%</span>` : ""}</span>
+      <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(x.final)} so'm</b>
+        ${x.discount ? `<s class="muted small" style="white-space:nowrap">${sum(x.price)} so'm</s>` : ""}</span></button>`).join("");
   const open = b.payment;
-  const modal = openModal("💎 Obuna", `
-    ${p.plan ? `<span class="muted small">Hozirgi obuna: <b>${esc(p.name)}</b>${p.active ? ` · ${esc(p.expires || "")} gacha` : " · muddati tugagan"}</span>` : ""}
-    ${open ? `<div class="card" style="padding:12px 14px;border:1.5px solid var(--accent)">
+  const used = p.limits ? `<div class="card plan-card"><div class="plan-use">
+      <span class="muted small">AI esse: ${p.used.essays} / ${p.limits.essays}</span>
+      <div class="track" style="height:6px"><i style="width:${Math.min(100, p.used.essays / Math.max(1, p.limits.essays) * 100)}%"></i></div>
+      <span class="muted small">AI titul: ${p.used.written} / ${p.limits.written}</span>
+      <div class="track" style="height:6px"><i style="width:${Math.min(100, p.used.written / Math.max(1, p.limits.written) * 100)}%"></i></div>
+    </div></div>` : "";
+  $app.innerHTML = `<div class="view">
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Obuna</span>
+      <h1>${!p.plan ? "Obuna sotib olish" : p.active ? "Obunangiz faol" : "Obuna tugagan"}</h1>
+      <span class="muted small">${p.plan ? (p.active ? `${esc(p.name)} · ${esc(p.expires || "")} gacha · ${p.days_left} kun qoldi`
+        : "Uzaytirish uchun muddatni tanlang") : "Test yaratish uchun obuna kerak"}</span></div></div>
+    ${open ? `<div class="card" style="border:1.5px solid var(--accent)">
       <b>⏳ Kutilayotgan to'lov</b><span class="muted small">${esc(planName(open.period))} · ${sum(open.amount)} so'm —
       ${open.status === "sent" ? "chek yuborilgan, admin tekshirmoqda" : "chekni botga yuboring"}</span></div>` : ""}
-    <div class="list" id="periods">${rows || `<span class="muted small">Narxlar hali kiritilmagan — admin bilan bog'laning.</span>`}</div>
+    ${used}
+    <div class="section-title"><h2>Muddatni tanlang</h2></div>
+    <div class="list" id="periods">${rows || `<div class="card empty">Narxlar hali kiritilmagan — admin bilan bog'laning.</div>`}</div>
     <div id="pay-box"></div>
-    <span class="muted small">Muddatni tanlang → kartaga o'tkazing → chek rasmini botga yuboring. Admin tasdiqlagach obuna darhol yoqiladi.</span>
-    <div class="row between card" style="padding:12px 14px"><span>Sizning ID: <b>${esc(String(me))}</b></span><button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
-    ${contact}`);
-  modal.querySelector("#copy-me").onclick = () => navigator.clipboard.writeText(String(me)).then(() => toast("ID nusxalandi"), () => toast(String(me)));
-  modal.querySelectorAll("[data-period]").forEach(btn => btn.onclick = async () => {
-    modal.querySelectorAll("[data-period]").forEach(x => x.disabled = true);
+    <div class="card"><span class="muted small">1) Muddatni tanlaysiz → 2) kartaga o'tkazasiz → 3) chek rasmini botga yuborasiz.
+      Admin tasdiqlagach obuna darhol yoqiladi va bot xabar beradi.</span></div>
+    <div class="row between card" style="padding:12px 14px;display:flex"><span>Sizning ID: <b>${esc(String(me))}</b></span>
+      <button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
+    ${contact}
+  </div>`;
+  document.getElementById("copy-me").onclick = () => navigator.clipboard
+    ? navigator.clipboard.writeText(String(me)).then(() => toast("ID nusxalandi"), () => toast(String(me))) : toast(String(me));
+  document.querySelectorAll("[data-period]").forEach(btn => btn.onclick = async () => {
+    document.querySelectorAll("[data-period]").forEach(x => x.disabled = true);
     try {
       const r = await api("/api/plan/order", { period: btn.dataset.period });
       haptic("success");
+      payBox(document, r);  // muddat nomi S.boot dan olinadi — keyin tozalanadi
       S.boot = null;
-      payBox(modal, r);
-    } catch (e) { toast(e.message); haptic("error"); modal.querySelectorAll("[data-period]").forEach(x => x.disabled = false); }
+      document.getElementById("pay-box").scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) { toast(e.message); haptic("error"); document.querySelectorAll("[data-period]").forEach(x => x.disabled = false); }
   });
-}
+};
+
+// Eski chaqiruvlar (obuna tugaganda chiqadigan oyna) — endi shu bo'limga olib boradi
+function planModal() { S.stack = []; go("plan", {}, true); }
 
 function planName(key) {
   const found = ((S.boot && S.boot.plans) || []).find(x => x.key === key);
@@ -1399,8 +1556,8 @@ function planName(key) {
 }
 
 // Muddat tanlangach: karta raqami, summa va «chekni botga yuborish»
-function payBox(modal, r) {
-  const box = modal.querySelector("#pay-box"), list = modal.querySelector("#periods");
+function payBox(root, r) {
+  const box = root.querySelector("#pay-box"), list = root.querySelector("#periods");
   if (list) list.style.display = "none";
   box.innerHTML = `<div class="card" style="gap:10px">
     <b>💳 To'lov · ${esc(planName(r.payment.period))}</b>
