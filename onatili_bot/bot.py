@@ -51,7 +51,7 @@ import webapp
 import config
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
 from scoring import rasch_results, total_points
-from structure import ESSAY_MAX, choice_items, fmt_num, grade, max_points, percent, text_items
+from structure import ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, grade, max_points, percent, text_items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("onatili_bot")
@@ -788,10 +788,11 @@ def result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None, mult
         top = max_points(test["items"], test["fmt"])
         lines.append(f"🧩 Test: <b>{attempt['test_correct']}</b>/{len(choice_items(test['items']))} · "
                      f"✍️ Yozma: <b>{attempt['written_correct']}</b>/{len(text_items(test['items']))}"
-                     + (f" · 📝 Esse: <b>{fmt_num(attempt['essay'])}</b>/{ESSAY_MAX}" if attempt["essay"] is not None else ""))
+                     + (f" · 📝 Esse: <b>{fmt_num(essay_to_75(attempt['essay']))}</b>/{ESSAY_SCALE}"
+                        if attempt["essay"] is not None else ""))
         lines.append(f"💯 Ball: <b>{fmt_num(total_points(attempt))}</b> / {fmt_num(top)}")
         if rasch:
-            lines.append(f"🎓 Rasch bali: <b>{fmt_num(rasch[0])}</b> · Daraja: <b>{rasch[1]}</b>")
+            lines.append(f"🎓 Umumiy ball: <b>{fmt_num(rasch[0])}</b> / 75 · Daraja: <b>{rasch[1]}</b>")
     else:
         correct = attempt["test_correct"] + attempt["written_correct"]
         lines.append(f"🎯 To'g'ri: <b>{correct}</b> / {attempt['auto_total']} "
@@ -837,7 +838,8 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
     try:
         await bot.send_message(
             attempt["tg_id"],
-            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(score)}/{ESSAY_MAX}</b>\n"
+            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b> "
+            f"({fmt_num(score)}/{ESSAY_MAX} mezon bo'yicha)\n"
             f"💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>",
             reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
         )

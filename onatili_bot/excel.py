@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 
 from pdfs import ranked
 from scoring import rasch_results, total_points
-from structure import max_points, percent
+from structure import essay_to_75, max_points, percent
 
 HEAD = PatternFill("solid", fgColor="1D7A48")
 OK = PatternFill("solid", fgColor="D4EDDA")
@@ -32,8 +32,8 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
     ws = wb.active
     ws.title = "Natijalar"
     if milliy:
-        head = ["O'rin", "F.I.Sh.", "Variant", "Test (35)", "Yozma (14)", "Esse (24)",
-                f"Ball ({max_points(test['items'], test['fmt']):g})", "Rasch", "Daraja"]
+        head = ["O'rin", "F.I.Sh.", "Variant", "Test (35)", "Yozma (14)", "Esse (75)", "Esse mezon (24)",
+                f"Ball ({max_points(test['items'], test['fmt']):g})", "Umumiy (75)", "Daraja"]
     else:
         head = ["O'rin", "F.I.Sh.", "Variant", "To'g'ri", "Foiz"]
     ws.append(head + labels)
@@ -42,7 +42,7 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
         if milliy:
             score, grade = rasch.get(a["id"], (None, None))
             row = [place, a["student_name"], a["variant"], a["test_correct"], a["written_correct"],
-                   a["essay"], total_points(a), score, grade]
+                   essay_to_75(a["essay"]), a["essay"], total_points(a), score, grade]
         else:
             right = a["test_correct"] + a["written_correct"]
             row = [place, a["student_name"], a["variant"], right, percent(right, a["auto_total"])]

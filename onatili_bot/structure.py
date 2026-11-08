@@ -16,7 +16,10 @@ Hammasi qo'shilsa 100 ball: yopiq savollar 59,1 + yozma 16,9 + esse 24.
 import re
 import unicodedata
 
+# Esse 24 ballik mezon bilan baholanadi (ekspert / AI), natijada esa 75 ballik shkalaga o'tkaziladi —
+# DTM «Baholash mezonlari» (uzbmb.uz/upload/file/pdf/mtt/Baholash_mezoni.pdf), jadval: essay_to_75()
 ESSAY_MAX = 24
+ESSAY_SCALE = 75
 MAX_TEXT_OPTIONS = 3  # yozma savolga nechta to'g'ri javob (sinonim) kiritish mumkin
 VARIANT_NAMES = ["A", "B", "C", "D"]
 LETTERS = "ABCDEF"
@@ -45,6 +48,18 @@ def build_items(fmt: str, count: int = 0) -> list[dict]:
             item["points"] = official_points(item["label"])
         return items
     return [{"label": str(n), "kind": "choice", "options": 4, "points": 1.0} for n in range(1, count + 1)]
+
+
+def essay_to_75(score: float | None) -> float | None:
+    """Esse bali (0–24) → 75 ballik shkala, DTM jadvali bo'yicha.
+
+    Jadval: 24 → 75, 23,5 → 74, … 12 → 51, … 0,5 → 28, 0 → 0 — ya'ni har 0,5 ball uchun 2 ball,
+    0 dan boshqa har qanday baho 27 + 2 × ball. Baho 0,5 ga yaxlitlanadi (jadval qadami).
+    """
+    if score is None:
+        return None
+    half = round(max(0.0, min(float(ESSAY_MAX), float(score))) * 2) / 2
+    return 0.0 if half <= 0 else 27 + 2 * half
 
 
 def item_points(item: dict) -> float:

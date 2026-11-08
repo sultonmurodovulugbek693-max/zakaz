@@ -643,13 +643,24 @@ def add_essay_cost(attempt_id: int, cost: float) -> None:
         conn.execute("UPDATE essays SET cost = cost + ? WHERE attempt_id = ?", (cost, attempt_id))
 
 
-def create_written_job(attempt_id: int, test_id: int, image_b64: str, mime: str) -> None:
+def create_written_job(attempt_id: int, test_id: int, image_b64: str, mime: str, status: str = "pending") -> None:
+    """Titulning yozma kataklari rasmi. status: pending — AI o'qiydi; manual — o'qituvchi rasmga qarab belgilaydi
+    («✍️ Yozmalarni tekshirish»). Qo'lda tekshiriladigan rasm «AI o'qidi» xabarini chiqarmaydi (notified = 1)."""
     with connect() as conn:
         conn.execute("DELETE FROM written_jobs WHERE attempt_id = ?", (attempt_id,))
         conn.execute(
-            "INSERT INTO written_jobs (attempt_id, test_id, image, mime, created_at) VALUES (?, ?, ?, ?, ?)",
-            (attempt_id, test_id, image_b64, mime, _now()),
+            "INSERT INTO written_jobs (attempt_id, test_id, image, mime, status, notified, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (attempt_id, test_id, image_b64, mime, status, 1 if status == "manual" else 0, _now()),
         )
+
+
+def written_images_for_test(test_id: int) -> set[int]:
+    """Yozma kataklar rasmi saqlangan natijalar — qo'lda tekshirish ekrani shularni ko'rsatadi."""
+    with connect() as conn:
+        rows = conn.execute("SELECT attempt_id FROM written_jobs WHERE test_id = ? AND image IS NOT NULL",
+                            (test_id,)).fetchall()
+    return {row["attempt_id"] for row in rows}
 
 
 def pending_written(limit: int = 5) -> list[dict]:

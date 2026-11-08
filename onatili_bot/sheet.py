@@ -303,7 +303,7 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     c.setFont("Sans", 8)
     y = H - spec["bottom"] - 16
     if test["fmt"] == "milliy":
-        c.drawString(LEFT, y, f"45 — esse botda yoziladi ({ESSAY_MAX} ball): botga test kodi {test['code']} ni "
+        c.drawString(LEFT, y, f"45 — esse botda yoziladi ({ESSAY_MAX} ballik mezon → 75 ballik shkala): botga test kodi {test['code']} ni "
                               "kiriting va shu ID bilan yozing.")
         c.drawString(LEFT, y - 12, "Varaqni bukmang, burchakdagi qora kvadratlar ustiga yozmang.")
     else:

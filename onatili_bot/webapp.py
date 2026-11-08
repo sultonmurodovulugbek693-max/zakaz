@@ -30,18 +30,21 @@ import plans
 import sheet
 import sheet_styles
 from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN
-from scoring import rasch_results, total_points
+from scoring import rasch_breakdown, rasch_results, total_points
 from structure import (
     ESSAY_MAX,
+    ESSAY_SCALE,
     LETTERS,
     MAX_TEXT_OPTIONS,
     build_items,
     choice_items,
+    essay_to_75,
     format_title,
     grade,
     max_points,
     percent,
     split_options,
+    text_is_correct,
     text_items,
 )
 
@@ -364,9 +367,9 @@ async def result(request: web.Request) -> web.Response:
     rasch = None
     if test["fmt"] == "milliy":
         all_attempts = await run(db.list_attempts, test["id"])
-        scores = await run(rasch_results, test, all_attempts)
-        if attempt["id"] in scores:
-            rasch = {"score": scores[attempt["id"]][0], "grade": scores[attempt["id"]][1]}
+        parts = (await run(rasch_breakdown, test, all_attempts)).get(attempt["id"])
+        if parts:  # umumiy = (test qismi + esse 75 ballik) / 2 — DTM tartibi
+            rasch = {"score": parts["score"], "grade": parts["grade"], "test": parts["test"], "essay": parts["essay"]}
     essay = await run(db.get_essay, attempt["id"])
     essay_view = None
     if essay and essay["status"] != "none":
@@ -386,6 +389,7 @@ async def result(request: web.Request) -> web.Response:
             "test_correct": attempt["test_correct"], "written_correct": attempt["written_correct"],
             "choices_total": len(choice_items(test["items"])), "texts_total": len(text_items(test["items"])),
             "auto_total": attempt["auto_total"], "points": attempt.get("points") or 0, "essay": attempt["essay"],
+            "essay_75": essay_to_75(attempt["essay"]),
             "total": total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
             "wrong": attempt["wrong"], "answers": attempt["answers"], "created_at": attempt["created_at"],
             "percent": percent(attempt["test_correct"] + attempt["written_correct"], attempt["auto_total"]),
@@ -393,7 +397,7 @@ async def result(request: web.Request) -> web.Response:
         "rasch": rasch,
         "key": key_display(test, keys.get(attempt["variant"], {})),
         "essay": essay_view,
-        "essay_max": ESSAY_MAX,
+        "essay_max": ESSAY_MAX, "essay_scale": ESSAY_SCALE,
         "announced": bool(test["closed"]),
     })
 
@@ -455,6 +459,12 @@ async def plan_order(request: web.Request) -> web.Response:
             logger.warning("To'lov ko'rsatmasi yuborilmadi", exc_info=True)
     return ok({"payment": {"id": payment["id"], "period": period, "amount": amount, "status": payment["status"]},
                "card": card, "bot": username})
+
+
+async def written_ai(owner_id: int) -> bool:
+    """Yozma javoblarni (36–44) AI o'qiydimi: faqat FREE_IDS va adminlarga. Qolganlar rasmga qarab
+    o'zi belgilaydi — «✍️ Yozmalarni tekshirish» (har savol bo'yicha, kalit bilan yonma-yon)."""
+    return plans.is_free(owner_id) and essay_ai.enabled() and await ai_allowed(owner_id, "written")
 
 
 async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
@@ -535,7 +545,8 @@ async def teacher_test(request: web.Request) -> web.Response:
         rows.append({
             "id": a["id"], "name": a["student_name"], "variant": a["variant"],
             "test_correct": a["test_correct"], "written_correct": a["written_correct"], "auto_total": a["auto_total"],
-            "points": a.get("points") or 0, "essay": a["essay"], "total": total_points(a),
+            "points": a.get("points") or 0, "essay": a["essay"], "essay_75": essay_to_75(a["essay"]),
+            "total": total_points(a),
             "percent": percent(a["test_correct"] + a["written_correct"], a["auto_total"]),
             "rasch": score, "grade": grade_name, "wrong": a["wrong"], "created_at": a["created_at"],
             "essay_status": essay["status"] if essay else None,
@@ -549,7 +560,9 @@ async def teacher_test(request: web.Request) -> web.Response:
     grades = {}
     for _, grade_name in rasch.values():
         grades[grade_name] = grades.get(grade_name, 0) + 1
+    written_review_info = await written_review_summary(test, attempts, keys)
     return ok({
+        "written_review": written_review_info,
         "test": {"id": test["id"], "code": test["code"], "title": test["title"], "fmt": test["fmt"],
                  "format": format_title(test["fmt"], test["count"]), "closed": bool(test["closed"]),
                  "theme": test.get("theme") or "classic", "variants": list(keys), "created_at": test["created_at"],
@@ -677,6 +690,110 @@ async def attempt_answers_save(request: web.Request) -> web.Response:
                "auto_total": fresh["auto_total"]})
 
 
+# ---------- Yozma javoblarni qo'lda tekshirish (36–44) ----------
+# Skanerda har titulning yozma kataklari bitta rasm bo'lib saqlanadi. O'qituvchi savol bo'yicha yuradi:
+# 36-savol → har o'quvchining 36-katagi (rasmdan kesilgan) kalit bilan yonma-yon → ✅ / ❌ → keyingi o'quvchi,
+# keyin 37-savol va h.k. Belgi o'quvchining javobiga yoziladi: ✅ — kalitdagi javob, ❌ — WRONG_MARK.
+# Natija (ball, Rasch) odatdagidek qayta hisoblanadi; ortga qaytib belgini almashtirsa bo'ladi.
+
+WRONG_MARK = "✗"
+
+
+def written_boxes(test: dict, variants: list[str]) -> dict[str, list[float]]:
+    """Har yozma savol qatorining yozma maydon rasmi ichidagi joyi (ulushda):
+    [x, y, kenglik, balandlik, raqam ustuni kengligi, bitta katak kengligi, kataklar soni].
+    Ilova shundan qatorni kesadi va faqat yozilgan kataklarni kattalashtirib ko'rsatadi."""
+    spec = sheet.layout(test, variants)
+    area = spec.get("written_area")
+    if not area:
+        return {}
+    x1, y1, x2, y2 = area
+    width, height = x2 - x1, y2 - y1
+    return {box["label"]: [round((box["x"] - x1) / width, 4), round((box["top"] - y1) / height, 4),
+                           round(box["w"] / width, 4), round(box["h"] / height, 4),
+                           round(sheet.WRITTEN_LABEL_W / width, 4), round(sheet.WRITTEN_CELL_W / width, 4), box["cells"]]
+            for box in spec["written"]}
+
+
+def written_verdicts(attempt: dict, key: dict, labels: list[str]) -> dict[str, bool | None]:
+    """None — hali belgilanmagan (katak bo'sh, AI o'qimagan); True/False — to'g'ri/noto'g'ri."""
+    out = {}
+    for label in labels:
+        given = str(attempt["answers"].get(label) or "").strip()
+        out[label] = None if not given else text_is_correct(given, key.get(label, ""))
+    return out
+
+
+async def written_review_summary(test: dict, attempts: list[dict], keys: dict) -> dict | None:
+    """O'qituvchi sahifasidagi «✍️ Yozmalarni tekshirish» tugmasi uchun: nechta katak belgilangan."""
+    labels = [i["label"] for i in text_items(test["items"])]
+    if not labels or not keys:
+        return None
+    with_image = await run(db.written_images_for_test, test["id"])
+    rows = [a for a in attempts if a["id"] in with_image]
+    if not rows:
+        return None
+    done = sum(1 for a in rows for v in written_verdicts(a, keys.get(a["variant"]) or next(iter(keys.values())), labels).values()
+               if v is not None)
+    return {"students": len(rows), "total": len(rows) * len(labels), "done": done}
+
+
+async def written_review(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    labels = [i["label"] for i in text_items(test["items"])]
+    if not labels:
+        raise ApiError(400, "Bu testda yozma savollar yo'q")
+    keys = await run(db.get_keys, test["id"])
+    with_image = await run(db.written_images_for_test, test["id"])
+    numbers = {s["attempt_id"]: s["number"] for s in await run(db.list_students, test["id"]) if s["attempt_id"]}
+    attempts = [a for a in await run(db.list_attempts, test["id"]) if a["id"] in with_image]
+    attempts.sort(key=lambda a: (numbers.get(a["id"]) or 10 ** 6, a["student_name"]))
+    students = []
+    for a in attempts:
+        key = keys.get(a["variant"]) or next(iter(keys.values()))
+        students.append({"attempt_id": a["id"], "name": a["student_name"], "number": numbers.get(a["id"]),
+                         "variant": a["variant"], "answers": {l: a["answers"].get(l, "") for l in labels},
+                         "verdict": written_verdicts(a, key, labels)})
+    return ok({
+        "test": {"id": test["id"], "title": test["title"], "code": test["code"], "closed": bool(test["closed"])},
+        "labels": labels, "students": students, "wrong_mark": WRONG_MARK,
+        "keys": {v: {l: split_options(k.get(l, "")) for l in labels} for v, k in keys.items()},
+        "boxes": written_boxes(test, list(keys)),
+    })
+
+
+async def written_image(request: web.Request) -> web.Response:
+    user = await auth(request)
+    attempt, _test = await _own_attempt(request, user)
+    job = await run(db.get_written_job, attempt["id"])
+    if not job or not job["image"]:
+        raise ApiError(404, "Bu titulning yozma kataklari rasmi saqlanmagan")
+    return ok({"image": _image_data_url(job["image"], job["mime"])})
+
+
+async def written_mark(request: web.Request) -> web.Response:
+    """✅ / ❌ — o'quvchining shu yozma savoliga belgi; ball va Rasch qayta hisoblanadi (ID bo'yicha o'z natijasiga)."""
+    user = await auth(request)
+    attempt, test = await _own_attempt(request, user)
+    payload = await body(request)
+    label = str(payload.get("label") or "")
+    if label not in {i["label"] for i in text_items(test["items"])}:
+        raise ApiError(400, "Savol noto'g'ri")
+    keys = await run(db.get_keys, test["id"])
+    key = keys.get(attempt["variant"]) or next(iter(keys.values()))
+    correct = bool(payload.get("ok"))
+    options = split_options(key.get(label, ""))
+    if correct and not options:
+        raise ApiError(400, f"{label}-savolning kaliti kiritilmagan")
+    answers = dict(attempt["answers"])
+    answers[label] = options[0] if correct else WRONG_MARK
+    result = grade(test["items"], key, answers)
+    await run(db.update_attempt_result, attempt["id"], answers, result)
+    return ok({"ok": True, "label": label, "verdict": correct, "answer": answers[label],
+               "written_correct": result["written_correct"], "points": result["points"]})
+
+
 async def essay_score(request: web.Request) -> web.Response:
     user = await auth(request)
     attempt, test = await _own_attempt(request, user)
@@ -699,7 +816,7 @@ async def essay_score(request: web.Request) -> web.Response:
     await run(db.set_essay, attempt["id"], score)
     if HOOKS.get("essay_notice"):
         await HOOKS["essay_notice"](test, attempt, score)
-    return ok({"ok": True, "score": score})
+    return ok({"ok": True, "score": score, "score_75": essay_to_75(score)})
 
 
 async def essays_confirm_all(request: web.Request) -> web.Response:
@@ -1204,13 +1321,13 @@ async def scan(request: web.Request) -> web.Response:
     written, ai_note = {}, None
     labels = [i["label"] for i in text_items(test["items"])]
     if labels and written_png and not live:
-        if essay_ai.enabled() and await ai_allowed(test["owner_id"], "written"):
+        if await written_ai(test["owner_id"]):
             try:
                 written, _cost = await essay_ai.read_written(written_png, labels)
             except essay_ai.AIError as error:
                 ai_note = f"AI yozma javoblarni o'qiy olmadi: {error}"
         else:
-            ai_note = "AI o'chiq — yozma javoblarni rasmga qarab o'zingiz yozing"
+            ai_note = "Yozma javoblarni keyin «✍️ Yozmalarni tekshirish» bo'limida rasmga qarab belgilaysiz"
     return ok({
         "student": student_view(student) if student else None,
         "code_status": "ok" if student else ("blank" if result["sheet_code"] == 0 else "unclear"),
@@ -1312,11 +1429,27 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
                "name": student["name"] if student else name})
 
 
+async def store_written_image(test: dict, attempt: dict, image) -> None:
+    """Skanerda kesilgan yozma kataklar rasmi (data URL) — «✍️ Yozmalarni tekshirish» uchun saqlanadi."""
+    image = str(image or "")
+    if not text_items(test["items"]) or not image.startswith("data:image/") or ";base64," not in image:
+        return
+    head, data = image.split(",", 1)
+    if len(data) > 8_000_000:
+        return
+    try:
+        base64.b64decode(data, validate=True)
+    except ValueError:
+        return
+    await run(db.create_written_job, attempt["id"], test["id"], data, head[5:head.index(";")][:20], "manual")
+
+
 async def scan_save(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
     attempt, student = await save_scanned(test, payload)
+    await store_written_image(test, attempt, payload.get("written_image"))
     if from_app(request) and "scan_notice" in HOOKS:
         try:  # APK'dan skanerlandi — natija bot chatiga ham boradi
             await HOOKS["scan_notice"](user["id"], test, student["name"], total_points(attempt),
@@ -1396,10 +1529,10 @@ async def scan_upload(request: web.Request) -> web.Response:
     # O'qituvchi hamma yozma javobni o'zi kiritgan bo'lsa — AI kerak emas
     need_ai = [label for label in labels if not (payload.get("answers") or {}).get(label)]
     queued = False
-    if written and need_ai and essay_ai.enabled() and await ai_allowed(test["owner_id"], "written"):
+    if written:  # AI o'qiydi (bepul ro'yxat) yoki o'qituvchi keyin rasmga qarab belgilaydi
+        queued = bool(need_ai) and await written_ai(test["owner_id"])
         await run(db.create_written_job, attempt["id"], test["id"], base64.b64encode(written).decode(),
-                  str(payload.get("written_mime") or "image/jpeg")[:20])
-        queued = True
+                  str(payload.get("written_mime") or "image/jpeg")[:20], "pending" if queued else "manual")
     essay_status = await attach_essay(user, test, attempt, essays) if essays else None
     response = {"ok": True, "attempt_id": attempt["id"], "student_id": student["id"], "name": student["name"],
                 "written_queued": queued, "essay_status": essay_status,
@@ -1605,6 +1738,9 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan/upload/done", scan_upload_done)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/essay-photo", essay_photo)
     app.router.add_get("/api/teacher/attempt/{attempt_id:\\d+}/answers", attempt_answers)
+    app.router.add_get("/api/teacher/test/{test_id:\\d+}/written", written_review)
+    app.router.add_get("/api/teacher/attempt/{attempt_id:\\d+}/written-image", written_image)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/mark", written_mark)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/answers", attempt_answers_save)
     return app
 

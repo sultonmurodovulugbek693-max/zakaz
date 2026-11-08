@@ -168,10 +168,10 @@ class PlanGates(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.status, 402)
         self.assertFalse((await second.json())["plan"]["active"])
 
-    async def test_written_ai_stops_at_limit_with_one_notice(self):
-        plans.ensure_active(TEACHER)
+    async def test_paid_teacher_written_goes_to_manual_review(self):
+        """Yozma javoblarni AI faqat FREE_IDS ga o'qiydi: obunachida rasm qo'lda tekshirish uchun saqlanadi."""
+        plans.grant(TEACHER, "month")
         test = self.new_test()
-        db.consume_usage(TEACHER, plans.month_key(), "written", plans.trial_limits()["written"], None)  # limit tugagan
         students = db.add_students(test["id"], ["Ali Valiyev", "Vali Aliyev"], ["A", "A"])
         answers = {i["label"]: "A" for i in structure.choice_items(test["items"])}
         for n, student in enumerate(students):
@@ -180,8 +180,10 @@ class PlanGates(unittest.IsolatedAsyncioTestCase):
             form.add_field("written", b"\xff\xd8 rasm", filename="y.jpg", content_type="image/jpeg")
             r = await (await self.client.post(f"/api/teacher/test/{test['id']}/scan/upload", data=form)).json()
             self.assertFalse(r["written_queued"])  # AI chaqirilmaydi — natija baribir saqlandi
-            self.assertTrue(r["attempt_id"])
-        self.assertEqual(len([t for _, t in self.sent if "AI tekshiruvi to'xtadi" in t]), 1)  # oyiga bir marta
+            self.assertEqual(db.get_written_job(r["attempt_id"])["status"], "manual")
+        self.assertEqual(db.pending_written(), [])  # AI navbatiga hech narsa tushmadi
+        self.assertEqual([t for _, t in self.sent if "AI" in t], [])  # «AI to'xtadi» xabari ham yo'q
+        self.assertIsNone(db.take_written_notice(test["id"]))  # «AI o'qidi» xabari chiqmaydi
 
     async def test_bootstrap_shows_plan_and_offers(self):
         plans.grant(TEACHER, "month", 1)

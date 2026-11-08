@@ -1,15 +1,20 @@
 # Ona tili test boti (Milliy sertifikat mock)
 
 Telegram bot va Mini App: o'qituvchi test yaratadi, o'quvchilar onlayn ishlaydi yoki qog'oz titulni
-to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar Rasch bali va daraja bilan,
-yozma javoblar va esseni AI tekshiradi.
+to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM tartibida (Rasch + esse,
+75 ballik shkala) va daraja bilan. Yozma javoblarni o'qituvchi rasmga qarab belgilaydi (FREE_IDS ga — AI).
 
 ## Milliy sertifikat mock — UZBMB rasmiy namunasi bo'yicha
 - 45 ta topshiriq, 180 daqiqa
 - 1–32 test (A–D), 33–35 moslashtirish (A–F), 36–39 yozma, 40–44 yozma (a, b), 45 esse
 - Ballar namunadagidek: 1,1 / 1,7 / 2,5; 40a 1,2, 40b 1,3; 41–44 a 0,8, b 0,9; esse 24 → jami 100
-- Rasch bali (T-shkala, 75 gacha) va daraja: A+ 70 · A 65 · B+ 60 · B 55 · C+ 50 · C 46 · NC
-  (qatnashchilar natijasidan hisoblanadi — taxminiy, rasmiy emas)
+- **Umumiy ball — DTM «Baholash mezonlari» bo'yicha** (uzbmb.uz/upload/file/pdf/mtt/Baholash_mezoni.pdf):
+  - 1-bo'lim — test (1–44): Rasch → T-shkala (50 + 10·Z), ko'pi bilan 75;
+  - 2-bo'lim — esse: 24 ballik mezon bilan baholanadi va jadval bo'yicha **75 ballik shkalaga** o'tadi
+    (24 → 75, 12 → 51, 0,5 → 28, 0 → 0; ya'ni 27 + 2 × ball);
+  - umumiy ball = ikki bo'limning o'rtacha arifmetigi. Daraja: A+ 70 · A 65 · B+ 60 · B 55 · C+ 50 · C 46 · NC.
+  - Essesi hali baholanmaganda faqat 1-bo'lim ko'rsatiladi. Rasch qatnashchilar natijasidan hisoblanadi —
+    taxminiy, rasmiy emas.
 
 ## Imkoniyatlar
 - **O'qituvchi**: test yaratadi, A–D variant kalitlarini kiritadi. Yozma savolga 3 tagacha to'g'ri javob
@@ -31,7 +36,13 @@ yozma javoblar va esseni AI tekshiradi.
   faqat shu. Oddiy testda yana: **Ixcham** (bitta A4 ga 2–3 ta), **Yirik doirachalar**, **Fan ustunli**.
 - **ID** — 4 xonali: tepada 4 ta katak (raqam yoziladi), ostida 4 ta tik 0–9 ustun (bo'yaladi).
   Shaxsiy titulda oldindan yozilgan; bo'sh titulni printerda ko'paytirasiz, o'quvchi ID'sini o'zi to'ldiradi.
-- Yozma javoblar (36–44) — **har harf alohida katakda** (bosh harflar). AI ularni aniq o'qiydi.
+- Yozma javoblar (36–44) — **har harf alohida katakda** (bosh harflar). Skanerda yozma kataklar rasmi saqlanadi.
+- **«✍️ Yozmalarni tekshirish»** (test sahifasida): savol bo'yicha yuriladi — 36-savol → har o'quvchining
+  36-katagi (rasmdan kesilgan, faqat yozilgan qismi kattalashtirilgan) kalit bilan yonma-yon → ✅ yoki ❌ →
+  keyingi o'quvchi; savol tugasa — 37-savol. «‹ ›» bilan ortga qaytib belgini almashtirsa bo'ladi. Ball ID
+  bo'yicha o'sha o'quvchining natijasiga yoziladi, Rasch qayta hisoblanadi. «🖼 Butun rasm» — barcha kataklar.
+- Yozma javoblarni **AI faqat `FREE_IDS` (va adminlar) ga o'qiydi**; qolgan o'qituvchilar yuqoridagi ekranda
+  o'zi belgilaydi (AI o'qigan javobni ham shu ekranda o'zgartirsa bo'ladi).
 - **Esse (45) qog'ozda emas**: o'quvchi botga test kodini kiritadi va tituldagi ID'si bilan esseni
   telefonda yozadi. Titul skanerlanganda (oldin yoki keyin) esse shu ID'li natijaga o'zi qo'shiladi.
   Bitta Telegram akkaunt — bitta ID; baholangan esse o'zgartirilmaydi.
@@ -39,8 +50,8 @@ yozma javoblar va esseni AI tekshiradi.
   1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
      (~1–2 soniya, internet shart emas). Keyingi titulni ustiga qo'yavering.
   2. Kamera ostidagi ro'yxatda har titulni ochib tekshirish/tuzatish mumkin (⚠️ — xira doirachalar).
-  3. «📤 Botga yuborish» — hammasi bittada. Bot chatiga xabar keladi; yozma javoblarni AI fonda
-     o'qiydi va tugagach yana xabar beradi.
+  3. «📤 Botga yuborish» — hammasi bittada. Bot chatiga xabar keladi. Yozma javoblar: `FREE_IDS` da —
+     AI fonda o'qiydi va xabar beradi; boshqalarda — «✍️ Yozmalarni tekshirish» ekraniga tushadi.
   4. Skaner sahifasi bir marta internet bilan ochilgach, keyingi safar internetsiz ham ochiladi.
 
 ## Skaner ilovasi (APK)
@@ -62,7 +73,8 @@ yozma javoblar va esseni AI tekshiradi.
 - **Esse — alohida** (`ESSAY_PROVIDER`): sifatli baholash uchun `ESSAY_PROVIDER=claude` +
   `ANTHROPIC_API_KEY` (console.anthropic.com, balans). Model — `claude-sonnet-5-5` (≈ 250–500 so'm/esse),
   chuqur tahlil bilan. Yozma javoblar esa `AI_PROVIDER` (bepul Gemini) da qoladi.
-- AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.
+- AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi (24 ballik mezon, 75 ballikka o'zi o'tadi), yozma
+  javoblarni «✍️ Yozmalarni tekshirish»da tuzatsa bo'ladi.
 
 ## Obuna va to'lov
 Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va natijalari alohida.

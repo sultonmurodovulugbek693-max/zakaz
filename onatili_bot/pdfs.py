@@ -15,7 +15,7 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, 
 
 from config import FONTS_DIR
 from scoring import rasch_results, total_points
-from structure import (ESSAY_MAX, choice_items, fmt_num, format_title, max_points, percent, split_options,
+from structure import (ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, format_title, max_points, percent, split_options,
                        text_items)
 
 pdfmetrics.registerFont(TTFont("Sans", str(FONTS_DIR / "DejaVuSans.ttf")))
@@ -81,7 +81,7 @@ def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: floa
     c.rect(margin, y - 10 * mm, width - 2 * margin, 10 * mm, stroke=0, fill=1)
     c.setFillColor(colors.white)
     c.setFont("Sans-Bold", 12.5)
-    c.drawCentredString(width / 2, y - 7 * mm, f"45. ESSE VARAQASI ({ESSAY_MAX} ball)")
+    c.drawCentredString(width / 2, y - 7 * mm, f"45. ESSE VARAQASI ({ESSAY_MAX} ballik mezon → {ESSAY_SCALE} ballik shkala)")
     y -= 16 * mm
     c.setFillColor(INK)
     c.setFont("Sans-Bold", 10)
@@ -283,8 +283,8 @@ def _grade_strip(rasch: dict, width: float) -> Table:
 def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float) -> Table:
     choices, texts = choice_items(test["items"]), text_items(test["items"])
     top = max_points(test["items"], test["fmt"])
-    header = ["№", "F.I.Sh.", "Var.", "Test\n(1–35)", "Yozma\n(36–44)", f"Esse\n({ESSAY_MAX})",
-              f"Ball\n({fmt_num(top)})", "Rasch\nbali", "Daraja", "Xato savollar"]
+    header = ["№", "F.I.Sh.", "Var.", "Test\n(1–35)", "Yozma\n(36–44)", f"Esse\n({ESSAY_SCALE})",
+              f"Ball\n({fmt_num(top)})", "Umumiy\n(75)", "Daraja", "Xato savollar"]
     rows = [header]
     style = _table_style()
     for place, attempt in enumerate(ranked(attempts, rasch), start=1):
@@ -292,7 +292,7 @@ def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float) -
         rows.append([
             str(place), Paragraph(_esc(attempt["student_name"]), STYLES["cell"]), attempt["variant"],
             f"{attempt['test_correct']}/{len(choices)}", f"{attempt['written_correct']}/{len(texts)}",
-            "—" if attempt["essay"] is None else fmt_num(attempt["essay"]),
+            "—" if attempt["essay"] is None else fmt_num(essay_to_75(attempt["essay"])),
             fmt_num(total_points(attempt)), fmt_num(score), grade,
             Paragraph(", ".join(attempt["wrong"]) or "—", STYLES["cell_small"]),
         ])

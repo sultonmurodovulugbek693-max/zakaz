@@ -45,7 +45,10 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         key.update({t["label"]: "kitob" for t in structure.text_items(self.items)})
         self.test = db.create_test(OWNER, "Sinov", "milliy", 45, self.items, {"A": key, "B": {**key, "1": "B"}})
         self.student = db.add_students(self.test["id"], ["Ali Valiyev"], ["A"])[-1]
-        plans.grant(OWNER, "year", 1)  # AI limiti yetarli obuna
+        plans.grant(OWNER, "year", 1)
+        # Yozma javoblarni AI faqat FREE_IDS (va admin) ga o'qiydi — bu testlar AI yo'lini tekshiradi
+        self.saved_free = set(plans.FREE_IDS)
+        plans.FREE_IDS.add(OWNER)
         self.user = {"id": OWNER}
         self.bot = FakeBot()
 
@@ -65,6 +68,8 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         webapp.auth = self._auth
+        plans.FREE_IDS.clear()
+        plans.FREE_IDS.update(self.saved_free)
         await self.client.close()
 
     async def upload(self, payload, written=b"\xff\xd8 yozma", essays=()):

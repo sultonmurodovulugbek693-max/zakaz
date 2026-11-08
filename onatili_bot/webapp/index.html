@@ -174,6 +174,17 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .pill-tag { font-size: 11.5px; font-weight: 700; padding: 4px 10px; border-radius: 99px; white-space: nowrap; letter-spacing: .01em; }
 .pill-tag.wait { background: color-mix(in srgb, var(--warn) 18%, transparent); color: color-mix(in srgb, var(--warn) 80%, var(--ink)); }
 .pill-tag.done { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.pill-tag.bad { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+
+/* Yozma javoblarni qo'lda tekshirish: kesilgan katak rasmi va kalit yonma-yon */
+.w-card { gap: 10px; transition: border-color .2s, box-shadow .2s; }
+.w-card.is-ok { border-color: var(--good); box-shadow: inset 0 0 0 1.5px var(--good), var(--shadow); }
+.w-card.is-no { border-color: var(--bad); box-shadow: inset 0 0 0 1.5px var(--bad), var(--shadow); }
+.w-img { background: #fff; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); min-height: 60px; }
+.w-crop { display: block; width: 100%; height: auto; }
+.w-key { display: grid; gap: 2px; padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); }
+.w-key b { font-size: 18px; overflow-wrap: anywhere; }
+.btn.w-on { outline: 3px solid color-mix(in srgb, var(--ink) 30%, transparent); outline-offset: 2px; }
 .empty { text-align: center; padding: 28px 16px; color: var(--muted); display: grid; gap: 6px; justify-items: center; }
 .empty .big { font-size: 40px; }
 
@@ -607,7 +618,7 @@ function applyUiTheme(key) {
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
 const RESUMABLE = { student: ["answer", "result", "myresults", "profile"],
-                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result"] };
+                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
   if (view === "home") return store("lastView", "");
@@ -1080,8 +1091,8 @@ VIEWS.result = async ({ id }) => {
   const card = milliy ? resultCard(t.theme, {
     kind: "Mock", code: t.code, name: a.name, sub: t.variants > 1 ? `${t.title} · ${a.variant} variant` : t.title, value: a.total, max: a.max_points,
     of: `/ ${num(a.max_points)} ball`, gradeLabel: "Daraja", grade: r.rasch ? r.rasch.grade : "—",
-    gradeSub: r.rasch ? `Rasch bali ${num(r.rasch.score)}` : "e'lon qilinmagan",
-    parts: [["Test (1–35)", a.test_correct, a.choices_total], ["Yozma (36–44)", a.written_correct, a.texts_total], ["Esse", a.essay, r.essay_max]],
+    gradeSub: r.rasch ? `Umumiy ${num(r.rasch.score)} / 75` + (r.rasch.essay != null ? ` · test ${num(r.rasch.test)} + esse ${num(r.rasch.essay)}` : "") : "e'lon qilinmagan",
+    parts: [["Test (1–35)", a.test_correct, a.choices_total], ["Yozma (36–44)", a.written_correct, a.texts_total], ["Esse", a.essay_75, r.essay_scale || 75]],
     footLeft: `Kod ${t.code}`, footRight: a.created_at,
   }) : resultCard(t.theme, {
     kind: "Test", code: t.code, name: a.name, sub: t.variants > 1 ? `${t.title} · ${a.variant} variant` : t.title, value: a.percent, max: 100, suffix: "%",
@@ -1098,7 +1109,7 @@ VIEWS.result = async ({ id }) => {
     return `<div class="wr"><div class="row between"><b>${ok ? "✅" : "❌"} ${i.label}</b></div><span>${esc(a.answers[i.label] || "—")}</span>${ok ? "" : `<span class="muted small">To'g'ri: ${esc(r.key[i.label] || "")}</span>`}</div>`;
   }).join("");
   const e = r.essay;
-  const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay)} / ${r.essay_max}</span></div>
+  const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay_75)} / 75 · mezon ${num(a.essay)} / ${r.essay_max}</span></div>
     <div class="card">${e.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}</div>` : "";
   $app.innerHTML = `<div class="view">${card}
@@ -1284,12 +1295,12 @@ VIEWS.teacher = async ({ id, tab }) => {
   const people = d.attempts.map((a, i) => `<button class="item" data-res="${a.id}"><span class="rank">${i + 1}</span>
       <span><b>${esc(a.name)}</b><small>${t.variants.length > 1 ? `${a.variant} variant · ` : ""}${milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}${a.written_status === "pending" ? " · ⏳ AI yozmani o'qimoqda" : a.written_status === "failed" ? " · ❗ yozmani AI o'qiy olmadi" : ""}</small></span>
       <span class="score-col">${milliy
-        ? `<span class="row" style="gap:8px"><b title="Rasch bali">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
+        ? `<span class="row" style="gap:8px"><b title="Umumiy ball (75): test qismi va esse o'rtachasi">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
         : `<b>${num(a.percent)}%</b><small class="muted">${a.test_correct + a.written_correct} / ${a.auto_total}</small>`}</span></button>`).join("");
   const heat = d.analysis.map((q, i) => `<div class="${q.share >= 70 ? "h-good" : q.share >= 40 ? "h-mid" : "h-bad"}" style="animation-delay:${i * .012}s"><b>${q.label}</b>${q.share}%</div>`).join("");
   const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;
   const pending = d.attempts.filter(a => a.essay_status === "pending").length;
-  const essayIcon = a => a.essay != null ? `✅ ${num(a.essay)}` : a.essay_status === "graded" ? `🤖 ${num(a.ai_score)}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
+  const essayIcon = a => a.essay != null ? `✅ ${num(essay75(a.essay))}` : a.essay_status === "graded" ? `🤖 ${num(essay75(a.ai_score))}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
   const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay_status === "none" ? "esse yuborilmagan" : a.essay != null ? "tasdiqlangan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
   // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
   const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0);
@@ -1297,8 +1308,10 @@ VIEWS.teacher = async ({ id, tab }) => {
   const waitingEssays = d.waiting_essays || 0;
   const aiNotice = (waitingEssays ? `<p class="muted small" style="margin:0">📝 ${waitingEssays} ta o'quvchi esse yubordi, lekin titul hali skanerlanmagan — skanerlanganda natijaga o'zi qo'shiladi.</p>` : "") + (wPending || wFailed ? `<p class="muted small" style="margin:0">${wPending ? `⏳ ${wPending} ta titulda yozma javoblarni AI o'qimoqda — tugagach bot xabar beradi.` : ""}
       ${wFailed ? `❗ ${wFailed} ta titulni AI o'qiy olmadi — «👥 Natijalar»da o'quvchini bosib, javoblarni o'zingiz yozing.` : ""}</p>` : "");
+  // Yozma javoblar (36–44): skanerdagi rasmlarga qarab o'qituvchi belgilaydi — har savol bo'yicha
+  const wr = d.written_review, writtenLeft = !!(wr && wr.done < wr.total);
   const steps = offline
-    ? [["Titul PDF", n > 0 || d.students.length > 0], ["Skaner", n > 0 && (!d.students.length || scanned >= d.students.length)], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]]
+    ? [["Titul PDF", n > 0 || d.students.length > 0], ["Skaner", n > 0 && (!d.students.length || scanned >= d.students.length)], ...(wr ? [["Yozmalar", !writtenLeft]] : []), ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]]
     : [["Kodni berish", n > 0], ["Javoblar", n > 0], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]];
   const nowStep = t.closed ? -1 : steps.findIndex(s => !s[1]);
   const stepsHTML = `<ol class="steps">${steps.map(([label, done], i) => `<li class="${t.closed || done ? "done" : i === nowStep ? "now" : ""}">${label}</li>`).join("")}</ol>`;
@@ -1309,6 +1322,8 @@ VIEWS.teacher = async ({ id, tab }) => {
       <button class="btn block" id="scan">📷 Kamerada skanerlash</button><button class="btn ghost block" id="sheets">📄 Titullarni chiqarish (PDF)</button>`;
   else if (!n) next = `<h2>O'quvchilarga kodni bering</h2><p class="muted small">Ular botga shu kodni yozib testni boshlaydi.</p>
       <div class="bigcode">${t.code}</div><button class="btn block" id="copy-code">Kodni nusxalash</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
+  else if (writtenLeft) next = `<h2>✍️ Yozma javoblarni tekshiring</h2><p class="muted small">${wr.students} ta titul · ${wr.done} / ${wr.total} katak belgilangan. Har savol bo'yicha: o'quvchi yozgani rasmi va kalit yonma-yon — ✅ yoki ❌.</p>
+      <button class="btn block" id="written-review">✍️ Yozmalarni tekshirish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : ""}`;
   else if (essaysLeft) next = `<h2>📝 Esselarni tekshiring</h2><p class="muted small">${suggested ? `${suggested} ta esseni AI baholadi — tasdiqlang.` : ""} ${pending ? `${pending} ta esse AI navbatida.` : ""}</p>
       <button class="btn block" data-goto="essays">Esselarga o'tish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : ""}`;
   else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi${offline && d.students.length ? `, ${scanned} / ${d.students.length} titul skanerlangan` : ""}. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
@@ -1332,7 +1347,10 @@ VIEWS.teacher = async ({ id, tab }) => {
     <div class="thead"><h1>${esc(t.title)}</h1>
       <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)}${t.variants.length > 1 ? ` · ${t.variants.join(", ")}` : ""}</span></div></div>
     <div class="tabs bar">${tabsList.map(([k, label]) => `<button class="${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}</div>
-    ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>${strip}${gradeBar}${files}` : ""}
+    ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>
+      ${wr && !writtenLeft ? `<button type="button" class="item" id="written-review-open"><span class="ico">✍️</span>
+        <span><b>Yozma javoblar</b><small>${wr.done} / ${wr.total} katak belgilangan — ko'rish va o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
+      ${strip}${gradeBar}${files}` : ""}
     ${tab === "people" && n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}
     ${tab === "students" ? rosterHTML(d) : ""}
     ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
@@ -1346,7 +1364,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   countUp($app);
   function preview(th) {
     const el = document.getElementById("preview"); if (!el) return;
-    el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 18.5, 24]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
+    el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
     countUp(el);
   }
   if (tab === "design") {
@@ -1361,12 +1379,13 @@ VIEWS.teacher = async ({ id, tab }) => {
   document.querySelectorAll("[data-tab]").forEach(x => x.onclick = () => { S.current.params = { id, tab: x.dataset.tab }; S.useCache = true; haptic("select"); rerender(); });
   document.querySelectorAll("[data-res]").forEach(x => x.onclick = () => attemptEditor(x.dataset.res));
   document.querySelectorAll("[data-essay]").forEach(x => x.onclick = () => essaySheet(x.dataset.essay, id));
+  document.querySelectorAll("#written-review, #written-review-open").forEach(x => x.onclick = () => { haptic("light"); go("written", { id }); });
   document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); } });
   const an = document.getElementById("announce");
   if (an) an.onclick = async () => {
     const waiting = d.attempts.filter(a => a.essay == null && a.essay_status && a.essay_status !== "none").length;
     if (!n) { toast("Hali hech kim javob yubormagan"); return; }
-    if (!(await confirmBox(`${n} ta o'quvchiga natijalar yuborilsinmi?${waiting ? `\n\n⚠️ ${waiting} ta esse hali tasdiqlanmagan.` : ""}${wPending ? `\n\n⏳ ${wPending} ta titulda yozma javoblarni AI hali o'qimoqda.` : ""}\n\nJavob qabul qilish to'xtaydi.`))) return;
+    if (!(await confirmBox(`${n} ta o'quvchiga natijalar yuborilsinmi?${waiting ? `\n\n⚠️ ${waiting} ta esse hali tasdiqlanmagan.` : ""}${wPending ? `\n\n⏳ ${wPending} ta titulda yozma javoblarni AI hali o'qimoqda.` : ""}${writtenLeft ? `\n\n✍️ ${wr.total - wr.done} ta yozma katak hali belgilanmagan — ular noto'g'ri hisoblanadi.` : ""}\n\nJavob qabul qilish to'xtaydi.`))) return;
     an.disabled = true; an.textContent = "Yuborilmoqda…";
     try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(`📢 ${res.sent} ta o'quvchiga yuborildi`); S.boot = null; rerender(); }
     catch (e) { toast(e.message); an.disabled = false; an.textContent = "📢 Natijalarni e'lon qilish"; }
@@ -2457,6 +2476,8 @@ function showReview(r, d, allItems, box, onNext, local = null) {
       return;
     }
     try {
+      // Yozma kataklar rasmi — keyin «✍️ Yozmalarni tekshirish»da savol bo'yicha ko'rsatiladi
+      if (r.written_image) payload.written_image = await jpegDataUrl(r.written_image).catch(() => null);
       const res = await api(`/api/teacher/test/${t.id}/scan/save`, payload);
       haptic("success");
       d.students = (await api(`/api/teacher/test/${t.id}/students`)).students;
@@ -2531,25 +2552,202 @@ async function attemptEditor(attemptId) {
   observer.observe(document.body, { childList: true });
 }
 
+// ---------- Yozma javoblarni qo'lda tekshirish (36–44) ----------
+// Savol bo'yicha yuriladi: 36-savol → har o'quvchining 36-katagi rasmi kalit bilan yonma-yon → ✅ / ❌ →
+// keyingi o'quvchi; savol tugasa — 37-savol. «‹» bilan ortga qaytib belgini almashtirsa bo'ladi.
+// Ball ID bo'yicha o'sha o'quvchining natijasiga yoziladi (server qayta hisoblaydi).
+
+// PNG data URL → yengil JPEG data URL (serverga yuborish uchun)
+function jpegDataUrl(src, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0);
+      resolve(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = reject; img.src = src;
+  });
+}
+
+// Qatordan faqat yozilgan kataklarni kesib, kattalashtiradi (bo'sh kataklar — siyoh yo'q)
+function cropRow(img, box, full) {
+  const [fx, fy, fw, fh, fLabel, fCell, cells] = box, W = img.naturalWidth, H = img.naturalHeight;
+  const x = fx * W, y = fy * H, h = fh * H, labelW = fLabel * W, cellW = fCell * W;
+  // Siyoh: har katak ichidagi (chiziqlardan uzoq) qora piksellar ulushi
+  const probe = document.createElement("canvas"); probe.width = Math.max(1, Math.round(fw * W)); probe.height = Math.max(1, Math.round(h));
+  const pc = probe.getContext("2d", { willReadFrequently: true });
+  pc.drawImage(img, x, y, fw * W, h, 0, 0, probe.width, probe.height);
+  let last = -1;
+  try {
+    const px = pc.getImageData(0, 0, probe.width, probe.height).data;
+    for (let c = 0; c < cells; c++) {
+      const cx0 = Math.round(labelW + c * cellW + cellW * .2), cx1 = Math.round(labelW + (c + 1) * cellW - cellW * .2);
+      const cy0 = Math.round(h * .2), cy1 = Math.round(h * .8);
+      let dark = 0, all = 0;
+      for (let yy = cy0; yy < cy1; yy++) for (let xx = cx0; xx < cx1; xx++) {
+        const i = (yy * probe.width + xx) * 4; all++; if (px[i] < 120) dark++;
+      }
+      if (all && dark / all > 0.04) last = c;
+    }
+  } catch (e) { last = cells - 1; }
+  const used = full ? cells : Math.min(cells, Math.max(4, last + 2));
+  const cropW = labelW + used * cellW, pad = h * .14;
+  const out = document.createElement("canvas");
+  out.width = Math.round(cropW); out.height = Math.round(h + pad * 2);
+  const oc = out.getContext("2d");
+  oc.fillStyle = "#fff"; oc.fillRect(0, 0, out.width, out.height);
+  oc.drawImage(img, x, Math.max(0, y - pad), cropW, h + pad * 2, 0, 0, out.width, out.height);
+  out.className = "w-crop";
+  return { canvas: out, inked: last + 1 };
+}
+
+const W_IMAGES = {};  // attempt_id → Promise<Image | null>
+function writtenImage(attemptId) {
+  if (!W_IMAGES[attemptId]) W_IMAGES[attemptId] = api(`/api/teacher/attempt/${attemptId}/written-image`)
+    .then(r => new Promise(res => { const img = new Image(); img.onload = () => res(img); img.onerror = () => res(null); img.src = r.image; }))
+    .catch(() => null);
+  return W_IMAGES[attemptId];
+}
+
+VIEWS.written = async ({ id, label }) => {
+  loading();
+  let d; try { d = await api(`/api/teacher/test/${id}/written`); } catch (e) { return fail(e); }
+  if (!d.students.length) {
+    $app.innerHTML = `<div class="view"><div class="hero"><span class="brand"><i>O</i>Yozma javoblar</span><h1>${esc(d.test.title)}</h1></div>
+      <div class="card empty"><div class="big">📷</div><b>Hali rasm yo'q</b>
+      <span>Titullarni skanerlang — har titulning yozma kataklari rasmi shu yerda savol bo'yicha chiqadi.</span></div></div>`;
+    return;
+  }
+  const queue = [];
+  d.labels.forEach(l => d.students.forEach((_, i) => queue.push([l, i])));
+  const undecided = from => queue.findIndex(([l, i], k) => k >= from && d.students[i].verdict[l] == null);
+  let pos = label ? queue.findIndex(([l, i]) => l === label && d.students[i].verdict[l] == null) : undecided(0);
+  if (pos < 0) pos = label ? Math.max(0, queue.findIndex(([l]) => l === label)) : 0;
+  let full = false, busy = false;
+  const done = l => d.students.filter(s => s.verdict[l] != null).length;
+
+  function paint() {
+    const [l, i] = queue[pos], st = d.students[i], key = (d.keys[st.variant] || Object.values(d.keys)[0] || {})[l] || [];
+    const verdict = st.verdict[l], given = st.answers[l];
+    const shown = given && given !== d.wrong_mark && !(key.length && given === key[0] && verdict === true);
+    const inLabel = d.students.length, idx = i + 1, total = queue.length, all = queue.filter(([ql, qi]) => d.students[qi].verdict[ql] != null).length;
+    $app.innerHTML = `<div class="view">
+      <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Yozma javoblar · ${esc(d.test.title)}</span>
+        <h1>${esc(l)}-savol</h1><span class="muted small">${idx} / ${inLabel} o'quvchi · jami ${all} / ${total} belgilangan</span></div></div>
+      <div class="track" style="height:6px"><i style="width:${all / total * 100}%"></i></div>
+      <div class="chips" style="flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">${d.labels.map(q => {
+        const n = done(q); return `<button type="button" class="chip ${q === l ? "on" : ""}" data-jump="${q}" style="flex-shrink:0">${q}${n === inLabel ? " ✓" : ` ${n}/${inLabel}`}</button>`;
+      }).join("")}</div>
+      ${d.test.closed ? `<div class="card" style="padding:10px 14px"><span class="muted small">📢 Natijalar e'lon qilingan — belgini o'zgartirsangiz, o'quvchi natijasi ham yangilanadi.</span></div>` : ""}
+      <div class="card w-card ${verdict === true ? "is-ok" : verdict === false ? "is-no" : ""}">
+        <div class="row between"><b>${st.number != null ? `<span class="muted">${pad3(st.number)} ·</span> ` : ""}${esc(st.name)}</b>
+          ${Object.keys(d.keys).length > 1 ? `<span class="pill-tag">${esc(st.variant)} variant</span>` : ""}</div>
+        <div id="w-img" class="w-img"><div class="skeleton" style="height:70px"></div></div>
+        <div class="row between small"><button type="button" class="btn plain sm" id="w-full">${full ? "↤ Faqat yozilgani" : "↔ Butun qator"}</button>
+          <button type="button" class="btn plain sm" id="w-whole">🖼 Butun rasm</button></div>
+        <div class="w-key"><span class="muted small">Kalit</span><b>${key.length ? key.map(esc).join(" / ") : "— kiritilmagan"}</b></div>
+        ${shown ? `<div class="w-key"><span class="muted small">O'qilgan javob</span><b>${esc(given)}</b></div>` : ""}
+        <span class="pill-tag ${verdict === true ? "done" : verdict === false ? "bad" : "wait"}" style="justify-self:start">${verdict === true ? "✅ To'g'ri deb belgilangan" : verdict === false ? "❌ Noto'g'ri deb belgilangan" : "Hali belgilanmagan"}</span>
+      </div>
+      <div class="sticky-bottom"><div class="row" style="gap:8px">
+        <button type="button" class="btn ghost" id="w-prev" ${pos === 0 ? "disabled" : ""} aria-label="Oldingisi" style="padding:14px 16px">‹</button>
+        <button type="button" class="btn danger ${verdict === false ? "w-on" : ""}" id="w-no" style="flex:1">❌ Noto'g'ri</button>
+        <button type="button" class="btn ${verdict === true ? "w-on" : ""}" id="w-yes" style="flex:1">✅ To'g'ri</button>
+        <button type="button" class="btn ghost" id="w-next" ${pos >= queue.length - 1 ? "disabled" : ""} aria-label="Keyingisi" style="padding:14px 16px">›</button>
+      </div></div>
+    </div>`;
+    const holder = document.getElementById("w-img");
+    writtenImage(st.attempt_id).then(img => {
+      if (queue[pos][1] !== i || queue[pos][0] !== l || !document.body.contains(holder)) return;
+      if (!img) { holder.innerHTML = `<div class="card empty" style="padding:14px">Rasm topilmadi</div>`; return; }
+      const box = d.boxes[l];
+      if (!box) { holder.innerHTML = ""; holder.appendChild(Object.assign(img.cloneNode(), { className: "w-crop" })); return; }
+      const { canvas } = cropRow(img, box, full);
+      holder.innerHTML = ""; holder.appendChild(canvas);
+    });
+    // Keyingi o'quvchilar rasmlari oldindan yuklanadi
+    for (let k = 1; k <= 3 && pos + k < queue.length; k++) writtenImage(d.students[queue[pos + k][1]].attempt_id);
+    document.getElementById("w-yes").onclick = () => mark(true);
+    document.getElementById("w-no").onclick = () => mark(false);
+    document.getElementById("w-prev").onclick = () => { if (pos > 0) { pos--; haptic("select"); paint(); } };
+    document.getElementById("w-next").onclick = () => { if (pos < queue.length - 1) { pos++; haptic("select"); paint(); } };
+    document.getElementById("w-full").onclick = () => { full = !full; paint(); };
+    document.getElementById("w-whole").onclick = async () => {
+      const img = await writtenImage(st.attempt_id); if (!img) return toast("Rasm topilmadi");
+      const modal = openModal(`🖼 ${esc(st.name)}`, `<span class="muted small">Titulning barcha yozma kataklari</span>`);
+      modal.firstElementChild.appendChild(Object.assign(img.cloneNode(), { className: "w-crop" }));
+    };
+    document.querySelectorAll("[data-jump]").forEach(x => x.onclick = () => {
+      const q = x.dataset.jump, first = queue.findIndex(([ql, qi]) => ql === q && d.students[qi].verdict[ql] == null);
+      pos = first >= 0 ? first : queue.findIndex(([ql]) => ql === q); haptic("select"); paint();
+    });
+  }
+
+  async function mark(ok) {
+    if (busy) return;
+    const [l, i] = queue[pos], st = d.students[i];
+    busy = true;
+    try {
+      const r = await api(`/api/teacher/attempt/${st.attempt_id}/mark`, { label: l, ok });
+      st.verdict[l] = r.verdict; st.answers[l] = r.answer;
+      S.teacherCache = null; S.useCache = false; S.boot = null;
+      haptic(ok ? "success" : "warning");
+      if (pos >= queue.length - 1) return finish();
+      const nextLabel = queue[pos + 1][0];
+      if (nextLabel !== l) toast(`✅ ${l}-savol tugadi → ${nextLabel}-savol`);
+      pos++; paint();
+    } catch (e) { toast(e.message); haptic("error"); }
+    finally { busy = false; }
+  }
+
+  function finish() {
+    const left = queue.filter(([l, i]) => d.students[i].verdict[l] == null).length;
+    $app.innerHTML = `<div class="view"><div class="card success">
+      <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+      <h1>${left ? `Oxiriga yetdingiz` : `Yozma javoblar tekshirildi`}</h1>
+      <p class="muted">${d.students.length} ta titul · ${d.labels.length} ta savol${left ? `<br>⚠️ ${left} ta katak belgilanmay qoldi` : ""}</p>
+      ${left ? `<button class="btn block" id="w-left">Belgilanmaganlarga qaytish</button>` : ""}
+      <button class="btn ghost block" id="w-back">Test sahifasiga</button></div></div>`;
+    const wl = document.getElementById("w-left");
+    if (wl) wl.onclick = () => { pos = Math.max(0, undecided(0)); paint(); };
+    document.getElementById("w-back").onclick = () => back();
+  }
+
+  paint();
+};
+
+// Esse 24 ballik mezon bilan baholanadi, natijada DTM jadvali bo'yicha 75 ballik shkalaga o'tadi (27 + 2 × ball)
+const essay75 = s => s == null || s === "" || isNaN(s) ? null : (Math.round(Math.max(0, Math.min(24, +s)) * 2) / 2 <= 0 ? 0 : 27 + 2 * (Math.round(Math.max(0, Math.min(24, +s)) * 2) / 2));
+
 async function essaySheet(attemptId, testId) {
   let e; try { e = await api(`/api/teacher/essay/${attemptId}`); } catch (err) { return toast(err.message); }
   const modal = document.createElement("div"); modal.className = "sheet-modal";
   const crit = e.ai && e.ai.criteria ? e.ai.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("") : "";
   modal.innerHTML = `<div role="dialog" aria-label="Esse">
     <div class="row between"><h2>${esc(e.name)}</h2><button class="btn plain" data-close>Yopish</button></div>
-    ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(e.essay)} / 24</div>` : ""}
-    ${e.status === "graded" ? `<div class="row between"><b>🤖 AI bahosi</b><span class="bigcode" style="font-size:26px;letter-spacing:0">${num(e.ai_score)}</span></div>${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
+    ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(essay75(e.essay))} / 75 (${num(e.essay)} / 24 mezon)</div>` : ""}
+    ${e.status === "graded" ? `<div class="row between"><b>🤖 AI bahosi</b><span class="bigcode" style="font-size:26px;letter-spacing:0">${num(essay75(e.ai_score))}<small class="muted" style="font-size:13px"> / 75</small></span></div>
+      <span class="muted small">24 ballik mezon bo'yicha ${num(e.ai_score)} → DTM jadvali bo'yicha ${num(essay75(e.ai_score))} / 75</span>${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
     ${e.status === "pending" ? `<p class="muted">⏳ AI hali tekshirmoqda — birozdan keyin qayta oching.</p>` : ""}
     ${e.status === "failed" ? `<p class="muted">❗️ AI baholay olmadi: ${esc(e.error || "")}</p>` : ""}
     ${e.status === "none" ? `<p class="muted">➖ O'quvchi esse yubormagan.</p>` : ""}
     ${e.text ? `<details><summary class="small"><b>Esse matni</b></summary><p style="white-space:pre-wrap;font-size:14px">${esc(e.text)}</p></details>` : e.photos ? `<p class="muted small">📷 Esse ${e.photos} ta rasm ko'rinishida yuborilgan.</p>` : ""}
-    ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(e.ai_score)})</button>` : ""}
+    ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(essay75(e.ai_score))} / 75)</button>` : ""}
     ${e.status === "failed" ? `<button class="btn ghost block" data-act="retry">🔁 AI'da qayta tekshirish</button>` : ""}
-    <div class="row"><input class="input" id="manual" inputmode="decimal" placeholder="O'z bahoyingiz: 0–24, masalan 18,5"><button class="btn ghost" data-act="score">Saqlash</button></div>
+    <div class="field"><label for="manual">O'z bahoyingiz — 24 ballik mezon bo'yicha (0–24, 0,5 qadam)</label>
+      <div class="row"><input class="input" id="manual" inputmode="decimal" placeholder="Masalan 18,5"><button class="btn ghost" data-act="score">Saqlash</button></div>
+      <span class="muted small" id="manual-75">DTM jadvali bo'yicha 75 ballik shkalaga o'tkaziladi.</span></div>
   </div>`;
   document.body.appendChild(modal);
   const close = () => modal.remove();
   modal.onclick = ev => { if (ev.target === modal || ev.target.closest("[data-close]")) close(); };
+  const manual = modal.querySelector("#manual"), hint = modal.querySelector("#manual-75");
+  manual.oninput = () => {
+    const v = parseFloat(manual.value.replace(",", "."));
+    hint.textContent = isNaN(v) || v < 0 || v > 24 ? "DTM jadvali bo'yicha 75 ballik shkalaga o'tkaziladi."
+      : `= ${num(essay75(v))} / 75 ball (DTM jadvali)`;
+  };
   modal.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const action = b.dataset.act, payload = { action };
     if (action === "score") payload.score = document.getElementById("manual").value;
