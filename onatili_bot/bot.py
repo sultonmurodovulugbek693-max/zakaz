@@ -22,7 +22,7 @@ import time
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -109,21 +109,24 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("app_"):
         await confirm_app_login(message, args[1][4:])
         return
-    if len(args) == 2 and args[1].startswith("course_"):
-        await open_course_register(message, args[1][7:])
+    if len(args) == 2 and args[1] == "register":
+        await send_register_prompt(message)
         return
     await send_welcome(message, user)
 
 
-async def open_course_register(message: Message, code: str) -> None:
-    """Kurs havolasi (t.me/<bot>?start=course_<kod>) — ro'yxatdan o'tish ilovada ochiladi."""
-    markup = app_markup("📝 Ro'yxatdan o'tish", course=code)
+async def send_register_prompt(message: Message) -> None:
+    """Oflayn «Ona tili» kursiga ro'yxatdan o'tish — ilovaning alohida ekranida."""
+    registered = await asyncio.to_thread(db.get_registration, message.from_user.id)
+    markup = app_markup("📝 Ro'yxatdan o'tish", v="register")
     if not markup:
         await message.answer("⚠️ Ilova hali sozlanmagan (WEBAPP_URL).")
         return
     await message.answer(
-        "📝 <b>Oflayn kursga ro'yxatdan o'tish</b>\n"
-        "Ism-familiya, manzil va telefon raqamingizni kiritish uchun tugmani bosing 👇",
+        ("✅ <b>Siz ro'yxatdan o'tgansiz</b>\nMa'lumotlaringizni o'zgartirmoqchi bo'lsangiz — tugmani bosing 👇"
+         if registered else
+         "📝 <b>Oflayn «Ona tili» kursiga ro'yxatdan o'tish</b>\n"
+         "Ism-familiya, telefon raqam, yosh va yashash joyingizni qoldiring — biz siz bilan bog'lanamiz 👇"),
         reply_markup=markup,
     )
 
@@ -151,8 +154,19 @@ async def send_welcome(message: Message, user) -> None:
         "👩‍🏫 <b>O'qituvchi</b> — test yaratadi, natijalar va esselarni kuzatadi, e'lon qiladi",
         reply_markup=ReplyKeyboardRemove(),
     )
-    await message.answer("Boshlash uchun tugmani bosing 👇" if app_url() else "⚠️ Ilova hali sozlanmagan (WEBAPP_URL).",
-                         reply_markup=app_markup())
+    if not app_url():
+        await message.answer("⚠️ Ilova hali sozlanmagan (WEBAPP_URL).")
+        return
+    registered = await asyncio.to_thread(db.get_registration, user.id)
+    rows = [[InlineKeyboardButton(text="✨ Ilovaga kirish", web_app=WebAppInfo(url=app_url()))]]
+    rows.append([InlineKeyboardButton(
+        text="✅ Ma'lumotlarimni o'zgartirish" if registered else "📝 Oflayn kursga ro'yxatdan o'tish",
+        web_app=WebAppInfo(url=app_url(v="register")))])
+    await message.answer(
+        "Boshlash uchun tugmani bosing 👇"
+        + ("" if registered else "\n\n📝 Oflayn <b>«Ona tili»</b> kursimizga yozilmoqchi bo'lsangiz — "
+                                 "pastdagi ikkinchi tugmani bosing."),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.message(Command("backup"))
@@ -176,34 +190,39 @@ def _who(user: dict) -> str:
 
 @dp.message(Command("obuna"))
 async def cmd_grant(message: Message, command: CommandObject) -> None:
-    """Admin: /obuna <@username yoki ID> <tarif> [oy] — o'qituvchiga tarif berish yoki uzaytirish."""
+    """Admin: /obuna <@username yoki ID> <muddat> [nechta] — obunani yoqish yoki uzaytirish."""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("Bu buyruq faqat admin uchun.")
         return
     args = (command.args or "").split()
     if len(args) < 2:
-        await message.answer("Ishlatish: <code>/obuna @username pro 1</code>  (tarif, necha oy)\n"
+        await message.answer("Ishlatish: <code>/obuna @username oy 1</code>  (muddat, nechta)\n"
+                             "Muddatlar: <code>hafta</code>, <code>oy</code>, <code>3oy</code>, <code>yil</code>\n"
                              "O'qituvchi oldin botga /start bosgan bo'lsin (yoki ID'sini yozing).\n\n"
-                             f"Tariflar:\n{plans.price_list()}")
+                             f"Narxlar:\n{plans.price_list()}")
         return
-    months = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+    count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
     user = await asyncio.to_thread(db.find_user, args[0])
     if not user:
         await message.answer("Bunday foydalanuvchi topilmadi — u botga /start bosgan bo'lishi kerak "
                              "(yoki Telegram ID'sini yozing: o'qituvchi /myid bilan biladi).")
         return
     try:
-        status = await asyncio.to_thread(plans.grant, user["tg_id"], args[1].lower(), months)
+        status = await asyncio.to_thread(plans.grant, user["tg_id"], args[1].lower(), count)
     except ValueError as error:
         await message.answer(f"❌ {esc(str(error))}")
         return
-    limits = status["limits"]
-    await message.answer(f"✅ {_who(user)}\n💎 <b>{status['name']}</b> · {status['expires']} gacha\n"
-                         f"AI: oyiga {limits['essays']} esse, {limits['written']} titul")
+    await message.answer(f"✅ {_who(user)}\n💎 <b>{status['name']}</b> · {status['expires']} gacha")
+    await notify_granted(message.bot, user["tg_id"], status)
+
+
+async def notify_granted(bot: Bot, tg_id: int, status: dict) -> None:
+    limits = status.get("limits") or {}
+    ai = (f"\nAI tekshiruvi: oyiga {limits['essays']} ta esse va {limits['written']} ta titul."
+          if limits else "")
     try:
-        await message.bot.send_message(
-            user["tg_id"], f"🎉 <b>Obunangiz faollashdi</b>: {status['name']} · {status['expires']} gacha\n"
-                           f"AI tekshiruvi: oyiga {limits['essays']} ta esse va {limits['written']} ta titul.",
+        await bot.send_message(
+            tg_id, f"🎉 <b>Obunangiz faollashdi</b>: {status['name']} · {status['expires']} gacha{ai}",
             reply_markup=app_markup())
     except Exception:
         logger.warning("O'qituvchiga obuna xabari yuborilmadi")
@@ -224,6 +243,9 @@ async def cmd_subscriptions(message: Message) -> None:
         st = await asyncio.to_thread(plans.status, sub["tg_id"])
         mark = "🟢" if st["active"] else "🔴"
         days = f"{st['days_left']} kun" if st["active"] else "tugagan"
+        if st["unlimited"]:
+            lines.append(f"♾ {_who(sub)}\n    {st['name']} · cheksiz")
+            continue
         lines.append(f"{mark} {_who(sub)}\n    {st['name']} · {days} · esse {st['used']['essays']}/{st['limits']['essays']}"
                      f" · titul {st['used']['written']}/{st['limits']['written']}")
     text, chunk = "\n".join(lines), ""
@@ -237,15 +259,148 @@ async def cmd_subscriptions(message: Message) -> None:
 
 @dp.message(Command("tariflar"))
 async def cmd_prices(message: Message) -> None:
-    contact = f"\n\nObuna uchun: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
-    await message.answer(f"💎 <b>Tariflar</b> (oyiga)\n{plans.price_list()}\n\n"
-                         f"Yangi o'qituvchiga {plans.TRIAL_DAYS} kunlik bepul sinov.{contact}")
+    if plans.is_free(message.from_user.id):
+        await message.answer("♾ <b>Sizga hammasi bepul</b> — obuna sotib olish shart emas.")
+        return
+    trial = await asyncio.to_thread(plans.trial_days)
+    contact = f"\n\nSavol bo'lsa: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
+    prices = await asyncio.to_thread(plans.price_list)
+    await message.answer(f"💎 <b>Obuna narxlari</b>\n{prices}\n\n"
+                         + (f"Yangi o'qituvchiga {trial} kunlik bepul sinov.\n" if trial else "")
+                         + "Sotib olish: ilovadagi «💎 Obuna» tugmasi — kartaga o'tkazasiz, chekni shu yerga "
+                           "yuborasiz, admin tasdiqlaydi." + contact,
+                         reply_markup=app_markup())
+
+
+@dp.message(Command("royxat"))
+async def cmd_register(message: Message, state: FSMContext) -> None:
+    """Oflayn «Ona tili» kursiga ro'yxatdan o'tish tugmasi."""
+    await state.clear()
+    await send_register_prompt(message)
 
 
 @dp.message(Command("myid"))
 async def cmd_myid(message: Message) -> None:
     await message.answer(f"🆔 Telegram ID'ingiz: <code>{message.from_user.id}</code>\n"
                          "Admin bo'lish uchun shu raqamni Render'da ADMIN_IDS o'zgaruvchisiga yozing.")
+
+
+# ---------- Obuna to'lovi: karta → chek → admin tasdiqlaydi ----------
+
+# StateFilter(None): admin biror narsa kiritayotgan bo'lsa (kanal qo'shish, narx) — xabar o'shanga ketsin
+@dp.message(StateFilter(None), F.photo | F.document)
+async def receipt_received(message: Message) -> None:
+    """Chek rasmi: ochiq to'lov so'rovi bo'lsa — adminlarga tasdiqlash uchun yuboriladi."""
+    payment = await asyncio.to_thread(db.open_payment, message.from_user.id)
+    if not payment:
+        await message.answer("🧾 Chek qabul qilinmadi: avval ilovadagi «💎 Obuna» tugmasidan muddatni tanlang.",
+                             reply_markup=app_markup("💎 Obuna"))
+        return
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    await asyncio.to_thread(db.attach_receipt, payment["id"], file_id)
+    await message.answer(f"✅ Chek qabul qilindi · {plans.period_name(payment['period'])} — "
+                         f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, obunangizni yoqadi.")
+    await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo))
+
+
+async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> None:
+    payment = await asyncio.to_thread(db.get_payment, payment_id)
+    if not payment or not payment["receipt"]:
+        return
+    caption = (f"🧾 <b>Yangi to'lov</b> · {plans.period_name(payment['period'])} — "
+               f"<b>{plans.money(payment['amount'])} so'm</b>\n{LINE}\n{_who(payment)}")
+    markup = inline([[("✅ Tasdiqlash", f"pay:ok:{payment_id}"), ("❌ Rad etish", f"pay:no:{payment_id}")]])
+    for admin_id in ADMIN_IDS:
+        try:
+            if as_photo:
+                await bot.send_photo(admin_id, payment["receipt"], caption=caption, reply_markup=markup)
+            else:
+                await bot.send_document(admin_id, payment["receipt"], caption=caption, reply_markup=markup)
+        except Exception:
+            logger.warning("Chek adminga yuborilmadi: %s", admin_id, exc_info=True)
+
+
+@dp.callback_query(F.data.startswith("pay:"))
+async def decide_payment(callback: CallbackQuery) -> None:
+    """Admin chekni tasdiqlaydi yoki rad etadi. Tasdiqlansa — obuna darhol yoqiladi."""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    _, action, raw = callback.data.split(":")
+    payment = await asyncio.to_thread(db.get_payment, int(raw))
+    if not payment:
+        await callback.answer("To'lov topilmadi", show_alert=True)
+        return
+    decided = await asyncio.to_thread(db.decide_payment, payment["id"], "paid" if action == "ok" else "rejected",
+                                      callback.from_user.id)
+    if not decided:
+        await callback.answer("Bu to'lov allaqachon ko'rib chiqilgan", show_alert=True)
+        return
+    if action == "ok":
+        status = await asyncio.to_thread(plans.grant, payment["tg_id"], payment["period"])
+        await callback.answer("✅ Obuna yoqildi")
+        await notify_granted(callback.bot, payment["tg_id"], status)
+        note = f"✅ Tasdiqladi: {esc(callback.from_user.full_name)} — {status['name']} · {status['expires']} gacha"
+    else:
+        await callback.answer("❌ Rad etildi")
+        try:
+            await callback.bot.send_message(
+                payment["tg_id"],
+                "❌ <b>To'lovingiz tasdiqlanmadi</b>\nChek noto'g'ri yoki summa mos kelmagan bo'lishi mumkin. "
+                "Ilovada qaytadan urinib ko'ring"
+                + (f" yoki @{esc(config.ADMIN_CONTACT)} ga yozing." if config.ADMIN_CONTACT else "."))
+        except Exception:
+            logger.warning("Rad etish xabari yuborilmadi")
+        note = f"❌ Rad etdi: {esc(callback.from_user.full_name)}"
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.caption or ''}\n{LINE}\n{note}")
+    except TelegramBadRequest:
+        pass
+
+
+@dp.message(Command("arizalar"))
+async def cmd_registrations(message: Message) -> None:
+    """Admin: oflayn kursga yozilganlar ro'yxati."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    regs = await asyncio.to_thread(db.list_registrations, 50)
+    if not regs:
+        await message.answer("Hali hech kim ro'yxatdan o'tmagan.")
+        return
+    total = await asyncio.to_thread(db.count_registrations)
+    lines = [f"📝 <b>Oflayn kursga yozilganlar</b>: {total} ta\n"]
+    for reg in regs:
+        who = f"@{esc(reg['username'])}" if reg.get("username") else f"<code>{reg['tg_id']}</code>"
+        lines.append(f"👤 <b>{esc(reg['full_name'])}</b> · {reg['age']} yosh · {who}\n"
+                     f"    📞 {esc(reg['phone'])}"
+                     + (f" · 📍 {esc(reg['address'])}" if reg.get("address") else "")
+                     + f" · {reg['created_at']}")
+    chunk = ""
+    for line in "\n".join(lines).split("\n"):
+        if len(chunk) + len(line) > 3800:
+            await message.answer(chunk)
+            chunk = ""
+        chunk += line + "\n"
+    await message.answer(chunk)
+
+
+@dp.message(Command("tolovlar"))
+async def cmd_payments(message: Message) -> None:
+    """Admin: oxirgi to'lovlar."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    payments = await asyncio.to_thread(db.list_payments, None, 20)
+    if not payments:
+        await message.answer("Hali to'lov yo'q.")
+        return
+    marks = {"paid": "✅", "rejected": "❌", "sent": "🧾", "pending": "⏳", "canceled": "🚫"}
+    lines = [f"💳 <b>Oxirgi to'lovlar</b>: {len(payments)} ta\n"]
+    for pay in payments:
+        lines.append(f"{marks.get(pay['status'], '•')} {_who(pay)}\n"
+                     f"    {plans.period_name(pay['period'])} · {plans.money(pay['amount'])} so'm · {pay['created_at']}")
+    await message.answer("\n".join(lines)[:3900])
 
 
 # ---------- Majburiy obuna ----------
@@ -315,6 +470,7 @@ async def check_subscription(callback: CallbackQuery, state: FSMContext) -> None
 
 class Admin(StatesGroup):
     add_channel = State()
+    edit_setting = State()
 
 
 def is_admin(event) -> bool:
@@ -334,6 +490,7 @@ async def admin_panel() -> tuple[str, InlineKeyboardMarkup]:
         ["<i>Hozircha kanal yo'q — obuna talab qilinmaydi.</i>"]
     rows = [[(f"❌ {c['title'][:30]}", f"chdel:{c['chat_id']}")] for c in channels]
     rows.append([("➕ Kanal qo'shish", "chadd")])
+    rows.append([("💎 Obuna sozlamalari", "settings")])
     rows.append([("🔄 Yangilash", "admin")])
     return "\n".join(lines), inline(rows)
 
@@ -414,6 +571,118 @@ async def admin_remove_channel(callback: CallbackQuery) -> None:
     await callback.answer("❌ Kanal olib tashlandi")
     text, markup = await admin_panel()
     await safe_edit(callback.message, text, markup)
+
+
+# ---------- Obuna sozlamalari (narx, chegirma, karta) ----------
+
+# kalit: (so'raladigan savol, raqammi)
+SETTING_FIELDS = {
+    "card_number": ("💳 Karta raqamini yuboring (masalan <code>8600 1234 5678 9012</code>)", False),
+    "card_holder": ("👤 Karta egasining ism-familiyasini yuboring", False),
+    "trial_days": ("⏳ Bepul sinov necha kun bo'lsin? <code>0</code> — sinov o'chiq", True),
+    "ai_essays": ("🤖 Oyiga nechta AI esse tekshirilsin?", True),
+    "ai_written": ("🤖 Oyiga nechta AI titul o'qilsin?", True),
+}
+
+
+async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
+    card = await asyncio.to_thread(plans.card)
+    offers = await asyncio.to_thread(plans.offers)
+    trial = await asyncio.to_thread(plans.trial_days)
+    limits = await asyncio.to_thread(plans.limits)
+    lines = [
+        "💎 <b>Obuna sozlamalari</b>", LINE,
+        f"💳 Karta: <code>{esc(card['number']) or '— kiritilmagan'}</code>"
+        + (f"\n👤 Egasi: {esc(card['holder'])}" if card["holder"] else ""),
+        f"⏳ Bepul sinov: <b>{trial}</b> kun" + (" <i>(o'chiq — darhol obuna kerak)</i>" if not trial else ""),
+        f"🤖 Oylik AI limiti: {limits['essays']} esse · {limits['written']} titul",
+        "", "<b>Narxlar</b> — tugma bosib o'zgartiring:",
+    ]
+    rows = []
+    for offer in offers:
+        price = f"{plans.money(offer['final'])} so'm"
+        if offer["discount"]:
+            price = f"<s>{plans.money(offer['price'])}</s> <b>{price}</b> 🔥 −{offer['discount']}%"
+        lines.append(f"• {offer['name']} — {price}")
+        rows.append([(f"💵 {offer['name']}", f"set:price_{offer['key']}"),
+                     (f"🔥 −{offer['discount']}%", f"set:discount_{offer['key']}")])
+    rows.append([("💳 Karta", "set:card_number"), ("👤 Karta egasi", "set:card_holder")])
+    rows.append([("⏳ Sinov kunlari", "set:trial_days")])
+    rows.append([("🤖 Esse limiti", "set:ai_essays"), ("🤖 Titul limiti", "set:ai_written")])
+    rows.append([("🔄 Yangilash", "settings"), ("↩️ Admin paneli", "admin")])
+    return "\n".join(lines), inline(rows)
+
+
+@dp.message(Command("sozlama"))
+async def cmd_settings(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        await message.answer("⛔️ Bu bo'lim faqat admin uchun.")
+        return
+    await state.clear()
+    text, markup = await settings_panel()
+    await message.answer(text, reply_markup=markup)
+
+
+@dp.callback_query(F.data == "settings")
+async def settings_refresh(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback):
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer()
+    text, markup = await settings_panel()
+    await safe_edit(callback.message, text, markup)
+
+
+@dp.callback_query(F.data.startswith("set:"))
+async def settings_ask(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback):
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    key = callback.data.split(":", 1)[1]
+    if key.startswith("price_"):
+        period = key[6:]
+        question = f"💵 <b>{plans.period_name(period)}</b> narxini so'mda yuboring (masalan <code>99000</code>)"
+    elif key.startswith("discount_"):
+        period = key[9:]
+        question = (f"🔥 <b>{plans.period_name(period)}</b> uchun chegirmani foizda yuboring "
+                    f"(<code>0</code> — chegirmasiz, <code>20</code> — 20%)")
+    elif key in SETTING_FIELDS:
+        question = SETTING_FIELDS[key][0]
+    else:
+        await callback.answer("Noma'lum sozlama", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(Admin.edit_setting)
+    await state.update_data(key=key)
+    await callback.message.answer(question, reply_markup=inline([[("↩️ Bekor qilish", "settings")]]))
+
+
+@dp.message(Admin.edit_setting)
+async def settings_save(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        await state.clear()
+        return
+    key = (await state.get_data()).get("key", "")
+    value = (message.text or "").strip()
+    if not key or not value:
+        await message.answer("✋ Qiymatni matn ko'rinishida yuboring.")
+        return
+    if key.startswith(("price_", "discount_", "trial_", "ai_")):
+        digits = value.replace(" ", "").replace("'", "").replace(",", "")
+        if not digits.isdigit():
+            await message.answer("Faqat raqam yozing, masalan: <code>99000</code>")
+            return
+        number = int(digits)
+        if key.startswith("discount_") and number > 90:
+            await message.answer("Chegirma 0 dan 90 gacha bo'lsin.")
+            return
+        value = str(number)
+    await asyncio.to_thread(db.set_setting, key, value)
+    await state.clear()
+    text, markup = await settings_panel()
+    await message.answer("✅ Saqlandi")
+    await message.answer(text, reply_markup=markup)
 
 
 # ---------- Ilova chaqiradigan amallar (webapp.HOOKS) ----------
@@ -569,19 +838,25 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
         logger.warning("Esse bali o'quvchiga yuborilmadi")
 
 
-async def course_notice(bot: Bot, chat_id: int, course: dict, reg: dict, username: str | None) -> None:
-    """Oflayn kursga yangi ariza — o'qituvchiga to'liq ma'lumot bilan xabar. Keyingi muloqot ular orasida."""
-    contact = f"\n💬 @{esc(username)}" if username else f"\n🆔 <code>{reg['tg_id']}</code> (username yo'q — telefoniga qo'ng'iroq qiling)"
-    await bot.send_message(
-        chat_id,
-        f"📝 <b>Yangi ariza</b> · {esc(course['title'])} (kod {course['code']})\n{LINE}\n"
-        f"👤 {esc(reg['full_name'])}\n"
-        f"📍 {esc(reg['address'])}\n"
-        f"📞 {esc(reg['phone'])}"
-        + (f"\n✏️ {esc(reg['note'])}" if reg.get("note") else "")
-        + contact,
-        reply_markup=app_markup("◈ Barcha arizalar", tc=course["id"]),
-    )
+def _registration_text(reg: dict, username: str | None, again: bool) -> str:
+    contact = (f"\n💬 @{esc(username)}" if username
+               else f"\n🆔 <code>{reg['tg_id']}</code> (username yo'q — telefoniga qo'ng'iroq qiling)")
+    return (f"📝 <b>{'Ariza yangilandi' if again else 'Yangi ariza'}</b> · Oflayn «Ona tili» kursi\n{LINE}\n"
+            f"👤 {esc(reg['full_name'])}\n"
+            f"📞 {esc(reg['phone'])}\n"
+            f"🎂 {reg['age']} yosh"
+            + (f"\n📍 {esc(reg['address'])}" if reg.get("address") else "")
+            + contact)
+
+
+async def registration_notice(bot: Bot, reg: dict, username: str | None, again: bool) -> None:
+    """Oflayn kursga yangi ariza — barcha adminlarga. Keyingi muloqot admin va o'quvchi orasida."""
+    text = _registration_text(reg, username, again)
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception:
+            logger.warning("Adminga ro'yxat xabari yuborilmadi: %s", admin_id)
 
 
 # ---------- AI esse navbati (fon jarayoni) ----------
@@ -832,7 +1107,7 @@ async def main() -> None:
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),
-        course_notice=lambda chat_id, *args: course_notice(bot, chat_id, *args),
+        registration_notice=lambda reg, username, again: registration_notice(bot, reg, username, again),
         missing=lambda user_id: subscription.missing_channels(bot, user_id),
         missing_in=lambda user_id, channels, recheck=False: test_channels_missing(bot, user_id, channels, recheck),
         resolve_channel=lambda ref: subscription.resolve_channel(bot, ref),
@@ -841,7 +1116,10 @@ async def main() -> None:
     if port:  # avval port — Render uni darhol ko'rsin
         await webapp.start(int(port))
     try:
-        await bot.set_my_commands([BotCommand(command="start", description="Ilovani ochish")])
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Ilovani ochish"),
+            BotCommand(command="royxat", description="Oflayn kursga ro'yxatdan o'tish"),
+        ])
     except Exception:
         logger.warning("Buyruqlar ro'yxatini o'rnatib bo'lmadi", exc_info=True)
     if app_url():

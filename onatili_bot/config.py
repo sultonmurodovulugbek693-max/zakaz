@@ -21,3 +21,7 @@ ADMIN_CONTACT = (os.getenv("ADMIN_CONTACT") or "").strip().lstrip("@")
 
 ADMIN_IDS = {int(x) for x in (os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID") or "").replace(" ", "").split(",")
              if x.isdigit()}
+
+# Bepul foydalanuvchilar: obuna ham, to'lov ham talab qilinmaydi (hammasi cheksiz).
+# Render → Environment → FREE_IDS=123,456  (Telegram ID'lar; o'qituvchi /myid bilan biladi)
+FREE_IDS = {int(x) for x in (os.getenv("FREE_IDS") or "").replace(" ", "").split(",") if x.isdigit()}

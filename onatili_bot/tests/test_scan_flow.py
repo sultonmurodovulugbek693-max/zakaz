@@ -45,7 +45,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         key.update({t["label"]: "kitob" for t in structure.text_items(self.items)})
         self.test = db.create_test(OWNER, "Sinov", "milliy", 45, self.items, {"A": key, "B": {**key, "1": "B"}})
         self.student = db.add_students(self.test["id"], ["Ali Valiyev"], ["A"])[-1]
-        plans.grant(OWNER, "markaz", 1)  # AI limiti yetarli tarif
+        plans.grant(OWNER, "year", 1)  # AI limiti yetarli obuna
         self.user = {"id": OWNER}
         self.bot = FakeBot()
 

@@ -1,31 +1,39 @@
 """
-O'qituvchilar obunasi: tariflar, muddat va oylik AI limitlari.
+Obuna: muddatlar (1 hafta / 1 oy / 3 oy / 1 yil), narxlar, to'lov va oylik AI limitlari.
 
-  • Yangi o'qituvchi birinchi testini yaratganda — bepul sinov (TRIAL_DAYS kun, kichik limit).
-  • Pulli tarifni admin beradi: botda /obuna @username start 1  (tarif, necha oy).
-  • Obuna tugasa — yangi test yaratib bo'lmaydi; eski testlar, natijalar va o'quvchilar ishlayveradi.
-  • AI limiti (oyiga) tugasa — esse va yozma javoblar o'qituvchining o'ziga (qo'lda) qoladi, AI chaqirilmaydi.
+  • FREE_IDS (Render → Environment) ro'yxatidagi foydalanuvchilarga hammasi bepul va cheksiz.
+  • Qolganlar obuna sotib oladi: kartaga o'tkazadi → chekni botga yuboradi → admin tasdiqlaydi.
+  • Obunasi yo'q yoki tugagan o'qituvchi yangi test yarata olmaydi; eski testlar, natijalar va
+    o'quvchilar ishlayveradi.
+  • AI limiti (oyiga) tugasa — esse va yozma javoblar o'qituvchining o'ziga (qo'lda) qoladi.
   • Admin(lar) (ADMIN_IDS) — cheklovsiz.
 
-Narx va limitlarni shu yerda o'zgartirasiz (narx — so'mda, oyiga; botda va ilovada shu ko'rsatiladi).
+Narx, chegirma, karta raqami va sinov kunlarini ADMIN BOTDA o'zgartiradi (/sozlama). Shu yerdagi
+qiymatlar — faqat boshlang'ich (sozlanmagan bo'lsa ishlatiladi).
 """
 
 from datetime import datetime, timedelta, timezone
 
 import db
-from config import ADMIN_IDS
+from config import ADMIN_IDS, FREE_IDS
 
 TASHKENT = timezone(timedelta(hours=5))
-TRIAL_DAYS = 14
 
-# kalit: (nomi, oylik narx so'mda, AI esse limiti, AI titul (yozma javoblar) limiti)
-PLANS = {
-    "trial":  {"name": "Sinov",  "price": 0,      "essays": 30,   "written": 60},
-    "start":  {"name": "Start",  "price": 99_000,  "essays": 300,  "written": 600},
-    "pro":    {"name": "Pro",    "price": 249_000, "essays": 1500, "written": 3000},
-    "markaz": {"name": "Markaz", "price": 690_000, "essays": 6000, "written": 10000},
+# kalit: (nomi, necha kun, boshlang'ich narx so'mda)
+PERIODS = {
+    "week":    ("1 hafta", 7,   29_000),
+    "month":   ("1 oy",    30,  99_000),
+    "quarter": ("3 oy",    90,  267_000),
+    "year":    ("1 yil",   365, 950_000),
 }
-PAID = [key for key in PLANS if key != "trial"]
+# Admin qo'lda yozadigan qisqa nomlar: /obuna @user oy
+ALIASES = {"hafta": "week", "week": "week", "1hafta": "week",
+           "oy": "month", "month": "month", "1oy": "month",
+           "3oy": "quarter", "chorak": "quarter", "quarter": "quarter",
+           "yil": "year", "year": "year", "1yil": "year"}
+
+# Oylik AI limiti (har qanday faol obuna uchun bir xil) va bepul sinov
+DEFAULTS = {"ai_essays": 1000, "ai_written": 2000, "trial_days": 0, "trial_essays": 30, "trial_written": 60}
 
 
 def now() -> datetime:
@@ -40,66 +48,133 @@ def is_admin(tg_id: int) -> bool:
     return tg_id in ADMIN_IDS
 
 
+def is_free(tg_id: int) -> bool:
+    """Admin yoki Render'dagi FREE_IDS ro'yxatida — hammasi bepul va cheksiz."""
+    return tg_id in ADMIN_IDS or tg_id in FREE_IDS
+
+
+# ---------- Sozlamalar (admin botda o'zgartiradi) ----------
+
+def setting(key: str, default=0) -> int:
+    value = db.get_settings().get(key)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def price_of(period: str) -> int:
+    """Chegirma qo'llangandan keyingi narx (so'mda)."""
+    base = setting(f"price_{period}", PERIODS[period][2])
+    discount = max(0, min(90, setting(f"discount_{period}", 0)))
+    return max(0, round(base * (100 - discount) / 100 / 1000) * 1000)
+
+
+def offers() -> list[dict]:
+    """Ilova va botda ko'rsatiladigan tariflar ro'yxati."""
+    out = []
+    for key, (name, days, default_price) in PERIODS.items():
+        base = setting(f"price_{key}", default_price)
+        discount = max(0, min(90, setting(f"discount_{key}", 0)))
+        out.append({"key": key, "name": name, "days": days, "price": base,
+                    "final": price_of(key), "discount": discount})
+    return out
+
+
+def card() -> dict:
+    """To'lov kartasi — admin botda kiritadi."""
+    saved = db.get_settings()
+    return {"number": saved.get("card_number", ""), "holder": saved.get("card_holder", "")}
+
+
+def limits() -> dict:
+    return {"essays": setting("ai_essays", DEFAULTS["ai_essays"]),
+            "written": setting("ai_written", DEFAULTS["ai_written"])}
+
+
+def trial_limits() -> dict:
+    return {"essays": setting("trial_essays", DEFAULTS["trial_essays"]),
+            "written": setting("trial_written", DEFAULTS["trial_written"])}
+
+
+def trial_days() -> int:
+    return max(0, setting("trial_days", DEFAULTS["trial_days"]))
+
+
+# ---------- Obuna holati ----------
+
 def _expires(sub: dict) -> datetime:
     return datetime.fromisoformat(sub["expires_at"])
 
 
+def period_name(key: str) -> str:
+    return PERIODS[key][0] if key in PERIODS else ("Sinov" if key == "trial" else key)
+
+
 def status(tg_id: int) -> dict:
-    """Ilova uchun: tarif, faolmi, necha kun qoldi, oylik limit va sarf."""
-    if is_admin(tg_id):
-        return {"plan": "admin", "name": "Admin", "active": True, "unlimited": True, "days_left": None}
+    """Ilova uchun: obuna, faolmi, necha kun qoldi, oylik AI limiti va sarf."""
+    if is_free(tg_id):
+        name = "Admin" if is_admin(tg_id) else "Bepul"
+        return {"plan": "free", "name": name, "active": True, "unlimited": True, "days_left": None}
     sub = db.get_subscription(tg_id)
     used = db.get_usage(tg_id, month_key())
+    spent = {"essays": used["essays"], "written": used["written"]}
     if not sub:
         return {"plan": None, "name": "Obuna yo'q", "active": False, "unlimited": False, "days_left": None,
-                "trial_available": True, "trial_days": TRIAL_DAYS,
-                "used": {"essays": used["essays"], "written": used["written"]}}
-    plan = PLANS.get(sub["plan"], PLANS["trial"])
+                "trial_available": trial_days() > 0, "trial_days": trial_days(),
+                "limits": limits(), "used": spent}
     left = _expires(sub) - now()
     return {
-        "plan": sub["plan"], "name": plan["name"], "active": left.total_seconds() > 0, "unlimited": False,
+        "plan": sub["plan"], "name": period_name(sub["plan"]), "active": left.total_seconds() > 0, "unlimited": False,
         "days_left": max(0, left.days + (1 if left.seconds else 0)), "expires": _expires(sub).strftime("%d.%m.%Y"),
-        "limits": {"essays": plan["essays"], "written": plan["written"]},
-        "used": {"essays": used["essays"], "written": used["written"]},
+        "limits": trial_limits() if sub["plan"] == "trial" else limits(), "used": spent,
     }
 
 
 def ensure_active(tg_id: int) -> dict:
-    """Test yaratishdan oldin: obuna yo'q bo'lsa — bepul sinov boshlanadi. Tugagan bo'lsa — status (active=False)."""
-    if is_admin(tg_id):
+    """Test yaratishdan oldin: obunasi yo'q bo'lsa — sinov yoqilgan bo'lsa boshlanadi, aks holda active=False."""
+    if is_free(tg_id):
         return status(tg_id)
-    if not db.get_subscription(tg_id):
-        db.set_subscription(tg_id, "trial", (now() + timedelta(days=TRIAL_DAYS)).isoformat(timespec="seconds"))
+    if not db.get_subscription(tg_id) and trial_days() > 0:
+        db.set_subscription(tg_id, "trial", (now() + timedelta(days=trial_days())).isoformat(timespec="seconds"))
     return status(tg_id)
 
 
-def grant(tg_id: int, plan: str, months: int) -> dict:
-    """Admin: tarif berish/uzaytirish. Faol obuna bo'lsa — muddat oxiriga qo'shiladi."""
-    if plan not in PLANS:
-        raise ValueError(f"Tarif noto'g'ri. Bor tariflar: {', '.join(PAID)}")
-    months = max(1, min(24, months))
+def grant(tg_id: int, period: str, count: int = 1) -> dict:
+    """Obunani yoqish/uzaytirish. Faol obuna bo'lsa — muddat oxiriga qo'shiladi."""
+    key = ALIASES.get(str(period).lower().strip())
+    if key is None:
+        raise ValueError("Muddat noto'g'ri. Bor muddatlar: hafta, oy, 3oy, yil")
+    count = max(1, min(24, count))
     sub = db.get_subscription(tg_id)
     start = _expires(sub) if sub and sub["plan"] != "trial" and _expires(sub) > now() else now()
-    db.set_subscription(tg_id, plan, (start + timedelta(days=30 * months)).isoformat(timespec="seconds"))
+    days = PERIODS[key][1] * count
+    db.set_subscription(tg_id, key, (start + timedelta(days=days)).isoformat(timespec="seconds"))
     return status(tg_id)
 
 
 def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
-    """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written". Obuna tugagan bo'lsa ham — False."""
-    if is_admin(tg_id):
+    """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written"."""
+    if is_free(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
     sub = db.get_subscription(tg_id)
     if not sub or _expires(sub) <= now():
         return False
-    limit = PLANS.get(sub["plan"], PLANS["trial"])[kind]
+    limit = (trial_limits() if sub["plan"] == "trial" else limits())[kind]
     return db.consume_usage(tg_id, month_key(), kind, amount, limit)
+
+
+def money(amount: int) -> str:
+    return f"{amount:,}".replace(",", " ")
 
 
 def price_list() -> str:
     lines = []
-    for key in PAID:
-        plan = PLANS[key]
-        lines.append(f"• <b>{plan['name']}</b> — {plan['price']:,} so'm/oy · AI: {plan['essays']} esse, "
-                     f"{plan['written']} titul".replace(",", " "))
+    for offer in offers():
+        if offer["discount"]:
+            lines.append(f"• <b>{offer['name']}</b> — <s>{money(offer['price'])}</s> "
+                         f"<b>{money(offer['final'])}</b> so'm  🔥 −{offer['discount']}%")
+        else:
+            lines.append(f"• <b>{offer['name']}</b> — {money(offer['final'])} so'm")
     return "\n".join(lines)

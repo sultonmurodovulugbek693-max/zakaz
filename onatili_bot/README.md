@@ -20,6 +20,7 @@ yozma javoblar va esseni AI tekshiradi.
 - **Natijani tuzatish**: «👥 Natijalar»da o'quvchini bosing — javoblari, kalit bilan solishtiruv,
   AI o'qigan yozma kataklar rasmi. Tuzatilsa, ball va Rasch qayta hisoblanadi.
 - **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
+- **Oflayn kursga ro'yxat**: `/start` dagi tugma — ilovaning alohida ekrani, ariza adminga boradi.
 
 ## Titul va skaner
 - **Sinflar** («👥 Sinflarim»): o'qituvchi sinf yaratadi, o'quvchilarni yozib yoki Excel'dan qo'shadi —
@@ -63,16 +64,29 @@ yozma javoblar va esseni AI tekshiradi.
   chuqur tahlil bilan. Yozma javoblar esa `AI_PROVIDER` (bepul Gemini) da qoladi.
 - AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi, yozma javoblarni «Natijalar»da tuzatsa bo'ladi.
 
-## Obuna (boshqa o'qituvchilarga berish)
+## Obuna va to'lov
 Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va natijalari alohida.
-- Yangi o'qituvchi birinchi testini yaratganda — **14 kunlik bepul sinov** (AI: 30 esse, 60 titul).
-- Pullik tariflar va oylik AI limitlari — `plans.py` dagi `PLANS` (narx so'mda; shu yerda o'zgartiriladi):
-  Start, Pro, Markaz. Limit tugasa — esse va yozma javoblar o'qituvchining o'ziga (qo'lda) qoladi.
-- **Admin buyruqlari** (`ADMIN_IDS`): `/obuna @username pro 1` — tarif berish/uzaytirish (oy soni),
-  `/obunalar` — barcha o'qituvchilar: tarif, muddat, shu oydagi AI sarfi, `/tariflar` — narxlar.
-- O'qituvchi ilovada tarifini, qolgan kunlarni va AI sarfini ko'radi; «Obunani uzaytirish» — narxlar va
-  admin bilan bog'lanish (`ADMIN_CONTACT`). Obuna tugasa yangi test yaratib bo'lmaydi; eski testlar,
-  natijalar va o'quvchilar ishlayveradi. Tugashiga 3 va 1 kun qolganda o'qituvchiga eslatma boradi.
+- **Bepul ro'yxat**: `FREE_IDS` (Render → Environment) dagi Telegram ID'larga hammasi **cheksiz bepul** —
+  obuna ham, to'lov ham so'ralmaydi. Adminlar (`ADMIN_IDS`) ham shunday.
+- **Qolganlar sotib oladi**: ilovadagi «💎 Obuna» → muddat (1 hafta / 1 oy / 3 oy / 1 yil) → karta raqami
+  va summa chiqadi → kartaga o'tkazadi → **chek rasmini botga yuboradi** → admin «✅ Tasdiqlash» tugmasini
+  bosadi va obuna darhol yoqiladi (o'quvchiga bot xabar beradi). Rad etilsa ham xabar boradi.
+- **Admin botda sozlaydi** — `/sozlama` (yoki `/admin` → «💎 Obuna sozlamalari»): har bir muddat narxi,
+  **chegirma foizi**, karta raqami va egasi, bepul sinov kunlari (`0` — sinov o'chiq), oylik AI limitlari.
+- **Admin buyruqlari**: `/obuna @username oy 1` — qo'lda yoqish/uzaytirish (`hafta`, `oy`, `3oy`, `yil`),
+  `/obunalar` — hamma o'qituvchi: muddat va AI sarfi, `/tolovlar` — oxirgi to'lovlar, `/tariflar` — narxlar.
+- Obuna tugasa yangi test yaratib bo'lmaydi; eski testlar, natijalar va o'quvchilar ishlayveradi.
+  Tugashiga 3 va 1 kun qolganda o'qituvchiga eslatma boradi. AI limiti tugasa — esse va yozma javoblar
+  o'qituvchining o'ziga (qo'lda) qoladi.
+
+## Oflayn kursga ro'yxatdan o'tish
+Oflayn «Ona tili» kursiga yozilmoqchi bo'lganlar uchun — bot ichidagi qisqa ariza.
+- O'quvchi botga `/start` (yoki `/royxat`) yozadi → «📝 Ro'yxatdan o'tish» tugmasi → ilovaning **alohida
+  ekrani** ochiladi: ism-familiya, telefon raqam, yosh, yashash joyi (ixtiyoriy).
+- Ariza **barcha adminlarga** Telegram orqali boradi (username yoki ID bilan) — keyingi muloqot admin va
+  o'quvchi orasida, botdan tashqarida davom etadi.
+- Bitta foydalanuvchi — bitta ariza: qaytadan yuborsa, eskisi yangilanadi va adminga «yangilandi» deb keladi.
+- Admin `/arizalar` bilan butun ro'yxatni ko'radi.
 
 ## Xizmat ishlari (o'zi bajariladi)
 - **Uyg'oq tutish**: Render'ning bepul tarifida server 15 daqiqa so'rovsiz qolsa uxlaydi va bot javob

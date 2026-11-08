@@ -199,30 +199,36 @@ SCHEMA = [
         session TEXT,
         created {FLOAT} NOT NULL
     )""",
-    # O'qituvchining oflayn kursi: kod bilan ulashiladi (bot havolasi yoki qo'lda), o'quvchi shu kod bilan
-    # ro'yxatdan o'tadi. active = 0 bo'lsa — yangi ariza qabul qilinmaydi (eski arizalar saqlanadi)
-    f"""CREATE TABLE IF NOT EXISTS courses (
-        id          {ID},
-        owner_id    {BIG} NOT NULL,
-        code        TEXT UNIQUE NOT NULL,
-        title       TEXT NOT NULL,
-        description TEXT,
-        location    TEXT,
-        active      INTEGER NOT NULL DEFAULT 1,
-        created_at  TEXT
+    # Admin bot orqali o'zgartiradigan sozlamalar: narxlar, chegirmalar, karta raqami, sinov kunlari
+    """CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     )""",
-    # Kursga yozilgan o'quvchining arizasi: ism-familiya, manzil, telefon — o'qituvchiga yuboriladi,
-    # keyin ular bevosita (botdan tashqari) muloqot qiladi. Bitta o'quvchi bir kursga bir marta yoziladi
-    f"""CREATE TABLE IF NOT EXISTS course_regs (
+    # Obuna to'lovi: o'quvchi/o'qituvchi kartaga o'tkazadi, chekni botga yuboradi, admin tasdiqlaydi.
+    # status: pending — chek kutilmoqda; sent — chek yuborilgan, admin ko'rmoqda; paid — tasdiqlangan; rejected — rad etilgan
+    f"""CREATE TABLE IF NOT EXISTS payments (
         id         {ID},
-        course_id  {BIG} NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
         tg_id      {BIG} NOT NULL,
+        period     TEXT NOT NULL,
+        amount     {BIG} NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        receipt    TEXT,
+        created_at TEXT,
+        decided_at TEXT,
+        admin_id   {BIG}
+    )""",
+    # Oflayn «Ona tili» kursiga ro'yxatdan o'tish: o'quvchi ilovada ism, telefon, yosh va manzilini
+    # qoldiradi — ariza adminga boradi, keyin ular bevosita (botdan tashqari) muloqot qiladi.
+    # Bitta foydalanuvchi — bitta ariza (qaytadan yuborsa, eskisi yangilanadi)
+    f"""CREATE TABLE IF NOT EXISTS registrations (
+        id         {ID},
+        tg_id      {BIG} UNIQUE NOT NULL,
         full_name  TEXT NOT NULL,
         phone      TEXT NOT NULL,
-        address    TEXT NOT NULL,
-        note       TEXT,
+        age        INTEGER,
+        address    TEXT,
         created_at TEXT,
-        UNIQUE (course_id, tg_id)
+        updated_at TEXT
     )""",
 ]
 
@@ -795,89 +801,38 @@ def update_class_student(class_id: int, student_id: int, name: str | None = None
             conn.execute("UPDATE class_students SET name = ? WHERE id = ? AND class_id = ?", (name, student_id, class_id))
 
 
-# ---------- Kurslar (oflayn ro'yxatga olish) ----------
+# ---------- Ro'yxatdan o'tish (oflayn «Ona tili» kursi) ----------
 
-def list_courses(owner_id: int) -> list[dict]:
+def save_registration(tg_id: int, full_name: str, phone: str, age: int | None, address: str) -> dict:
+    """Yangi ariza yoki borini yangilash (bitta foydalanuvchi — bitta ariza)."""
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT c.*, (SELECT COUNT(*) FROM course_regs r WHERE r.course_id = c.id) AS regs "
-            "FROM courses c WHERE c.owner_id = ? ORDER BY c.id DESC", (owner_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def create_course(owner_id: int, title: str, description: str, location: str) -> dict:
-    with connect() as conn:
-        while True:
-            code = str(random.randint(10000, 99999))
-            if not conn.execute("SELECT 1 FROM courses WHERE code = ?", (code,)).fetchone():
-                break
         row = conn.execute(
-            "INSERT INTO courses (owner_id, code, title, description, location, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
-            (owner_id, code, title, description, location, _now()),
+            "INSERT INTO registrations (tg_id, full_name, phone, age, address, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tg_id) DO UPDATE SET full_name = excluded.full_name, "
+            "phone = excluded.phone, age = excluded.age, address = excluded.address, "
+            "updated_at = excluded.updated_at RETURNING *",
+            (tg_id, full_name, phone, age, address, _now(), _now()),
         ).fetchone()
     return dict(row)
 
 
-def get_course(course_id: int) -> dict | None:
+def get_registration(tg_id: int) -> dict | None:
     with connect() as conn:
-        return _row(conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone())
+        return _row(conn.execute("SELECT * FROM registrations WHERE tg_id = ?", (tg_id,)).fetchone())
 
 
-def get_course_by_code(code: str) -> dict | None:
-    with connect() as conn:
-        return _row(conn.execute("SELECT * FROM courses WHERE code = ?", (code,)).fetchone())
-
-
-def update_course(course_id: int, title: str | None = None, description: str | None = None,
-                  location: str | None = None, active: bool | None = None) -> None:
-    sets, params = [], []
-    if title is not None:
-        sets.append("title = ?"); params.append(title)
-    if description is not None:
-        sets.append("description = ?"); params.append(description)
-    if location is not None:
-        sets.append("location = ?"); params.append(location)
-    if active is not None:
-        sets.append("active = ?"); params.append(1 if active else 0)
-    if not sets:
-        return
-    params.append(course_id)
-    with connect() as conn:
-        conn.execute(f"UPDATE courses SET {', '.join(sets)} WHERE id = ?", params)
-
-
-def delete_course(course_id: int) -> None:
-    with connect() as conn:
-        conn.execute("DELETE FROM course_regs WHERE course_id = ?", (course_id,))
-        conn.execute("DELETE FROM courses WHERE id = ?", (course_id,))
-
-
-def get_course_reg(course_id: int, tg_id: int) -> dict | None:
-    with connect() as conn:
-        return _row(conn.execute("SELECT * FROM course_regs WHERE course_id = ? AND tg_id = ?",
-                                 (course_id, tg_id)).fetchone())
-
-
-def add_course_reg(course_id: int, tg_id: int, full_name: str, phone: str, address: str, note: str) -> dict:
-    """O'quvchining arizasi — bitta kursga bir marta (IntegrityError: allaqachon yozilgan)."""
-    with connect() as conn:
-        row = conn.execute(
-            "INSERT INTO course_regs (course_id, tg_id, full_name, phone, address, note, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
-            (course_id, tg_id, full_name, phone, address, note, _now()),
-        ).fetchone()
-    return dict(row)
-
-
-def list_course_regs(course_id: int) -> list[dict]:
+def list_registrations(limit: int = 50) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT r.*, u.username FROM course_regs r LEFT JOIN users u ON u.tg_id = r.tg_id "
-            "WHERE r.course_id = ? ORDER BY r.id DESC", (course_id,),
+            "SELECT r.*, u.username FROM registrations r LEFT JOIN users u ON u.tg_id = r.tg_id "
+            "ORDER BY r.id DESC LIMIT ?", (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def count_registrations() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM registrations").fetchone()["n"]
 
 
 # ---------- Obuna va AI sarfi ----------
@@ -948,6 +903,71 @@ def take_limit_notice(tg_id: int, month: str) -> bool:
     with connect() as conn:
         return bool(conn.execute("UPDATE usage SET notified = 1 WHERE tg_id = ? AND month = ? AND notified = 0",
                                  (tg_id, month)).rowcount)
+
+
+# ---------- Sozlamalar (admin bot orqali o'zgartiradi) ----------
+
+def get_settings() -> dict:
+    with connect() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    return {row["key"]: row["value"] for row in rows}
+
+
+def set_setting(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
+
+
+# ---------- Obuna to'lovlari (karta → chek → admin tasdiqlaydi) ----------
+
+def create_payment(tg_id: int, period: str, amount: int) -> dict:
+    """Yangi to'lov so'rovi. Shu foydalanuvchining eski tugallanmagan so'rovlari bekor qilinadi."""
+    with connect() as conn:
+        conn.execute("UPDATE payments SET status = 'canceled' WHERE tg_id = ? AND status IN ('pending', 'sent')",
+                     (tg_id,))
+        row = conn.execute(
+            "INSERT INTO payments (tg_id, period, amount, created_at) VALUES (?, ?, ?, ?) RETURNING *",
+            (tg_id, period, amount, _now()),
+        ).fetchone()
+    return dict(row)
+
+
+def get_payment(payment_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT p.*, u.full_name, u.username FROM payments p LEFT JOIN users u ON u.tg_id = p.tg_id "
+            "WHERE p.id = ?", (payment_id,)).fetchone())
+
+
+def open_payment(tg_id: int) -> dict | None:
+    """Foydalanuvchining tugallanmagan to'lovi (chek kutilmoqda yoki admin ko'rib chiqmoqda)."""
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT * FROM payments WHERE tg_id = ? AND status IN ('pending', 'sent') ORDER BY id DESC LIMIT 1",
+            (tg_id,)).fetchone())
+
+
+def attach_receipt(payment_id: int, file_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE payments SET receipt = ?, status = 'sent' WHERE id = ? AND status IN ('pending', 'sent')",
+                     (file_id, payment_id))
+
+
+def decide_payment(payment_id: int, status: str, admin_id: int) -> bool:
+    """Admin tasdiqladi (paid) yoki rad etdi (rejected) — birinchi bosganda True (ikkinchi admin takrorlamaydi)."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "UPDATE payments SET status = ?, decided_at = ?, admin_id = ? WHERE id = ? AND status IN ('pending', 'sent')",
+            (status, _now(), admin_id, payment_id)).rowcount)
+
+
+def list_payments(status: str | None = None, limit: int = 30) -> list[dict]:
+    with connect() as conn:
+        sql = ("SELECT p.*, u.full_name, u.username FROM payments p LEFT JOIN users u ON u.tg_id = p.tg_id "
+               + ("WHERE p.status = ? " if status else "") + "ORDER BY p.id DESC LIMIT ?")
+        rows = conn.execute(sql, ((status, limit) if status else (limit,))).fetchall()
+    return [dict(row) for row in rows]
 
 
 # ---------- Titulli testning ilovada yozilgan essesi ----------

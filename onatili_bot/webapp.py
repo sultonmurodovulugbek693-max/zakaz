@@ -164,9 +164,11 @@ async def bootstrap(request: web.Request) -> web.Response:
         } for a in attempts],
         "tests": teacher_tests,
         "classes": len(await run(db.list_classes, user["id"])),
-        "courses": len(await run(db.list_courses, user["id"])),
+        "registered": bool(await run(db.get_registration, user["id"])),
         "plan": await run(plans.status, user["id"]),
-        "plans": [{"key": k, **plans.PLANS[k]} for k in plans.PAID],
+        "plans": await run(plans.offers),
+        "card": await run(plans.card),
+        "payment": await run(db.open_payment, user["id"]),
         "admin_contact": ADMIN_CONTACT,
         "ai": essay_ai.essay_enabled(),
         "themes": THEMES,
@@ -421,7 +423,37 @@ async def require_plan(user: dict) -> None:
     """Yangi test faqat faol obuna (yoki bepul sinov) bilan. Birinchi marta — sinov o'zi boshlanadi."""
     status = await run(plans.ensure_active, user["id"])
     if not status["active"]:
-        raise ApiError(402, "Obunangiz muddati tugagan — uzaytirish uchun admin bilan bog'laning", plan=status)
+        raise ApiError(402, "Test yaratish uchun obuna kerak — «💎 Obuna» tugmasidan sotib oling", plan=status)
+
+
+async def plan_order(request: web.Request) -> web.Response:
+    """«Sotib olish» bosildi: to'lov so'rovi ochiladi, foydalanuvchiga karta va summa ko'rsatiladi."""
+    user = await auth(request)
+    if await run(plans.is_free, user["id"]):
+        raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
+    period = str((await body(request)).get("period") or "")
+    if period not in plans.PERIODS:
+        raise ApiError(400, "Muddat noto'g'ri")
+    card = await run(plans.card)
+    if not card["number"]:
+        raise ApiError(400, "To'lov kartasi hali kiritilmagan — admin bilan bog'laning")
+    await run(db.remember_user, user["id"], user["name"], user["username"])
+    amount = await run(plans.price_of, period)
+    payment = await run(db.create_payment, user["id"], period, amount)
+    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](
+                user["id"],
+                f"💳 <b>To'lov</b> · {plans.period_name(period)} — <b>{plans.money(amount)} so'm</b>\n"
+                f"Karta: <code>{html.escape(card['number'])}</code>"
+                + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
+                + "\n\nShu summani kartaga o'tkazing va <b>chek rasmini shu yerga yuboring</b> — "
+                  "admin tasdiqlagach obunangiz darhol yoqiladi.")
+        except Exception:
+            logger.warning("To'lov ko'rsatmasi yuborilmadi", exc_info=True)
+    return ok({"payment": {"id": payment["id"], "period": period, "amount": amount, "status": payment["status"]},
+               "card": card, "bot": username})
 
 
 async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
@@ -971,125 +1003,52 @@ async def students_from_class(request: web.Request) -> web.Response:
     return ok({"students": [student_view(s) for s in students], "added": len(fresh)})
 
 
-# ---------- Kurslar (oflayn ro'yxatga olish) ----------
-# O'qituvchi kurs yaratadi (kod beriladi), kodni (yoki bot havolasini) o'quvchilarga ulashadi.
-# O'quvchi ilovada kodni kiritib ism, manzil, telefonini qoldiradi — ariza o'qituvchiga Telegram orqali
-# boradi, keyingi muloqot ilova/bot ishtirokisiz davom etadi.
+# ---------- Ro'yxatdan o'tish (oflayn «Ona tili» kursi) ----------
+# O'quvchi botda /start bosib «Ro'yxatdan o'tish» tugmasini bosadi — ilovaning alohida ekrani ochiladi.
+# Ism, telefon, yosh va manzilini qoldiradi; ariza adminga Telegram orqali boradi va keyingi
+# muloqot (uchrashuv, dars vaqti) ilova ishtirokisiz davom etadi.
 
-MAX_NOTE = 500
-
-
-def course_view(course: dict, regs: list[dict] | None = None) -> dict:
-    view = {
-        "id": course["id"], "code": course["code"], "title": course["title"],
-        "description": course.get("description") or "", "location": course.get("location") or "",
-        "active": bool(course["active"]), "regs": course.get("regs", len(regs or [])),
-    }
-    if regs is not None:
-        view["list"] = [{
-            "id": r["id"], "full_name": r["full_name"], "phone": r["phone"], "address": r["address"],
-            "note": r.get("note") or "", "username": r.get("username"), "created_at": r["created_at"],
-        } for r in regs]
-    return view
+MIN_AGE, MAX_AGE = 5, 99
 
 
-async def own_course(request: web.Request, user: dict) -> dict:
-    course = await run(db.get_course, int(request.match_info["course_id"]))
-    if not course or course["owner_id"] != user["id"]:
-        raise ApiError(404, "Kurs topilmadi")
-    return course
+def registration_view(reg: dict | None) -> dict | None:
+    if not reg:
+        return None
+    return {"full_name": reg["full_name"], "phone": reg["phone"], "age": reg["age"],
+            "address": reg["address"] or "", "created_at": reg["created_at"]}
 
 
-async def courses_list(request: web.Request) -> web.Response:
+async def registration_get(request: web.Request) -> web.Response:
     user = await auth(request)
-    return ok({"courses": [course_view(c) for c in await run(db.list_courses, user["id"])]})
+    reg = await run(db.get_registration, user["id"])
+    return ok({"registration": registration_view(reg), "name": user["name"]})
 
 
-async def course_create(request: web.Request) -> web.Response:
+async def registration_save(request: web.Request) -> web.Response:
     user = await auth(request)
-    payload = await body(request)
-    title = clean_text(payload.get("title"), 80)
-    if len(title) < 2:
-        raise ApiError(400, "Kurs nomini yozing")
-    description = clean_text(payload.get("description"), MAX_NOTE)
-    location = clean_text(payload.get("location"), 200)
-    if len(await run(db.list_courses, user["id"])) >= 50:
-        raise ApiError(400, "Kurslar soni 50 tadan oshmasin")
-    course = await run(db.create_course, user["id"], title, description, location)
-    return ok({"course": course_view(course, [])})
-
-
-async def course_detail(request: web.Request) -> web.Response:
-    user = await auth(request)
-    course = await own_course(request, user)
-    view = course_view(course, await run(db.list_course_regs, course["id"]))
-    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
-    view["share_url"] = f"https://t.me/{username}?start=course_{course['code']}" if username else ""
-    return ok({"course": view})
-
-
-async def course_update(request: web.Request) -> web.Response:
-    user = await auth(request)
-    course = await own_course(request, user)
-    payload = await body(request)
-    if payload.get("delete"):
-        await run(db.delete_course, course["id"])
-        return ok({"ok": True})
-    title = clean_text(payload.get("title"), 80) if "title" in payload else None
-    if title is not None and len(title) < 2:
-        raise ApiError(400, "Kurs nomini yozing")
-    description = clean_text(payload.get("description"), MAX_NOTE) if "description" in payload else None
-    location = clean_text(payload.get("location"), 200) if "location" in payload else None
-    active = bool(payload.get("active")) if "active" in payload else None
-    await run(db.update_course, course["id"], title, description, location, active)
-    course = await run(db.get_course, course["id"])
-    return ok({"course": course_view(course, await run(db.list_course_regs, course["id"]))})
-
-
-async def course_info(request: web.Request) -> web.Response:
-    """O'quvchi kurs kodini kiritganda: kurs ma'lumoti va u allaqachon ro'yxatdan o'tganmi."""
-    user = await auth(request)
-    course = await run(db.get_course_by_code, request.match_info["code"])
-    if not course:
-        raise ApiError(404, "Bunday kod topilmadi")
-    registered = bool(await run(db.get_course_reg, course["id"], user["id"]))
-    if not course["active"] and not registered:
-        raise ApiError(400, "Bu kursga hozircha yangi ariza qabul qilinmayapti")
-    return ok({
-        "code": course["code"], "title": course["title"], "description": course["description"] or "",
-        "location": course["location"] or "", "registered": registered,
-    })
-
-
-async def course_register(request: web.Request) -> web.Response:
-    user = await auth(request)
-    course = await run(db.get_course_by_code, request.match_info["code"])
-    if not course or not course["active"]:
-        raise ApiError(404, "Bunday kod topilmadi yoki bu kursga ariza qabul qilinmayapti")
     payload = await body(request)
     full_name = clean_text(payload.get("full_name"), 80)
     phone = clean_text(payload.get("phone"), 30)
     address = clean_text(payload.get("address"), 200)
-    note = clean_text(payload.get("note"), MAX_NOTE)
+    try:
+        age = int(str(payload.get("age") or "").strip() or 0)
+    except ValueError:
+        age = 0
     if len(full_name) < 3:
         raise ApiError(400, "Ism va familiyangizni yozing")
     if len(phone) < 7:
         raise ApiError(400, "Telefon raqamingizni yozing")
-    if len(address) < 2:
-        raise ApiError(400, "Yashash joyingizni yozing")
+    if not MIN_AGE <= age <= MAX_AGE:
+        raise ApiError(400, f"Yoshingizni yozing ({MIN_AGE}–{MAX_AGE})")
     await run(db.remember_user, user["id"], user["name"], user["username"])
-    if await run(db.get_course_reg, course["id"], user["id"]):
-        raise ApiError(400, "Siz bu kursga allaqachon ro'yxatdan o'tgansiz")
-    try:
-        reg = await run(db.add_course_reg, course["id"], user["id"], full_name, phone, address, note)
-    except db.IntegrityError:
-        raise ApiError(400, "Siz bu kursga allaqachon ro'yxatdan o'tgansiz")
-    if "course_notice" in HOOKS:
+    again = bool(await run(db.get_registration, user["id"]))
+    reg = await run(db.save_registration, user["id"], full_name, phone, age, address)
+    if "registration_notice" in HOOKS:
         try:
-            await HOOKS["course_notice"](course["owner_id"], course, reg, user.get("username"))
+            await HOOKS["registration_notice"](reg, user.get("username"), again)
         except Exception:
-            logger.warning("O'qituvchiga kurs arizasi haqida xabar yuborilmadi", exc_info=True)
-    return ok({"ok": True})
+            logger.warning("Adminga ro'yxat haqida xabar yuborilmadi", exc_info=True)
+    return ok({"registration": registration_view(reg), "again": again})
 
 
 async def sheets(request: web.Request) -> web.Response:
@@ -1559,6 +1518,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/app/login/{token:[0-9a-f]{32}}", app_login_status)
     app.router.add_post("/api/app/logout", app_logout)
     app.router.add_post("/api/role", set_role)
+    app.router.add_post("/api/plan/order", plan_order)
     app.router.add_post("/api/teacher/test/{test_id:\d+}/app-link", app_link)
     app.router.add_get("/open", open_app)
     app.router.add_get("/download", download_apk)
@@ -1594,12 +1554,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/import", class_students_import)
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/{student_id:\\d+}", class_student_update)
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/send", class_send_ids)
-    app.router.add_get("/api/teacher/courses", courses_list)
-    app.router.add_post("/api/teacher/courses", course_create)
-    app.router.add_get("/api/teacher/course/{course_id:\\d+}", course_detail)
-    app.router.add_post("/api/teacher/course/{course_id:\\d+}", course_update)
-    app.router.add_get("/api/course/{code:\\d{5}}", course_info)
-    app.router.add_post("/api/course/{code:\\d{5}}/register", course_register)
+    app.router.add_get("/api/register", registration_get)
+    app.router.add_post("/api/register", registration_save)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)
