@@ -223,6 +223,8 @@ SCHEMA = [
     f"""CREATE TABLE IF NOT EXISTS registrations (
         id         {ID},
         tg_id      {BIG} UNIQUE NOT NULL,
+        first_name TEXT,
+        last_name  TEXT,
         full_name  TEXT NOT NULL,
         phone      TEXT NOT NULL,
         age        INTEGER,
@@ -241,6 +243,8 @@ MIGRATIONS = [
     ("tests", "channels", "TEXT"),
     ("tests", "sheet_style", "TEXT"),  # titul ko'rinishi: standard | compact | large | columns
     ("users", "role", "TEXT"),  # oxirgi tanlangan ekran: student | teacher
+    ("registrations", "first_name", "TEXT"),  # ism va familiya alohida so'raladi
+    ("registrations", "last_name", "TEXT"),
 ]
 
 
@@ -803,15 +807,21 @@ def update_class_student(class_id: int, student_id: int, name: str | None = None
 
 # ---------- Ro'yxatdan o'tish (oflayn «Ona tili» kursi) ----------
 
-def save_registration(tg_id: int, full_name: str, phone: str, age: int | None, address: str) -> dict:
-    """Yangi ariza yoki borini yangilash (bitta foydalanuvchi — bitta ariza)."""
+def save_registration(tg_id: int, first_name: str, last_name: str, phone: str, age: int | None,
+                      address: str) -> dict:
+    """Yangi ariza yoki borini yangilash (bitta foydalanuvchi — bitta ariza).
+
+    full_name — ism va familiyadan yig'iladi: ro'yxatlar va adminga xabarlarda shu ishlatiladi.
+    """
+    full_name = f"{first_name} {last_name}".strip()
     with connect() as conn:
         row = conn.execute(
-            "INSERT INTO registrations (tg_id, full_name, phone, age, address, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tg_id) DO UPDATE SET full_name = excluded.full_name, "
-            "phone = excluded.phone, age = excluded.age, address = excluded.address, "
-            "updated_at = excluded.updated_at RETURNING *",
-            (tg_id, full_name, phone, age, address, _now(), _now()),
+            "INSERT INTO registrations (tg_id, first_name, last_name, full_name, phone, age, address, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name, "
+            "full_name = excluded.full_name, phone = excluded.phone, age = excluded.age, "
+            "address = excluded.address, updated_at = excluded.updated_at RETURNING *",
+            (tg_id, first_name, last_name, full_name, phone, age, address, _now(), _now()),
         ).fetchone()
     return dict(row)
 

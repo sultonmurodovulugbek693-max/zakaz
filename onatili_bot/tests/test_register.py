@@ -34,17 +34,19 @@ class Register(unittest.IsolatedAsyncioTestCase):
         await self.client.close()
 
     def form(self, **changes):
-        return {"full_name": "Ali Valiyev", "phone": "+998 90 123 45 67", "age": 16,
+        return {"first_name": "Ali", "last_name": "Valiyev", "phone": "+998 90 123 45 67", "age": 16,
                 "address": "Toshkent, Chilonzor", **changes}
 
     async def test_register_then_update(self):
         empty = await (await self.client.get("/api/register")).json()
         self.assertIsNone(empty["registration"])
+        self.assertNotIn("name", empty)  # Telegram ismi formaga to'ldirilmaydi
 
         first = await self.client.post("/api/register", json=self.form())
         self.assertEqual(first.status, 200)
         saved = (await first.json())["registration"]
-        self.assertEqual((saved["full_name"], saved["age"]), ("Ali Valiyev", 16))
+        self.assertEqual((saved["first_name"], saved["last_name"], saved["age"]), ("Ali", "Valiyev", 16))
+        self.assertEqual(saved["full_name"], "Ali Valiyev")  # ro'yxat va adminga xabar uchun
         self.assertEqual(self.notices[-1], ("Ali Valiyev", "ali_v", False))  # adminga yangi ariza
 
         again = await (await self.client.post("/api/register", json=self.form(phone="+998 91 000 00 00"))).json()
@@ -57,8 +59,8 @@ class Register(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(boot["registered"])
 
     async def test_validation(self):
-        for bad, field in [({"full_name": "A"}, "Ism"), ({"phone": "12"}, "Telefon"),
-                           ({"age": 3}, "Yosh"), ({"age": "x"}, "Yosh")]:
+        for bad, field in [({"first_name": "A"}, "Ism"), ({"last_name": ""}, "Familiya"),
+                           ({"phone": "12"}, "Telefon"), ({"age": 3}, "Yosh"), ({"age": "x"}, "Yosh")]:
             r = await self.client.post("/api/register", json=self.form(**bad))
             self.assertEqual(r.status, 400, bad)
             self.assertIn(field, (await r.json())["error"])

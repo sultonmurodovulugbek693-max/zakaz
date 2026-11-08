@@ -1519,8 +1519,10 @@ VIEWS.register = async () => {
         : "Ism-familiya, telefon raqam, yosh va yashash joyingizni qoldiring — tez orada siz bilan bog'lanamiz."}</span></div>
     ${saved ? `<div class="card" style="border:1.5px solid var(--good)">✅ Ro'yxatdan o'tgansiz · ${esc(saved.created_at)}</div>` : ""}
     <div class="card">
-      <div class="field"><label for="g-name">Ism va familiya</label>
-        <input class="input" id="g-name" autocomplete="name" value="${value("full_name") || esc(r.name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+      <div class="field"><label for="g-name">Ism</label>
+        <input class="input" id="g-name" autocomplete="given-name" value="${value("first_name")}" placeholder="Masalan: Ali"></div>
+      <div class="field"><label for="g-surname">Familiya</label>
+        <input class="input" id="g-surname" autocomplete="family-name" value="${value("last_name")}" placeholder="Masalan: Valiyev"></div>
       <div class="field"><label for="g-phone">Telefon raqam</label>
         <input class="input" id="g-phone" type="tel" inputmode="tel" autocomplete="tel" value="${value("phone")}" placeholder="+998 90 123 45 67"></div>
       <div class="field"><label for="g-age">Yosh</label>
@@ -1530,20 +1532,23 @@ VIEWS.register = async () => {
     </div>
     <div class="sticky-bottom"><div><button class="btn block" id="g-send">${saved ? "Saqlash" : "Ro'yxatdan o'tish"}</button></div></div>
   </div>`;
-  const name = document.getElementById("g-name"), phone = document.getElementById("g-phone"),
-        age = document.getElementById("g-age"), addr = document.getElementById("g-addr");
-  const save = () => store(draftKey, JSON.stringify({ full_name: name.value, phone: phone.value, age: age.value, address: addr.value }));
-  [name, phone, addr].forEach(el => el.oninput = save);
+  const name = document.getElementById("g-name"), surname = document.getElementById("g-surname"),
+        phone = document.getElementById("g-phone"), age = document.getElementById("g-age"),
+        addr = document.getElementById("g-addr");
+  const save = () => store(draftKey, JSON.stringify({ first_name: name.value, last_name: surname.value, phone: phone.value, age: age.value, address: addr.value }));
+  [name, surname, phone, addr].forEach(el => el.oninput = save);
   age.oninput = () => { age.value = age.value.replace(/\D/g, "").slice(0, 2); save(); };
   const btn = document.getElementById("g-send");
   btn.onclick = async () => {
-    const full_name = name.value.trim(), tel = phone.value.trim(), years = +age.value, address = addr.value.trim();
-    if (full_name.length < 3) { toast("Ism va familiyangizni yozing"); haptic("error"); return name.focus(); }
+    const first_name = name.value.trim(), last_name = surname.value.trim();
+    const tel = phone.value.trim(), years = +age.value, address = addr.value.trim();
+    if (first_name.length < 2) { toast("Ismingizni yozing"); haptic("error"); return name.focus(); }
+    if (last_name.length < 2) { toast("Familiyangizni yozing"); haptic("error"); return surname.focus(); }
     if (tel.length < 7) { toast("Telefon raqamingizni yozing"); haptic("error"); return phone.focus(); }
     if (!(years >= 5 && years <= 99)) { toast("Yoshingizni yozing (5–99)"); haptic("error"); return age.focus(); }
     btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      const res = await api("/api/register", { full_name, phone: tel, age: years, address });
+      const res = await api("/api/register", { first_name, last_name, phone: tel, age: years, address });
       store(draftKey, "{}"); S.boot = null; haptic("success");
       S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
       $app.innerHTML = `<div class="view"><div class="card success">

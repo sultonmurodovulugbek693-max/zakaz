@@ -1014,35 +1014,40 @@ MIN_AGE, MAX_AGE = 5, 99
 def registration_view(reg: dict | None) -> dict | None:
     if not reg:
         return None
-    return {"full_name": reg["full_name"], "phone": reg["phone"], "age": reg["age"],
+    return {"first_name": reg.get("first_name") or "", "last_name": reg.get("last_name") or "",
+            "full_name": reg["full_name"], "phone": reg["phone"], "age": reg["age"],
             "address": reg["address"] or "", "created_at": reg["created_at"]}
 
 
 async def registration_get(request: web.Request) -> web.Response:
+    """Ism Telegram profilidan olinmaydi — foydalanuvchi o'zi kiritadi."""
     user = await auth(request)
     reg = await run(db.get_registration, user["id"])
-    return ok({"registration": registration_view(reg), "name": user["name"]})
+    return ok({"registration": registration_view(reg)})
 
 
 async def registration_save(request: web.Request) -> web.Response:
     user = await auth(request)
     payload = await body(request)
-    full_name = clean_text(payload.get("full_name"), 80)
+    first_name = clean_text(payload.get("first_name"), 40)
+    last_name = clean_text(payload.get("last_name"), 40)
     phone = clean_text(payload.get("phone"), 30)
     address = clean_text(payload.get("address"), 200)
     try:
         age = int(str(payload.get("age") or "").strip() or 0)
     except ValueError:
         age = 0
-    if len(full_name) < 3:
-        raise ApiError(400, "Ism va familiyangizni yozing")
+    if len(first_name) < 2:
+        raise ApiError(400, "Ismingizni yozing")
+    if len(last_name) < 2:
+        raise ApiError(400, "Familiyangizni yozing")
     if len(phone) < 7:
         raise ApiError(400, "Telefon raqamingizni yozing")
     if not MIN_AGE <= age <= MAX_AGE:
         raise ApiError(400, f"Yoshingizni yozing ({MIN_AGE}–{MAX_AGE})")
     await run(db.remember_user, user["id"], user["name"], user["username"])
     again = bool(await run(db.get_registration, user["id"]))
-    reg = await run(db.save_registration, user["id"], full_name, phone, age, address)
+    reg = await run(db.save_registration, user["id"], first_name, last_name, phone, age, address)
     if "registration_notice" in HOOKS:
         try:
             await HOOKS["registration_notice"](reg, user.get("username"), again)
