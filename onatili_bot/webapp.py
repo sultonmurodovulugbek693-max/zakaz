@@ -432,32 +432,42 @@ async def require_plan(user: dict) -> None:
 
 
 async def plan_order(request: web.Request) -> web.Response:
-    """«Sotib olish» bosildi: to'lov so'rovi ochiladi, foydalanuvchiga karta va summa ko'rsatiladi."""
+    """«Sotib olish» bosildi (obuna muddati yoki «📦 Esse paketi»): to'lov so'rovi ochiladi,
+    foydalanuvchiga karta va summa ko'rsatiladi."""
     user = await auth(request)
     if await run(plans.is_free, user["id"]):
         raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
     period = str((await body(request)).get("period") or "")
-    if period not in plans.PERIODS:
+    if period != plans.PACK and period not in plans.PERIODS:
         raise ApiError(400, "Muddat noto'g'ri")
+    essays = None
+    if period == plans.PACK:
+        if not (await run(plans.status, user["id"]))["active"]:
+            raise ApiError(400, "Esse paketi faol obunaga qo'shiladi — avval obunani yangilang")
+        offer = await run(plans.pack)
+        amount, essays = offer["price"], offer["essays"]
+    else:
+        amount = await run(plans.price_of, period)
     card = await run(plans.card)
     if not card["number"]:
         raise ApiError(400, "To'lov kartasi hali kiritilmagan — admin bilan bog'laning")
     await run(db.remember_user, user["id"], user["name"], user["username"])
-    amount = await run(plans.price_of, period)
-    payment = await run(db.create_payment, user["id"], period, amount)
+    payment = await run(db.create_payment, user["id"], period, amount, essays)
     username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
     if "send_text" in HOOKS:
+        done = f"{essays} ta esse qo'shiladi" if essays else "obunangiz darhol yoqiladi"
         try:
             await HOOKS["send_text"](
                 user["id"],
-                f"💳 <b>To'lov</b> · {plans.period_name(period)} — <b>{plans.money(amount)} so'm</b>\n"
+                f"💳 <b>To'lov</b> · {plans.payment_title(payment)} — <b>{plans.money(amount)} so'm</b>\n"
                 f"Karta: <code>{html.escape(card['number'])}</code>"
                 + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
                 + "\n\nShu summani kartaga o'tkazing va <b>chek rasmini shu yerga yuboring</b> — "
-                  "admin tasdiqlagach obunangiz darhol yoqiladi.")
+                  f"admin tasdiqlagach {done}.")
         except Exception:
             logger.warning("To'lov ko'rsatmasi yuborilmadi", exc_info=True)
-    return ok({"payment": {"id": payment["id"], "period": period, "amount": amount, "status": payment["status"]},
+    return ok({"payment": {"id": payment["id"], "period": period, "amount": amount, "essays": essays,
+                           "status": payment["status"]},
                "card": card, "bot": username})
 
 
@@ -473,11 +483,17 @@ async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
         return True
     if await run(db.take_limit_notice, owner_id, plans.month_key()) and "send_text" in HOOKS:
         status = await run(plans.status, owner_id)
-        reason = "obunangiz muddati tugagan" if not status["active"] else f"«{status['name']}» tarifining oylik AI limiti tugadi"
+        if not status["active"]:
+            text = ("⚠️ <b>AI esse tekshiruvi to'xtadi</b>: obunangiz muddati tugagan.\n"
+                    "Yangi esselarni o'zingiz baholaysiz («📝 Esselar»). Uzaytirish — ilovadagi «💎 Obuna».")
+        else:
+            offer = status["pack"]
+            text = (f"⚠️ <b>Bu oygi AI esse limiti tugadi</b> ({status['limits']['essays']} ta).\n"
+                    "Yangi esselarni o'zingiz baholaysiz («📝 Esselar»).\n\n"
+                    f"AI davom etsin desangiz: ilovada «💎 Obuna» → <b>📦 +{offer['essays']} esse</b> "
+                    f"({plans.money(offer['price'])} so'm).")
         try:
-            await HOOKS["send_text"](owner_id, f"⚠️ AI tekshiruvi to'xtadi: {reason}.\n"
-                                               "Esse va yozma javoblar endi siz tekshirishingiz uchun qoladi "
-                                               "(«📝 Esselar» va «👥 Natijalar»). Uzaytirish — ilovadagi «Obuna» tugmasi.")
+            await HOOKS["send_text"](owner_id, text)
         except Exception:
             logger.warning("Limit haqida xabar yuborilmadi", exc_info=True)
     return False

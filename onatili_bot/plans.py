@@ -5,7 +5,11 @@ Obuna: muddatlar (1 hafta / 1 oy / 3 oy / 1 yil), narxlar, to'lov va oylik AI li
   • Qolganlar obuna sotib oladi: kartaga o'tkazadi → chekni botga yuboradi → admin tasdiqlaydi.
   • Obunasi yo'q yoki tugagan o'qituvchi yangi test yarata olmaydi; eski testlar, natijalar va
     o'quvchilar ishlayveradi.
-  • AI limiti (oyiga) tugasa — esse va yozma javoblar o'qituvchining o'ziga (qo'lda) qoladi.
+  • Obunada AI oyiga ma'lum miqdorda esse tekshiradi (boshlang'ich 150 ta). Tugasa — o'qituvchi
+    «📦 Esse paketi» sotib oladi (+100 esse, xuddi obunadek: karta → chek → admin). Paketdagi esselar
+    muddatsiz — keyingi oyga o'tadi, faqat obuna faol bo'lganda ishlatiladi. Paket ham tugasa — esse
+    o'qituvchining o'ziga (qo'lda baholash) qoladi.
+  • Yozma javoblarni (36–44) AI faqat FREE_IDS ga o'qiydi — qolganlar rasmga qarab o'zi belgilaydi.
   • Admin(lar) (ADMIN_IDS) — cheklovsiz.
 
 Narx, chegirma, karta raqami va sinov kunlarini ADMIN BOTDA o'zgartiradi (/sozlama). Shu yerdagi
@@ -32,8 +36,13 @@ ALIASES = {"hafta": "week", "week": "week", "1hafta": "week",
            "3oy": "quarter", "chorak": "quarter", "quarter": "quarter",
            "yil": "year", "year": "year", "1yil": "year"}
 
-# Oylik AI limiti (har qanday faol obuna uchun bir xil) va bepul sinov
-DEFAULTS = {"ai_essays": 1000, "ai_written": 2000, "trial_days": 0, "trial_essays": 30, "trial_written": 60}
+# Oylik AI limiti (har qanday faol obuna uchun bir xil), esse paketi va bepul sinov.
+# Esse narxi (Claude Sonnet) ≈ 250–500 so'm: 150 ta esse 1 oylik obunadan arzonga tushadi, paket ham zarar qilmaydi
+DEFAULTS = {"ai_essays": 150, "ai_written": 2000, "trial_days": 0, "trial_essays": 30, "trial_written": 60,
+            "pack_essays": 100, "price_pack": 59_000}
+
+# To'lovdagi «muddat» o'rnida — qo'shimcha esse paketi
+PACK = "pack"
 
 
 def now() -> datetime:
@@ -101,6 +110,19 @@ def trial_days() -> int:
     return max(0, setting("trial_days", DEFAULTS["trial_days"]))
 
 
+def pack() -> dict:
+    """Qo'shimcha esse paketi: nechta esse va narxi (admin /sozlama da o'zgartiradi)."""
+    return {"essays": max(1, setting("pack_essays", DEFAULTS["pack_essays"])),
+            "price": max(0, setting("price_pack", DEFAULTS["price_pack"]))}
+
+
+def add_pack(tg_id: int, essays: int) -> int:
+    """Paket tasdiqlandi: esselar qo'shiladi (muddatsiz). Qaytaradi — endi jami nechta qo'shimcha esse bor."""
+    balance = db.add_credits(tg_id, essays)
+    db.reset_limit_notice(tg_id, month_key())  # paket ham tugasa — yana bir marta xabar beriladi
+    return balance
+
+
 # ---------- Obuna holati ----------
 
 def _expires(sub: dict) -> datetime:
@@ -108,7 +130,16 @@ def _expires(sub: dict) -> datetime:
 
 
 def period_name(key: str) -> str:
+    if key == PACK:
+        return "Esse paketi"
     return PERIODS[key][0] if key in PERIODS else ("Sinov" if key == "trial" else key)
+
+
+def payment_title(payment: dict) -> str:
+    """Chek va to'lovlar ro'yxatida: «1 oy» yoki «📦 Esse paketi · +100 ta»."""
+    if payment["period"] == PACK:
+        return f"📦 Esse paketi · +{payment.get('essays') or pack()['essays']} ta"
+    return period_name(payment["period"])
 
 
 def status(tg_id: int) -> dict:
@@ -119,15 +150,16 @@ def status(tg_id: int) -> dict:
     sub = db.get_subscription(tg_id)
     used = db.get_usage(tg_id, month_key())
     spent = {"essays": used["essays"], "written": used["written"]}
+    extra = {"credits": db.get_credits(tg_id), "pack": pack()}
     if not sub:
         return {"plan": None, "name": "Obuna yo'q", "active": False, "unlimited": False, "days_left": None,
                 "trial_available": trial_days() > 0, "trial_days": trial_days(),
-                "limits": limits(), "used": spent}
+                "limits": limits(), "used": spent, **extra}
     left = _expires(sub) - now()
     return {
         "plan": sub["plan"], "name": period_name(sub["plan"]), "active": left.total_seconds() > 0, "unlimited": False,
         "days_left": max(0, left.days + (1 if left.seconds else 0)), "expires": _expires(sub).strftime("%d.%m.%Y"),
-        "limits": trial_limits() if sub["plan"] == "trial" else limits(), "used": spent,
+        "limits": trial_limits() if sub["plan"] == "trial" else limits(), "used": spent, **extra,
     }
 
 
@@ -154,7 +186,8 @@ def grant(tg_id: int, period: str, count: int = 1) -> dict:
 
 
 def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
-    """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written"."""
+    """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written".
+    Avval oylik limitdan, u tugasa — esse paketidan (faqat faol obuna bilan)."""
     if is_free(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
@@ -162,7 +195,12 @@ def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     if not sub or _expires(sub) <= now():
         return False
     limit = (trial_limits() if sub["plan"] == "trial" else limits())[kind]
-    return db.consume_usage(tg_id, month_key(), kind, amount, limit)
+    if db.consume_usage(tg_id, month_key(), kind, amount, limit):
+        return True
+    if kind == "essays" and db.use_credits(tg_id, amount):
+        db.consume_usage(tg_id, month_key(), kind, amount, None)  # oylik hisobotda ham ko'rinsin
+        return True
+    return False
 
 
 def money(amount: int) -> str:

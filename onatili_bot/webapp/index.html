@@ -1504,8 +1504,7 @@ function planCard(p) {
   const bar = (used, limit) => `<div class="track" style="height:6px"><i style="width:${Math.min(100, used / Math.max(1, limit) * 100)}%"></i></div>`;
   return `<div class="card plan-card ${p.active ? "" : "plan-off"}">
       <div class="row between"><b>💎 ${esc(p.name)}</b><span class="pill-tag ${p.active && p.days_left > 3 ? "done" : "wait"}">${p.active ? `${p.days_left} kun qoldi` : "Muddati tugagan"}</span></div>
-      <div class="plan-use"><span class="muted small">AI esse: ${p.used.essays} / ${p.limits.essays}</span>${bar(p.used.essays, p.limits.essays)}
-        <span class="muted small">AI titul: ${p.used.written} / ${p.limits.written}</span>${bar(p.used.written, p.limits.written)}</div>
+      <div class="plan-use"><span class="muted small">AI esse (bu oy): ${Math.min(p.used.essays, p.limits.essays)} / ${p.limits.essays}${p.credits ? ` · 📦 paketda ${p.credits} ta` : ""}</span>${bar(p.used.essays, p.limits.essays)}</div>
       <button type="button" class="btn ${p.active ? "ghost" : ""} sm" id="plan-open">${p.active ? "Obunani uzaytirish" : "💎 Obunani yangilash"}</button></div>`;
 }
 
@@ -1527,12 +1526,18 @@ VIEWS.plan = async () => {
       <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(x.final)} so'm</b>
         ${x.discount ? `<s class="muted small" style="white-space:nowrap">${sum(x.price)} so'm</s>` : ""}</span></button>`).join("");
   const open = b.payment;
-  const used = p.limits ? `<div class="card plan-card"><div class="plan-use">
-      <span class="muted small">AI esse: ${p.used.essays} / ${p.limits.essays}</span>
+  // AI esse: oylik limit + sotib olingan paket (oylik tugasa — paketdan)
+  const pk = p.pack || { essays: 100, price: 0 }, fromPack = Math.max(0, p.used.essays - p.limits.essays);
+  const used = p.limits ? `<div class="card plan-card" id="essay-card"><div class="row between"><b>🤖 AI esse tekshiruvi</b>
+        <span class="muted small">bu oy</span></div>
+      <div class="plan-use"><span class="muted small">Obunada: ${Math.min(p.used.essays, p.limits.essays)} / ${p.limits.essays}${fromPack ? ` · paketdan ${fromPack} ta` : ""}</span>
       <div class="track" style="height:6px"><i style="width:${Math.min(100, p.used.essays / Math.max(1, p.limits.essays) * 100)}%"></i></div>
-      <span class="muted small">AI titul: ${p.used.written} / ${p.limits.written}</span>
-      <div class="track" style="height:6px"><i style="width:${Math.min(100, p.used.written / Math.max(1, p.limits.written) * 100)}%"></i></div>
-    </div></div>` : "";
+      <span class="muted small">📦 Paketda qoldi: <b>${p.credits || 0}</b> ta esse</span></div>
+      ${p.active ? `<button type="button" class="item" data-period="pack" style="margin-top:4px"><span class="ico">📦</span>
+        <span><b>+${pk.essays} esse</b><small>Oylik limit tugasa ishlatiladi · muddatsiz</small></span>
+        <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(pk.price)} so'm</b></span></button>`
+      : `<span class="muted small">Paket faol obunaga qo'shiladi — avval obunani yangilang.</span>`}
+    </div>` : "";
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Obuna</span>
       <h1>${!p.plan ? "Obuna sotib olish" : p.active ? "Obunangiz faol" : "Obuna tugagan"}</h1>
@@ -1542,7 +1547,7 @@ VIEWS.plan = async () => {
       <b>⏳ Kutilayotgan to'lov</b><span class="muted small">${esc(planName(open.period))} · ${sum(open.amount)} so'm —
       ${open.status === "sent" ? "chek yuborilgan, admin tekshirmoqda" : "chekni botga yuboring"}</span></div>` : ""}
     ${used}
-    <div class="section-title"><h2>Muddatni tanlang</h2></div>
+    <div class="section-title" id="periods-title"><h2>Muddatni tanlang</h2></div>
     <div class="list" id="periods">${rows || `<div class="card empty">Narxlar hali kiritilmagan — admin bilan bog'laning.</div>`}</div>
     <div id="pay-box"></div>
     <div class="card"><span class="muted small">1) Muddatni tanlaysiz → 2) kartaga o'tkazasiz → 3) chek rasmini botga yuborasiz.
@@ -1569,6 +1574,7 @@ VIEWS.plan = async () => {
 function planModal() { S.stack = []; go("plan", {}, true); }
 
 function planName(key) {
+  if (key === "pack") return "📦 Esse paketi";
   const found = ((S.boot && S.boot.plans) || []).find(x => x.key === key);
   return found ? found.name : key;
 }
@@ -1577,6 +1583,7 @@ function planName(key) {
 function payBox(root, r) {
   const box = root.querySelector("#pay-box"), list = root.querySelector("#periods");
   if (list) list.style.display = "none";
+  const title = root.querySelector("#periods-title"); if (title) title.style.display = "none";
   box.innerHTML = `<div class="card" style="gap:10px">
     <b>💳 To'lov · ${esc(planName(r.payment.period))}</b>
     <div class="row between"><span class="muted small">Summa</span><b>${sum(r.payment.amount)} so'm</b></div>
@@ -1584,7 +1591,7 @@ function payBox(root, r) {
     ${r.card.holder ? `<div class="row between"><span class="muted small">Egasi</span><span>${esc(r.card.holder)}</span></div>` : ""}
     <button type="button" class="btn ghost sm" id="copy-card">📋 Karta raqamini nusxalash</button>
     <button type="button" class="btn block" id="to-bot">📤 Chekni botga yuborish</button>
-    <span class="muted small">Botda chek rasmini yuboring — admin tasdiqlagach obunangiz yoqiladi va bot xabar beradi.</span></div>`;
+    <span class="muted small">Botda chek rasmini yuboring — admin tasdiqlagach ${r.payment.period === "pack" ? "esselar qo'shiladi" : "obunangiz yoqiladi"} va bot xabar beradi.</span></div>`;
   box.querySelector("#copy-card").onclick = () => navigator.clipboard
     ? navigator.clipboard.writeText(r.card.number).then(() => toast("📋 Karta raqami nusxalandi"), () => toast(r.card.number))
     : toast(r.card.number);

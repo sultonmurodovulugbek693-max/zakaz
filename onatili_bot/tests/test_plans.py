@@ -84,6 +84,39 @@ class Plans(unittest.TestCase):
         offer = next(o for o in plans.offers() if o["key"] == "month")
         self.assertEqual((offer["price"], offer["final"], offer["discount"]), (100_000, 80_000, 20))
 
+    def test_pack_used_after_monthly_limit(self):
+        db.set_setting("ai_essays", 2)
+        plans.grant(TEACHER, "month")
+        plans.add_pack(TEACHER, 5)
+        self.assertTrue(plans.use_ai(TEACHER, "essays"))
+        self.assertEqual(plans.status(TEACHER)["credits"], 5)  # avval oylik limitdan — paketga tegilmaydi
+        self.assertTrue(plans.use_ai(TEACHER, "essays"))
+        self.assertTrue(all(plans.use_ai(TEACHER, "essays") for _ in range(5)))  # oylik tugadi → paketdan
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # paket ham tugadi — esse qo'lda
+        st = plans.status(TEACHER)
+        self.assertEqual((st["credits"], st["used"]["essays"]), (0, 7))
+
+    def test_pack_needs_active_plan_and_survives_expiry(self):
+        db.set_setting("ai_essays", 0)
+        plans.grant(TEACHER, "month")
+        plans.add_pack(TEACHER, 3)
+        db.set_subscription(TEACHER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # obuna tugagan — paket ishlamaydi
+        self.assertEqual(plans.status(TEACHER)["credits"], 3)  # lekin yo'qolmaydi
+        plans.grant(TEACHER, "month")
+        self.assertTrue(plans.use_ai(TEACHER, "essays"))
+        self.assertEqual(plans.status(TEACHER)["credits"], 2)
+
+    def test_limit_notice_again_after_pack(self):
+        db.set_setting("ai_essays", 0)
+        plans.grant(TEACHER, "month")
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))
+        month = plans.month_key()
+        self.assertTrue(db.take_limit_notice(TEACHER, month))
+        self.assertFalse(db.take_limit_notice(TEACHER, month))  # oyiga bir marta
+        plans.add_pack(TEACHER, 1)
+        self.assertTrue(db.take_limit_notice(TEACHER, month))  # paket ham tugasa — yana xabar beriladi
+
     def test_find_user_by_username(self):
         db.remember_user(TEACHER, "Ustoz Aliyeva", "ustoz_a")
         self.assertEqual(db.find_user("@Ustoz_A")["tg_id"], TEACHER)
@@ -205,6 +238,32 @@ class PlanGates(unittest.IsolatedAsyncioTestCase):
         self.assertIn("8600", [t for _, t in self.sent][-1])  # botga karta va summa yuborildi
         boot = await (await self.client.get("/api/bootstrap")).json()
         self.assertEqual(boot["payment"]["period"], "month")
+
+    async def test_essay_pack_order(self):
+        db.set_setting("card_number", "8600 1234 5678 9012")
+        no_plan = await self.client.post("/api/plan/order", json={"period": "pack"})
+        self.assertEqual(no_plan.status, 400)  # paket faqat faol obunaga
+        plans.grant(TEACHER, "month")
+        db.set_setting("price_pack", 45_000)
+        db.set_setting("pack_essays", 80)
+        r = await (await self.client.post("/api/plan/order", json={"period": "pack"})).json()
+        self.assertEqual((r["payment"]["period"], r["payment"]["amount"], r["payment"]["essays"]), ("pack", 45_000, 80))
+        self.assertIn("+80 ta", self.sent[-1][1])  # botga karta, summa va paket hajmi
+        payment = db.open_payment(TEACHER)
+        db.set_setting("pack_essays", 200)  # admin hajmni o'zgartirdi — to'langan buyurtma o'zgarmaydi
+        self.assertEqual(plans.payment_title(db.get_payment(payment["id"])), "📦 Esse paketi · +80 ta")
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual((boot["plan"]["pack"]["essays"], boot["plan"]["credits"]), (200, 0))
+        self.assertEqual(boot["payment"]["period"], "pack")
+
+    async def test_limit_notice_offers_pack(self):
+        db.set_setting("ai_essays", 0)
+        plans.grant(TEACHER, "month")
+        self.assertFalse(await webapp.ai_allowed(TEACHER, "essays"))
+        self.assertFalse(await webapp.ai_allowed(TEACHER, "essays"))
+        notices = [t for _, t in self.sent if "limiti tugadi" in t]
+        self.assertEqual(len(notices), 1)  # oyiga bir marta
+        self.assertIn("📦 +100 esse", notices[0])
 
     async def test_expiry_reminder_once(self):
         db.set_subscription(TEACHER, "month", (plans.now() + timedelta(days=2, hours=12)).isoformat(timespec="seconds"))

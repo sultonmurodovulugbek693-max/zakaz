@@ -194,7 +194,7 @@ def _who(user: dict) -> str:
 
 @dp.message(Command("obuna"))
 async def cmd_grant(message: Message, command: CommandObject) -> None:
-    """Admin: /obuna <@username yoki ID> <muddat> [nechta] — obunani yoqish yoki uzaytirish."""
+    """Admin: /obuna <@username yoki ID> <muddat|paket> [nechta] — obunani yoqish/uzaytirish yoki esse paketi."""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("Bu buyruq faqat admin uchun.")
         return
@@ -202,6 +202,7 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
     if len(args) < 2:
         await message.answer("Ishlatish: <code>/obuna @username oy 1</code>  (muddat, nechta)\n"
                              "Muddatlar: <code>hafta</code>, <code>oy</code>, <code>3oy</code>, <code>yil</code>\n"
+                             "Esse paketi: <code>/obuna @username paket 1</code>\n"
                              "O'qituvchi oldin botga /start bosgan bo'lsin (yoki ID'sini yozing).\n\n"
                              f"Narxlar:\n{plans.price_list()}")
         return
@@ -210,6 +211,12 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
     if not user:
         await message.answer("Bunday foydalanuvchi topilmadi — u botga /start bosgan bo'lishi kerak "
                              "(yoki Telegram ID'sini yozing: o'qituvchi /myid bilan biladi).")
+        return
+    if args[1].lower() in ("paket", "pack"):
+        essays = (await asyncio.to_thread(plans.pack))["essays"] * max(1, min(20, count))
+        balance = await asyncio.to_thread(plans.add_pack, user["tg_id"], essays)
+        await message.answer(f"✅ {_who(user)}\n📦 +{essays} esse · jami qo'shimcha: {balance} ta")
+        await notify_pack(message.bot, user["tg_id"], essays, balance)
         return
     try:
         status = await asyncio.to_thread(plans.grant, user["tg_id"], args[1].lower(), count)
@@ -222,14 +229,23 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
 
 async def notify_granted(bot: Bot, tg_id: int, status: dict) -> None:
     limits = status.get("limits") or {}
-    ai = (f"\nAI tekshiruvi: oyiga {limits['essays']} ta esse va {limits['written']} ta titul."
-          if limits else "")
+    ai = f"\n🤖 AI oyiga {limits['essays']} ta esseni tekshiradi." if limits else ""
     try:
         await bot.send_message(
             tg_id, f"🎉 <b>Obunangiz faollashdi</b>: {status['name']} · {status['expires']} gacha{ai}",
             reply_markup=app_markup())
     except Exception:
         logger.warning("O'qituvchiga obuna xabari yuborilmadi")
+
+
+async def notify_pack(bot: Bot, tg_id: int, essays: int, balance: int) -> None:
+    try:
+        await bot.send_message(
+            tg_id, f"📦 <b>Esse paketi qo'shildi</b>: +{essays} ta\n"
+                   f"Jami qo'shimcha: {balance} ta esse. Oylik limit tugaganda AI shulardan foydalanadi — "
+                   "muddati yo'q, keyingi oyga ham o'tadi.", reply_markup=app_markup())
+    except Exception:
+        logger.warning("O'qituvchiga paket xabari yuborilmadi")
 
 
 @dp.message(Command("obunalar"))
@@ -251,7 +267,7 @@ async def cmd_subscriptions(message: Message) -> None:
             lines.append(f"♾ {_who(sub)}\n    {st['name']} · cheksiz")
             continue
         lines.append(f"{mark} {_who(sub)}\n    {st['name']} · {days} · esse {st['used']['essays']}/{st['limits']['essays']}"
-                     f" · titul {st['used']['written']}/{st['limits']['written']}")
+                     + (f" · 📦 {st['credits']}" if st["credits"] else ""))
     text, chunk = "\n".join(lines), ""
     for line in text.split("\n"):
         if len(chunk) + len(line) > 3800:
@@ -269,7 +285,10 @@ async def cmd_prices(message: Message) -> None:
     trial = await asyncio.to_thread(plans.trial_days)
     contact = f"\n\nSavol bo'lsa: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
     prices = await asyncio.to_thread(plans.price_list)
+    limits, offer = await asyncio.to_thread(plans.limits), await asyncio.to_thread(plans.pack)
     await message.answer(f"💎 <b>Obuna narxlari</b>\n{prices}\n\n"
+                         f"🤖 Obunada AI oyiga {limits['essays']} ta esseni tekshiradi.\n"
+                         f"📦 Qo'shimcha: +{offer['essays']} esse — {plans.money(offer['price'])} so'm\n\n"
                          + (f"Yangi o'qituvchiga {trial} kunlik bepul sinov.\n" if trial else "")
                          + "Sotib olish: ilovadagi «💎 Obuna» tugmasi — kartaga o'tkazasiz, chekni shu yerga "
                            "yuborasiz, admin tasdiqlaydi." + contact,
@@ -302,8 +321,9 @@ async def receipt_received(message: Message) -> None:
         return
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     await asyncio.to_thread(db.attach_receipt, payment["id"], file_id)
-    await message.answer(f"✅ Chek qabul qilindi · {plans.period_name(payment['period'])} — "
-                         f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, obunangizni yoqadi.")
+    await message.answer(f"✅ Chek qabul qilindi · {plans.payment_title(payment)} — "
+                         f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, "
+                         + ("esselarni qo'shadi." if payment["period"] == plans.PACK else "obunangizni yoqadi."))
     await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo))
 
 
@@ -311,7 +331,7 @@ async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> N
     payment = await asyncio.to_thread(db.get_payment, payment_id)
     if not payment or not payment["receipt"]:
         return
-    caption = (f"🧾 <b>Yangi to'lov</b> · {plans.period_name(payment['period'])} — "
+    caption = (f"🧾 <b>Yangi to'lov</b> · {plans.payment_title(payment)} — "
                f"<b>{plans.money(payment['amount'])} so'm</b>\n{LINE}\n{_who(payment)}")
     markup = inline([[("✅ Tasdiqlash", f"pay:ok:{payment_id}"), ("❌ Rad etish", f"pay:no:{payment_id}")]])
     for admin_id in ADMIN_IDS:
@@ -326,7 +346,7 @@ async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> N
 
 @dp.callback_query(F.data.startswith("pay:"))
 async def decide_payment(callback: CallbackQuery) -> None:
-    """Admin chekni tasdiqlaydi yoki rad etadi. Tasdiqlansa — obuna darhol yoqiladi."""
+    """Admin chekni tasdiqlaydi yoki rad etadi. Tasdiqlansa — obuna darhol yoqiladi (yoki esse paketi qo'shiladi)."""
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Faqat admin uchun", show_alert=True)
         return
@@ -340,7 +360,13 @@ async def decide_payment(callback: CallbackQuery) -> None:
     if not decided:
         await callback.answer("Bu to'lov allaqachon ko'rib chiqilgan", show_alert=True)
         return
-    if action == "ok":
+    if action == "ok" and payment["period"] == plans.PACK:
+        essays = payment["essays"] or (await asyncio.to_thread(plans.pack))["essays"]
+        balance = await asyncio.to_thread(plans.add_pack, payment["tg_id"], essays)
+        await callback.answer("✅ Esselar qo'shildi")
+        await notify_pack(callback.bot, payment["tg_id"], essays, balance)
+        note = f"✅ Tasdiqladi: {esc(callback.from_user.full_name)} — +{essays} esse (jami {balance})"
+    elif action == "ok":
         status = await asyncio.to_thread(plans.grant, payment["tg_id"], payment["period"])
         await callback.answer("✅ Obuna yoqildi")
         await notify_granted(callback.bot, payment["tg_id"], status)
@@ -406,7 +432,7 @@ async def cmd_payments(message: Message) -> None:
     lines = [f"💳 <b>Oxirgi to'lovlar</b>: {len(payments)} ta\n"]
     for pay in payments:
         lines.append(f"{marks.get(pay['status'], '•')} {_who(pay)}\n"
-                     f"    {plans.period_name(pay['period'])} · {plans.money(pay['amount'])} so'm · {pay['created_at']}")
+                     f"    {plans.payment_title(pay)} · {plans.money(pay['amount'])} so'm · {pay['created_at']}")
     await message.answer("\n".join(lines)[:3900])
 
 
@@ -587,8 +613,8 @@ SETTING_FIELDS = {
     "card_number": ("💳 Karta raqamini yuboring (masalan <code>8600 1234 5678 9012</code>)", False),
     "card_holder": ("👤 Karta egasining ism-familiyasini yuboring", False),
     "trial_days": ("⏳ Bepul sinov necha kun bo'lsin? <code>0</code> — sinov o'chiq", True),
-    "ai_essays": ("🤖 Oyiga nechta AI esse tekshirilsin?", True),
-    "ai_written": ("🤖 Oyiga nechta AI titul o'qilsin?", True),
+    "ai_essays": ("🤖 Obunada oyiga nechta esseni AI tekshirsin? (har bir o'qituvchiga)", True),
+    "pack_essays": ("📦 Bitta esse paketida nechta esse bo'lsin?", True),
 }
 
 
@@ -597,12 +623,14 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
     offers = await asyncio.to_thread(plans.offers)
     trial = await asyncio.to_thread(plans.trial_days)
     limits = await asyncio.to_thread(plans.limits)
+    offer = await asyncio.to_thread(plans.pack)
     lines = [
         "💎 <b>Obuna sozlamalari</b>", LINE,
         f"💳 Karta: <code>{esc(card['number']) or '— kiritilmagan'}</code>"
         + (f"\n👤 Egasi: {esc(card['holder'])}" if card["holder"] else ""),
         f"⏳ Bepul sinov: <b>{trial}</b> kun" + (" <i>(o'chiq — darhol obuna kerak)</i>" if not trial else ""),
-        f"🤖 Oylik AI limiti: {limits['essays']} esse · {limits['written']} titul",
+        f"🤖 Obunada AI: oyiga <b>{limits['essays']}</b> ta esse",
+        f"📦 Esse paketi: +{offer['essays']} ta — <b>{plans.money(offer['price'])} so'm</b>",
         "", "<b>Narxlar</b> — tugma bosib o'zgartiring:",
     ]
     rows = []
@@ -615,7 +643,8 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
                      (f"🔥 −{offer['discount']}%", f"set:discount_{offer['key']}")])
     rows.append([("💳 Karta", "set:card_number"), ("👤 Karta egasi", "set:card_holder")])
     rows.append([("⏳ Sinov kunlari", "set:trial_days")])
-    rows.append([("🤖 Esse limiti", "set:ai_essays"), ("🤖 Titul limiti", "set:ai_written")])
+    rows.append([("🤖 Oylik esse limiti", "set:ai_essays")])
+    rows.append([("📦 Paket narxi", "set:price_pack"), ("📦 Paket hajmi", "set:pack_essays")])
     rows.append([("🔄 Yangilash", "settings"), ("↩️ Admin paneli", "admin")])
     return "\n".join(lines), inline(rows)
 
@@ -675,7 +704,7 @@ async def settings_save(message: Message, state: FSMContext) -> None:
     if not key or not value:
         await message.answer("✋ Qiymatni matn ko'rinishida yuboring.")
         return
-    if key.startswith(("price_", "discount_", "trial_", "ai_")):
+    if key.startswith(("price_", "discount_", "trial_", "ai_", "pack_")):
         digits = value.replace(" ", "").replace("'", "").replace(",", "")
         if not digits.isdigit():
             await message.answer("Faqat raqam yozing, masalan: <code>99000</code>")

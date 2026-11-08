@@ -199,6 +199,12 @@ SCHEMA = [
         session TEXT,
         created {FLOAT} NOT NULL
     )""",
+    # Qo'shimcha esse paketi (sotib olingan, muddatsiz): oylik AI limiti tugaganda shundan olinadi
+    f"""CREATE TABLE IF NOT EXISTS credits (
+        tg_id      {BIG} PRIMARY KEY,
+        essays     INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT
+    )""",
     # Admin bot orqali o'zgartiradigan sozlamalar: narxlar, chegirmalar, karta raqami, sinov kunlari
     """CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
@@ -261,6 +267,7 @@ MIGRATIONS = [
     ("registrations", "role", "TEXT NOT NULL DEFAULT 'student'"),  # o'quvchi | o'qituvchi
     ("registrations", "region", "TEXT"),  # manzil endi ro'yxatdan tanlanadi (places.py)
     ("registrations", "district", "TEXT"),
+    ("payments", "essays", "INTEGER"),  # esse paketi (period = 'pack'): nechta esse — buyurtma paytidagi hajm
 ]
 
 
@@ -731,8 +738,14 @@ BACKUP_TABLES = {
     "id_counters": "*",
     "subscriptions": "*",
     "usage": "*",
+    "credits": "*",
+    "settings": "*",
+    "payments": "*",
+    "registrations": "*",
+    "teacher_places": "*",
 }
-SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students")
+SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students",
+                 "payments", "registrations", "teacher_places")
 
 
 def export_tables() -> dict[str, list[dict]]:
@@ -974,6 +987,34 @@ def consume_usage(tg_id: int, month: str, kind: str, amount: int, limit: int | N
     return bool(updated)
 
 
+def reset_limit_notice(tg_id: int, month: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE usage SET notified = 0 WHERE tg_id = ? AND month = ?", (tg_id, month))
+
+
+def get_credits(tg_id: int) -> int:
+    """Sotib olingan qo'shimcha esselar qoldig'i."""
+    with connect() as conn:
+        row = conn.execute("SELECT essays FROM credits WHERE tg_id = ?", (tg_id,)).fetchone()
+    return row["essays"] if row else 0
+
+
+def add_credits(tg_id: int, essays: int) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            "INSERT INTO credits (tg_id, essays, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(tg_id) DO UPDATE SET essays = credits.essays + excluded.essays, updated_at = excluded.updated_at "
+            "RETURNING essays", (tg_id, essays, _now())).fetchone()
+    return row["essays"]
+
+
+def use_credits(tg_id: int, amount: int) -> bool:
+    """Paketdan olish — yetmasa olmaydi va False (bitta so'rovda: ikki esse bitta qoldiqni ikki marta olmaydi)."""
+    with connect() as conn:
+        return bool(conn.execute("UPDATE credits SET essays = essays - ?, updated_at = ? WHERE tg_id = ? AND essays >= ?",
+                                 (amount, _now(), tg_id, amount)).rowcount)
+
+
 def take_limit_notice(tg_id: int, month: str) -> bool:
     """Limit tugagani haqida oyiga bir marta xabar — birinchi chaqiriqda True."""
     with connect() as conn:
@@ -997,14 +1038,14 @@ def set_setting(key: str, value: str) -> None:
 
 # ---------- Obuna to'lovlari (karta → chek → admin tasdiqlaydi) ----------
 
-def create_payment(tg_id: int, period: str, amount: int) -> dict:
-    """Yangi to'lov so'rovi. Shu foydalanuvchining eski tugallanmagan so'rovlari bekor qilinadi."""
+def create_payment(tg_id: int, period: str, amount: int, essays: int | None = None) -> dict:
+    """Yangi to'lov so'rovi (obuna muddati yoki esse paketi). Eski tugallanmagan so'rovlar bekor qilinadi."""
     with connect() as conn:
         conn.execute("UPDATE payments SET status = 'canceled' WHERE tg_id = ? AND status IN ('pending', 'sent')",
                      (tg_id,))
         row = conn.execute(
-            "INSERT INTO payments (tg_id, period, amount, created_at) VALUES (?, ?, ?, ?) RETURNING *",
-            (tg_id, period, amount, _now()),
+            "INSERT INTO payments (tg_id, period, amount, essays, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *",
+            (tg_id, period, amount, essays, _now()),
         ).fetchone()
     return dict(row)
 

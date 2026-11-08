@@ -84,12 +84,21 @@ Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va
   va summa chiqadi → kartaga o'tkazadi → **chek rasmini botga yuboradi** → admin «✅ Tasdiqlash» tugmasini
   bosadi va obuna darhol yoqiladi (o'quvchiga bot xabar beradi). Rad etilsa ham xabar boradi.
 - **Admin botda sozlaydi** — `/sozlama` (yoki `/admin` → «💎 Obuna sozlamalari»): har bir muddat narxi,
-  **chegirma foizi**, karta raqami va egasi, bepul sinov kunlari (`0` — sinov o'chiq), oylik AI limitlari.
+  **chegirma foizi**, karta raqami va egasi, bepul sinov kunlari (`0` — sinov o'chiq), oylik AI esse limiti,
+  esse paketining hajmi va narxi.
+- **AI esse tekshiruvi** (o'qituvchi to'laydi, o'quvchi emas): obunada har bir o'qituvchiga **oyiga 150 ta**
+  esse (boshlang'ich). Tugasa — **«📦 Esse paketi»** (+100 esse, 59 000 so'm — boshlang'ich): ilovadagi
+  «💎 Obuna» → «📦 +100 esse» → kartaga o'tkazadi → chek → admin tasdiqlaydi. Paketdagi esselar muddatsiz
+  (keyingi oyga o'tadi), lekin faqat obuna faol bo'lganda ishlatiladi. Paket ham tugasa — o'qituvchiga xabar
+  boradi va yangi esselarni o'zi baholaydi. Esse narxi (Claude Sonnet) ≈ 250–500 so'm — limit va paket
+  narxini shunga qarab qo'ying. Yozma javoblarni (36–44) AI faqat `FREE_IDS` ga o'qiydi.
 - **Admin buyruqlari**: `/obuna @username oy 1` — qo'lda yoqish/uzaytirish (`hafta`, `oy`, `3oy`, `yil`),
-  `/obunalar` — hamma o'qituvchi: muddat va AI sarfi, `/tolovlar` — oxirgi to'lovlar, `/tariflar` — narxlar.
+  `/obuna @username paket 1` — esse paketi sovg'a qilish,
+  `/obunalar` — hamma o'qituvchi: muddat, AI sarfi va paket qoldig'i, `/tolovlar` — oxirgi to'lovlar,
+  `/tariflar` — narxlar.
 - Obuna tugasa yangi test yaratib bo'lmaydi; eski testlar, natijalar va o'quvchilar ishlayveradi.
-  Tugashiga 3 va 1 kun qolganda o'qituvchiga eslatma boradi. AI limiti tugasa — esse va yozma javoblar
-  o'qituvchining o'ziga (qo'lda) qoladi.
+  Tugashiga 3 va 1 kun qolganda o'qituvchiga eslatma boradi.
+- Zaxira nusxaga (💾) to'lovlar, sozlamalar, paketlar va oflayn kurs arizalari ham kiradi.
 
 ## Oflayn kursga ro'yxatdan o'tish
 Oflayn «Ona tili» kursi uchun — bot ichidagi qisqa ariza. `/start` (yoki `/royxat`) → «📝 Ro'yxatdan
