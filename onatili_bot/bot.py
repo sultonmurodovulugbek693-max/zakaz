@@ -109,7 +109,23 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("app_"):
         await confirm_app_login(message, args[1][4:])
         return
+    if len(args) == 2 and args[1].startswith("course_"):
+        await open_course_register(message, args[1][7:])
+        return
     await send_welcome(message, user)
+
+
+async def open_course_register(message: Message, code: str) -> None:
+    """Kurs havolasi (t.me/<bot>?start=course_<kod>) — ro'yxatdan o'tish ilovada ochiladi."""
+    markup = app_markup("📝 Ro'yxatdan o'tish", course=code)
+    if not markup:
+        await message.answer("⚠️ Ilova hali sozlanmagan (WEBAPP_URL).")
+        return
+    await message.answer(
+        "📝 <b>Oflayn kursga ro'yxatdan o'tish</b>\n"
+        "Ism-familiya, manzil va telefon raqamingizni kiritish uchun tugmani bosing 👇",
+        reply_markup=markup,
+    )
 
 
 async def confirm_app_login(message: Message, token: str) -> None:
@@ -553,6 +569,21 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
         logger.warning("Esse bali o'quvchiga yuborilmadi")
 
 
+async def course_notice(bot: Bot, chat_id: int, course: dict, reg: dict, username: str | None) -> None:
+    """Oflayn kursga yangi ariza — o'qituvchiga to'liq ma'lumot bilan xabar. Keyingi muloqot ular orasida."""
+    contact = f"\n💬 @{esc(username)}" if username else f"\n🆔 <code>{reg['tg_id']}</code> (username yo'q — telefoniga qo'ng'iroq qiling)"
+    await bot.send_message(
+        chat_id,
+        f"📝 <b>Yangi ariza</b> · {esc(course['title'])} (kod {course['code']})\n{LINE}\n"
+        f"👤 {esc(reg['full_name'])}\n"
+        f"📍 {esc(reg['address'])}\n"
+        f"📞 {esc(reg['phone'])}"
+        + (f"\n✏️ {esc(reg['note'])}" if reg.get("note") else "")
+        + contact,
+        reply_markup=app_markup("◈ Barcha arizalar", tc=course["id"]),
+    )
+
+
 # ---------- AI esse navbati (fon jarayoni) ----------
 
 ESSAY_MAX_TRIES = 4
@@ -801,6 +832,7 @@ async def main() -> None:
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),
+        course_notice=lambda chat_id, *args: course_notice(bot, chat_id, *args),
         missing=lambda user_id: subscription.missing_channels(bot, user_id),
         missing_in=lambda user_id, channels, recheck=False: test_channels_missing(bot, user_id, channels, recheck),
         resolve_channel=lambda ref: subscription.resolve_channel(bot, ref),

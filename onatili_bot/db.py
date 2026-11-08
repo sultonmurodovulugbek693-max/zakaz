@@ -199,6 +199,31 @@ SCHEMA = [
         session TEXT,
         created {FLOAT} NOT NULL
     )""",
+    # O'qituvchining oflayn kursi: kod bilan ulashiladi (bot havolasi yoki qo'lda), o'quvchi shu kod bilan
+    # ro'yxatdan o'tadi. active = 0 bo'lsa — yangi ariza qabul qilinmaydi (eski arizalar saqlanadi)
+    f"""CREATE TABLE IF NOT EXISTS courses (
+        id          {ID},
+        owner_id    {BIG} NOT NULL,
+        code        TEXT UNIQUE NOT NULL,
+        title       TEXT NOT NULL,
+        description TEXT,
+        location    TEXT,
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT
+    )""",
+    # Kursga yozilgan o'quvchining arizasi: ism-familiya, manzil, telefon — o'qituvchiga yuboriladi,
+    # keyin ular bevosita (botdan tashqari) muloqot qiladi. Bitta o'quvchi bir kursga bir marta yoziladi
+    f"""CREATE TABLE IF NOT EXISTS course_regs (
+        id         {ID},
+        course_id  {BIG} NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        tg_id      {BIG} NOT NULL,
+        full_name  TEXT NOT NULL,
+        phone      TEXT NOT NULL,
+        address    TEXT NOT NULL,
+        note       TEXT,
+        created_at TEXT,
+        UNIQUE (course_id, tg_id)
+    )""",
 ]
 
 # Eski bazalar uchun keyin qo'shilgan ustunlar
@@ -768,6 +793,91 @@ def update_class_student(class_id: int, student_id: int, name: str | None = None
             conn.execute("DELETE FROM class_students WHERE id = ? AND class_id = ?", (student_id, class_id))
         elif name:
             conn.execute("UPDATE class_students SET name = ? WHERE id = ? AND class_id = ?", (name, student_id, class_id))
+
+
+# ---------- Kurslar (oflayn ro'yxatga olish) ----------
+
+def list_courses(owner_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.*, (SELECT COUNT(*) FROM course_regs r WHERE r.course_id = c.id) AS regs "
+            "FROM courses c WHERE c.owner_id = ? ORDER BY c.id DESC", (owner_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_course(owner_id: int, title: str, description: str, location: str) -> dict:
+    with connect() as conn:
+        while True:
+            code = str(random.randint(10000, 99999))
+            if not conn.execute("SELECT 1 FROM courses WHERE code = ?", (code,)).fetchone():
+                break
+        row = conn.execute(
+            "INSERT INTO courses (owner_id, code, title, description, location, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (owner_id, code, title, description, location, _now()),
+        ).fetchone()
+    return dict(row)
+
+
+def get_course(course_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone())
+
+
+def get_course_by_code(code: str) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM courses WHERE code = ?", (code,)).fetchone())
+
+
+def update_course(course_id: int, title: str | None = None, description: str | None = None,
+                  location: str | None = None, active: bool | None = None) -> None:
+    sets, params = [], []
+    if title is not None:
+        sets.append("title = ?"); params.append(title)
+    if description is not None:
+        sets.append("description = ?"); params.append(description)
+    if location is not None:
+        sets.append("location = ?"); params.append(location)
+    if active is not None:
+        sets.append("active = ?"); params.append(1 if active else 0)
+    if not sets:
+        return
+    params.append(course_id)
+    with connect() as conn:
+        conn.execute(f"UPDATE courses SET {', '.join(sets)} WHERE id = ?", params)
+
+
+def delete_course(course_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM course_regs WHERE course_id = ?", (course_id,))
+        conn.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+
+
+def get_course_reg(course_id: int, tg_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM course_regs WHERE course_id = ? AND tg_id = ?",
+                                 (course_id, tg_id)).fetchone())
+
+
+def add_course_reg(course_id: int, tg_id: int, full_name: str, phone: str, address: str, note: str) -> dict:
+    """O'quvchining arizasi — bitta kursga bir marta (IntegrityError: allaqachon yozilgan)."""
+    with connect() as conn:
+        row = conn.execute(
+            "INSERT INTO course_regs (course_id, tg_id, full_name, phone, address, note, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            (course_id, tg_id, full_name, phone, address, note, _now()),
+        ).fetchone()
+    return dict(row)
+
+
+def list_course_regs(course_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT r.*, u.username FROM course_regs r LEFT JOIN users u ON u.tg_id = r.tg_id "
+            "WHERE r.course_id = ? ORDER BY r.id DESC", (course_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 # ---------- Obuna va AI sarfi ----------

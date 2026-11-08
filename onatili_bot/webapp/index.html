@@ -116,7 +116,7 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .hero-stat small { color: #b7cbbf; font-size: 12px; }
 .hero-stat.is-sun { background: rgba(168, 240, 99, .14); box-shadow: inset 0 0 0 1px var(--lime); }
 .hero-stat.is-sun b { color: var(--lime); }
-.quick-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 10px; }
 .quick-action { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 4px 12px; font: 700 12.5px var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); cursor: pointer; transition: transform .2s cubic-bezier(.34, 1.56, .64, 1); text-align: center; }
 .quick-action:active { transform: scale(.94); }
 .quick-action i { width: 44px; height: 44px; display: grid; place-items: center; font-size: 21px; font-style: normal; border-radius: 14px; background: #eaf7ee; }
@@ -562,7 +562,7 @@ function applyUiTheme(key) {
 
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
-const RESUMABLE = { student: ["answer", "result"], teacher: ["teacher", "classes", "klass", "result"] };
+const RESUMABLE = { student: ["answer", "result"], teacher: ["teacher", "classes", "klass", "courses", "course", "result"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
   if (view === "home") return store("lastView", "");
@@ -711,6 +711,9 @@ VIEWS.home = async () => {
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
         <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
         <button class="btn block" id="start" disabled>Boshlash →</button></div>
+      <div class="card code-card"><span class="muted small">O'qituvchingiz bergan kurs kodi</span><h2>📝 Kursga yozilish</h2>
+        <input class="code-input" id="ccode" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Kurs kodi">
+        <button class="btn ghost block" id="cstart" disabled>Davom etish →</button></div>
       <div class="section-title"><h2>Mening testlarim</h2><span class="muted small">${b.attempts.length} ta</span></div>
       <div class="list">${attempts || `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}</div>`
     : `
@@ -718,6 +721,7 @@ VIEWS.home = async () => {
         <button type="button" class="quick-action" data-new="online"><i>📱</i>Onlayn test</button>
         <button type="button" class="quick-action" data-new="offline"><i>📄</i>Oflayn test</button>
         <button type="button" class="quick-action" id="my-classes"><i>👥</i>Sinflar${b.classes ? ` · ${b.classes}` : ""}</button>
+        <button type="button" class="quick-action" id="my-courses"><i>🏷</i>Kurslar${b.courses ? ` · ${b.courses}` : ""}</button>
         <button type="button" class="quick-action" id="plan-quick"><i>💎</i>Obuna</button>
       </div>
       ${planCard(b.plan)}
@@ -727,6 +731,7 @@ VIEWS.home = async () => {
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   const mc = document.getElementById("my-classes"); if (mc) mc.onclick = () => { haptic("light"); go("classes"); };
+  const mco = document.getElementById("my-courses"); if (mco) mco.onclick = () => { haptic("light"); go("courses"); };
   const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => planModal();
   const pq = document.getElementById("plan-quick"); if (pq) pq.onclick = () => { haptic("light"); planModal(); };
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
@@ -736,6 +741,13 @@ VIEWS.home = async () => {
     code.oninput = () => { code.value = code.value.replace(/\D/g, "").slice(0, 5); start.disabled = code.value.length !== 5; if (code.value.length === 5) start.focus(); };
     start.onclick = () => go("answer", { code: code.value });
     code.onkeydown = e => { if (e.key === "Enter" && code.value.length === 5) go("answer", { code: code.value }); };
+  }
+  const ccode = document.getElementById("ccode");
+  if (ccode) {
+    const cstart = document.getElementById("cstart");
+    ccode.oninput = () => { ccode.value = ccode.value.replace(/\D/g, "").slice(0, 5); cstart.disabled = ccode.value.length !== 5; if (ccode.value.length === 5) cstart.focus(); };
+    cstart.onclick = () => go("courseInfo", { code: ccode.value });
+    ccode.onkeydown = e => { if (e.key === "Enter" && ccode.value.length === 5) go("courseInfo", { code: ccode.value }); };
   }
   document.querySelectorAll("[data-attempt]").forEach(x => x.onclick = () => x.dataset.announced === "1" ? go("result", { id: x.dataset.attempt }) : toast("⏳ Natijalar hali e'lon qilinmagan"));
   document.querySelectorAll("[data-test]").forEach(x => x.onclick = e => { if (!e.target.closest(".del-test")) go("teacher", { id: x.dataset.test }); });
@@ -1456,6 +1468,137 @@ VIEWS.klass = async ({ id }) => {
   document.getElementById("c-del").onclick = async () => {
     if (!(await confirmBox(`«${c.name}» sinfini o'chirasizmi?\n\nTestlardagi natijalar o'chmaydi.`))) return;
     try { await api(`/api/teacher/class/${id}`, { delete: true }); haptic("success"); toast("🗑 O'chirildi"); S.boot = null; back(); } catch (e) { toast(e.message); }
+  };
+};
+
+// ---------- Kurslar (oflayn ro'yxatga olish) ----------
+// O'qituvchi: kurs yaratadi (kod beriladi), kodni (yoki bot havolasini) talabalarga ulashadi.
+// O'quvchi: kodni kiritib ism, manzil, telefonini qoldiradi — ariza o'qituvchiga Telegram orqali boradi,
+// keyingi muloqot (uchrashuv, to'lov va h.k.) ilova ishtirokisiz, ular orasida davom etadi.
+
+VIEWS.courses = async () => {
+  loading();
+  let r; try { r = await api("/api/teacher/courses"); } catch (e) { return fail(e); }
+  const list = r.courses.map(c => `<button type="button" class="item" data-course="${c.id}"><span class="ico">🏷</span>
+      <span><b>${esc(c.title)}</b><small>Kod ${c.code} · ${c.regs} ta ariza${c.active ? "" : " · yopiq"}</small></span><span class="muted">›</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kurslar</span><h1>Oflayn kurslarim</h1>
+      <span class="muted small">Kurs yarating, kodni (yoki havolani) o'quvchilarga ulashing — ular ism, manzil va telefonini qoldiradi, siz bilan o'zlari bog'lanadi.</span></div>
+    <div class="card"><div class="field"><label for="ctitle">Yangi kurs nomi</label>
+      <div class="row"><input class="input" id="ctitle" maxlength="80" placeholder="Masalan: Ingliz tili (boshlang'ich)" autocomplete="off"><button class="btn" id="cadd" style="flex-shrink:0">＋ Qo'shish</button></div></div></div>
+    <div class="list">${list || `<div class="card empty"><div class="big">🏷</div><b>Hali kurs yo'q</b><span>Kurs nomini yozib «Qo'shish»ni bosing.</span></div>`}</div>
+  </div>`;
+  const input = document.getElementById("ctitle"), btn = document.getElementById("cadd");
+  const create = async () => {
+    const title = input.value.trim(); if (!title) { toast("Kurs nomini yozing"); return input.focus(); }
+    btn.disabled = true;
+    try { const c = await api("/api/teacher/courses", { title }); haptic("success"); S.boot = null; go("course", { id: c.course.id }); }
+    catch (e) { toast(e.message); btn.disabled = false; }
+  };
+  btn.onclick = create; input.onkeydown = e => { if (e.key === "Enter") create(); };
+  document.querySelectorAll("[data-course]").forEach(x => x.onclick = () => go("course", { id: x.dataset.course }));
+};
+
+VIEWS.course = async ({ id }) => {
+  loading();
+  let c; try { c = (await api(`/api/teacher/course/${id}`)).course; } catch (e) { return fail(e); }
+  const rows = c.list.map(r => `<div class="item" style="cursor:default;align-items:flex-start">
+      <span class="ico">👤</span>
+      <span style="min-width:0"><b>${esc(r.full_name)}</b>
+        <small style="display:block">📍 ${esc(r.address)}</small>
+        <small style="display:block">📞 ${esc(r.phone)}</small>
+        ${r.note ? `<small style="display:block">✏️ ${esc(r.note)}</small>` : ""}
+        ${r.username ? `<a href="https://t.me/${esc(r.username)}" target="_blank" rel="noopener" class="small" style="display:inline-block;margin-top:4px;color:var(--accent);font-weight:700">💬 @${esc(r.username)}</a>`
+          : `<small class="muted" style="display:block;margin-top:4px">Username yo'q — telefoniga bog'laning</small>`}</span></div>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kurs</span><h1>${esc(c.title)}</h1>
+      <span class="muted small">Kod <b>${c.code}</b> · ${c.list.length} ta ariza${c.active ? "" : " · yangi arizalar yopilgan"}</span></div>
+    ${c.share_url ? `<button class="btn block" id="share-link">🔗 Ro'yxatga olish havolasini ulashish</button>` : ""}
+    <div class="card">
+      <div class="field"><label for="co-title">Kurs nomi</label><input class="input" id="co-title" maxlength="80" value="${esc(c.title)}"></div>
+      <div class="field"><label for="co-desc">Tavsif <span class="muted">(ixtiyoriy)</span></label><textarea class="input" id="co-desc" rows="3" placeholder="Kurs haqida qisqacha — o'quvchi ro'yxatdan o'tishdan oldin ko'radi">${esc(c.description)}</textarea></div>
+      <div class="field"><label for="co-loc">Manzil <span class="muted">(ixtiyoriy)</span></label><input class="input" id="co-loc" maxlength="200" value="${esc(c.location)}" placeholder="Masalan: Toshkent, Chilonzor"></div>
+      <button class="btn ghost block" id="co-save">Saqlash</button>
+      <button class="btn ${c.active ? "ghost" : ""} block" id="co-toggle">${c.active ? "⏸ Yangi arizalarni to'xtatish" : "▶️ Yangi arizalarni qabul qilish"}</button>
+    </div>
+    <div class="section-title"><h2>Arizalar</h2><span class="muted small">${c.list.length} ta</span></div>
+    <div class="list">${rows || `<div class="card empty"><div class="big">📭</div>Hali ariza yo'q.<br>Kodni yoki havolani o'quvchilarga ulashing.</div>`}</div>
+    <button class="btn danger block" id="co-del">🗑 Kursni o'chirish</button>
+  </div>`;
+  const reload = () => { S.boot = null; rerender(); };
+  const share = document.getElementById("share-link");
+  if (share) share.onclick = () => {
+    const text = `📝 ${c.title} — ro'yxatdan o'tish`;
+    try { tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(c.share_url)}&text=${encodeURIComponent(text)}`); }
+    catch (e) { navigator.clipboard ? navigator.clipboard.writeText(c.share_url).then(() => toast("🔗 Havola nusxalandi")) : toast(c.share_url); }
+  };
+  document.getElementById("co-save").onclick = async () => {
+    const title = document.getElementById("co-title").value.trim();
+    if (!title) { toast("Kurs nomini yozing"); return; }
+    try {
+      await api(`/api/teacher/course/${id}`, {
+        title, description: document.getElementById("co-desc").value.trim(), location: document.getElementById("co-loc").value.trim(),
+      });
+      haptic("success"); toast("✅ Saqlandi"); reload();
+    } catch (e) { toast(e.message); }
+  };
+  document.getElementById("co-toggle").onclick = async () => {
+    try { await api(`/api/teacher/course/${id}`, { active: !c.active }); haptic("success"); reload(); } catch (e) { toast(e.message); }
+  };
+  document.getElementById("co-del").onclick = async () => {
+    if (!(await confirmBox(`«${c.title}» kursini o'chirasizmi?\n\nBarcha arizalar ham o'chadi.`))) return;
+    try { await api(`/api/teacher/course/${id}`, { delete: true }); haptic("success"); toast("🗑 O'chirildi"); S.boot = null; back(); } catch (e) { toast(e.message); }
+  };
+};
+
+VIEWS.courseInfo = async ({ code }) => {
+  loading();
+  let c; try { c = await api(`/api/course/${code}`); } catch (e) { return fail(e); }
+  if (c.registered) {
+    S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
+    $app.innerHTML = `<div class="view"><div class="card success">
+      <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+      <h1>Siz ro'yxatdan o'tgansiz</h1>
+      <p class="muted">${esc(c.title)}<br>O'qituvchi tez orada siz bilan bog'lanadi.</p>
+      <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
+    document.getElementById("home").onclick = () => render();
+    return;
+  }
+  const draftKey = "course-draft-" + code;
+  let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${code}</span><h1>${esc(c.title)}</h1>
+      ${c.location ? `<span class="muted small">📍 ${esc(c.location)}</span>` : ""}</div>
+    ${c.description ? `<div class="card"><p style="margin:0;white-space:pre-wrap">${esc(c.description)}</p></div>` : ""}
+    <div class="card">
+      <div class="field"><label for="rname">Ism va familiya</label><input class="input" id="rname" autocomplete="name" value="${esc(draft.full_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+      <div class="field"><label for="rphone">Telefon raqam</label><input class="input" id="rphone" type="tel" inputmode="tel" autocomplete="tel" value="${esc(draft.phone || "")}" placeholder="+998 90 123 45 67"></div>
+      <div class="field"><label for="raddr">Yashash joyi</label><input class="input" id="raddr" autocomplete="address-level2" value="${esc(draft.address || "")}" placeholder="Shahar / tuman, mahalla"></div>
+      <div class="field"><label for="rnote">Qo'shimcha ma'lumot <span class="muted">(ixtiyoriy)</span></label><textarea class="input" id="rnote" rows="3" placeholder="Savolingiz yoki qo'shimcha ma'lumot bo'lsa yozing">${esc(draft.note || "")}</textarea></div>
+    </div>
+    <div class="sticky-bottom"><div><button class="btn block" id="rsubmit">Ro'yxatdan o'tish</button></div></div>
+  </div>`;
+  const rname = document.getElementById("rname"), rphone = document.getElementById("rphone"),
+        raddr = document.getElementById("raddr"), rnote = document.getElementById("rnote");
+  const save = () => store(draftKey, JSON.stringify({ full_name: rname.value, phone: rphone.value, address: raddr.value, note: rnote.value }));
+  [rname, rphone, raddr, rnote].forEach(el => el.oninput = save);
+  document.getElementById("rsubmit").onclick = async () => {
+    const full_name = rname.value.trim(), phone = rphone.value.trim(), address = raddr.value.trim(), note = rnote.value.trim();
+    if (full_name.length < 3) { toast("Ism va familiyangizni yozing"); haptic("error"); return rname.focus(); }
+    if (phone.length < 7) { toast("Telefon raqamingizni yozing"); haptic("error"); return rphone.focus(); }
+    if (address.length < 2) { toast("Yashash joyingizni yozing"); haptic("error"); return raddr.focus(); }
+    const btn = document.getElementById("rsubmit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    try {
+      await api(`/api/course/${code}/register`, { full_name, phone, address, note });
+      store(draftKey, "{}"); haptic("success");
+      S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
+      $app.innerHTML = `<div class="view"><div class="card success">
+        <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
+        <h1>Ro'yxatdan o'tdingiz!</h1>
+        <p class="muted">${esc(c.title)}<br>Ma'lumotlaringiz o'qituvchiga yuborildi — tez orada siz bilan bog'lanadi.</p>
+        <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
+      document.getElementById("home").onclick = () => render();
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Ro'yxatdan o'tish"; }
   };
 };
 
@@ -2313,6 +2456,8 @@ VIEWS.appHome = async () => {
   else if (q.get("t")) { S.role = "teacher"; go("teacher", { id: q.get("t"), tab: q.get("tab") || undefined }); }
   else if (q.get("v") === "create") { S.role = "teacher"; go("create"); }
   else if (q.get("v") === "classes") { S.role = "teacher"; go(q.get("k") ? "klass" : "classes", q.get("k") ? { id: q.get("k") } : {}); }
+  else if (q.get("tc")) { S.role = "teacher"; go("course", { id: q.get("tc") }); }
+  else if (q.get("course")) { go("courseInfo", { code: q.get("course") }); }
   else if (q.get("c")) { go("answer", { code: q.get("c") }); }
   else { resumeView(); render(); }  // birinchi kirishda — rol tanlash, keyin — oxirgi sahifa
 })();

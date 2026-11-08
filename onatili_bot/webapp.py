@@ -164,6 +164,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         } for a in attempts],
         "tests": teacher_tests,
         "classes": len(await run(db.list_classes, user["id"])),
+        "courses": len(await run(db.list_courses, user["id"])),
         "plan": await run(plans.status, user["id"]),
         "plans": [{"key": k, **plans.PLANS[k]} for k in plans.PAID],
         "admin_contact": ADMIN_CONTACT,
@@ -839,6 +840,11 @@ def clean_name(value) -> str:
     return " ".join(str(value or "").split())[:60]
 
 
+def clean_text(value, limit: int) -> str:
+    """Bo'sh joylarni tartibga solib, berilgan uzunlikkacha qisqartiradi (clean_name 60 belgi bilan cheklangan)."""
+    return " ".join(str(value or "").split())[:limit]
+
+
 async def classes_list(request: web.Request) -> web.Response:
     user = await auth(request)
     return ok({"classes": [class_view(c) for c in await run(db.list_classes, user["id"])]})
@@ -963,6 +969,127 @@ async def students_from_class(request: web.Request) -> web.Response:
     chosen = assign_variants(len(fresh), variants, str(payload.get("mode") or "cycle"), start=len(taken))
     students = await run(db.add_students, test["id"], [p["name"] for p in fresh], chosen, [p["number"] for p in fresh])
     return ok({"students": [student_view(s) for s in students], "added": len(fresh)})
+
+
+# ---------- Kurslar (oflayn ro'yxatga olish) ----------
+# O'qituvchi kurs yaratadi (kod beriladi), kodni (yoki bot havolasini) o'quvchilarga ulashadi.
+# O'quvchi ilovada kodni kiritib ism, manzil, telefonini qoldiradi — ariza o'qituvchiga Telegram orqali
+# boradi, keyingi muloqot ilova/bot ishtirokisiz davom etadi.
+
+MAX_NOTE = 500
+
+
+def course_view(course: dict, regs: list[dict] | None = None) -> dict:
+    view = {
+        "id": course["id"], "code": course["code"], "title": course["title"],
+        "description": course.get("description") or "", "location": course.get("location") or "",
+        "active": bool(course["active"]), "regs": course.get("regs", len(regs or [])),
+    }
+    if regs is not None:
+        view["list"] = [{
+            "id": r["id"], "full_name": r["full_name"], "phone": r["phone"], "address": r["address"],
+            "note": r.get("note") or "", "username": r.get("username"), "created_at": r["created_at"],
+        } for r in regs]
+    return view
+
+
+async def own_course(request: web.Request, user: dict) -> dict:
+    course = await run(db.get_course, int(request.match_info["course_id"]))
+    if not course or course["owner_id"] != user["id"]:
+        raise ApiError(404, "Kurs topilmadi")
+    return course
+
+
+async def courses_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    return ok({"courses": [course_view(c) for c in await run(db.list_courses, user["id"])]})
+
+
+async def course_create(request: web.Request) -> web.Response:
+    user = await auth(request)
+    payload = await body(request)
+    title = clean_text(payload.get("title"), 80)
+    if len(title) < 2:
+        raise ApiError(400, "Kurs nomini yozing")
+    description = clean_text(payload.get("description"), MAX_NOTE)
+    location = clean_text(payload.get("location"), 200)
+    if len(await run(db.list_courses, user["id"])) >= 50:
+        raise ApiError(400, "Kurslar soni 50 tadan oshmasin")
+    course = await run(db.create_course, user["id"], title, description, location)
+    return ok({"course": course_view(course, [])})
+
+
+async def course_detail(request: web.Request) -> web.Response:
+    user = await auth(request)
+    course = await own_course(request, user)
+    view = course_view(course, await run(db.list_course_regs, course["id"]))
+    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
+    view["share_url"] = f"https://t.me/{username}?start=course_{course['code']}" if username else ""
+    return ok({"course": view})
+
+
+async def course_update(request: web.Request) -> web.Response:
+    user = await auth(request)
+    course = await own_course(request, user)
+    payload = await body(request)
+    if payload.get("delete"):
+        await run(db.delete_course, course["id"])
+        return ok({"ok": True})
+    title = clean_text(payload.get("title"), 80) if "title" in payload else None
+    if title is not None and len(title) < 2:
+        raise ApiError(400, "Kurs nomini yozing")
+    description = clean_text(payload.get("description"), MAX_NOTE) if "description" in payload else None
+    location = clean_text(payload.get("location"), 200) if "location" in payload else None
+    active = bool(payload.get("active")) if "active" in payload else None
+    await run(db.update_course, course["id"], title, description, location, active)
+    course = await run(db.get_course, course["id"])
+    return ok({"course": course_view(course, await run(db.list_course_regs, course["id"]))})
+
+
+async def course_info(request: web.Request) -> web.Response:
+    """O'quvchi kurs kodini kiritganda: kurs ma'lumoti va u allaqachon ro'yxatdan o'tganmi."""
+    user = await auth(request)
+    course = await run(db.get_course_by_code, request.match_info["code"])
+    if not course:
+        raise ApiError(404, "Bunday kod topilmadi")
+    registered = bool(await run(db.get_course_reg, course["id"], user["id"]))
+    if not course["active"] and not registered:
+        raise ApiError(400, "Bu kursga hozircha yangi ariza qabul qilinmayapti")
+    return ok({
+        "code": course["code"], "title": course["title"], "description": course["description"] or "",
+        "location": course["location"] or "", "registered": registered,
+    })
+
+
+async def course_register(request: web.Request) -> web.Response:
+    user = await auth(request)
+    course = await run(db.get_course_by_code, request.match_info["code"])
+    if not course or not course["active"]:
+        raise ApiError(404, "Bunday kod topilmadi yoki bu kursga ariza qabul qilinmayapti")
+    payload = await body(request)
+    full_name = clean_text(payload.get("full_name"), 80)
+    phone = clean_text(payload.get("phone"), 30)
+    address = clean_text(payload.get("address"), 200)
+    note = clean_text(payload.get("note"), MAX_NOTE)
+    if len(full_name) < 3:
+        raise ApiError(400, "Ism va familiyangizni yozing")
+    if len(phone) < 7:
+        raise ApiError(400, "Telefon raqamingizni yozing")
+    if len(address) < 2:
+        raise ApiError(400, "Yashash joyingizni yozing")
+    await run(db.remember_user, user["id"], user["name"], user["username"])
+    if await run(db.get_course_reg, course["id"], user["id"]):
+        raise ApiError(400, "Siz bu kursga allaqachon ro'yxatdan o'tgansiz")
+    try:
+        reg = await run(db.add_course_reg, course["id"], user["id"], full_name, phone, address, note)
+    except db.IntegrityError:
+        raise ApiError(400, "Siz bu kursga allaqachon ro'yxatdan o'tgansiz")
+    if "course_notice" in HOOKS:
+        try:
+            await HOOKS["course_notice"](course["owner_id"], course, reg, user.get("username"))
+        except Exception:
+            logger.warning("O'qituvchiga kurs arizasi haqida xabar yuborilmadi", exc_info=True)
+    return ok({"ok": True})
 
 
 async def sheets(request: web.Request) -> web.Response:
@@ -1467,6 +1594,12 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/import", class_students_import)
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/students/{student_id:\\d+}", class_student_update)
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/send", class_send_ids)
+    app.router.add_get("/api/teacher/courses", courses_list)
+    app.router.add_post("/api/teacher/courses", course_create)
+    app.router.add_get("/api/teacher/course/{course_id:\\d+}", course_detail)
+    app.router.add_post("/api/teacher/course/{course_id:\\d+}", course_update)
+    app.router.add_get("/api/course/{code:\\d{5}}", course_info)
+    app.router.add_post("/api/course/{code:\\d{5}}/register", course_register)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)
