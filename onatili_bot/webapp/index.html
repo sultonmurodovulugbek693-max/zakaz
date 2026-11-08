@@ -1286,7 +1286,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   t.channels = t.channels || []; d.students = d.students || [];
   const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
   tab = tab || "home";
-  const totals = d.attempts.map(a => milliy ? a.total : a.percent);
+  const totals = d.attempts.map(a => milliy ? (a.rasch ?? a.total) : a.percent);  // ro'yxatdagi katta son bilan bir xil: umumiy ball (75)
   const avg = n ? totals.reduce((x, y) => x + y, 0) / n : 0, max = n ? Math.max(...totals) : 0;
   const certified = d.attempts.filter(a => a.grade && a.grade !== "NC").length;
   const gradeBar = milliy && n ? `<div class="card"><div class="row between"><h2>Darajalar</h2><span class="muted small">Rasch · taxminiy</span></div>
@@ -1350,11 +1350,10 @@ VIEWS.teacher = async ({ id, tab }) => {
     ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>
       ${wr && !writtenLeft ? `<button type="button" class="item" id="written-review-open"><span class="ico">✍️</span>
         <span><b>Yozma javoblar</b><small>${wr.done} / ${wr.total} katak belgilangan — ko'rish va o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
-      ${strip}${gradeBar}${files}` : ""}
-    ${tab === "people" && n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}
+      ${files}` : ""}
     ${tab === "students" ? rosterHTML(d) : ""}
     ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
-    ${tab === "people" ? `${strip}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
+    ${tab === "people" ? `${strip}${gradeBar}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
     ${tab === "questions" ? (n ? `${gradeBar}<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
     ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}</div><div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
