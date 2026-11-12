@@ -191,6 +191,8 @@ async def test_gate(test: dict, user: dict, recheck: bool = False) -> None:
     """O'qituvchi testga qo'shgan kanallar: o'quvchi obuna bo'lmaguncha testni ocholmaydi va javob yuborolmaydi."""
     if not test.get("channels") or test["owner_id"] == user["id"] or user["id"] in ADMIN_IDS or "missing_in" not in HOOKS:
         return
+    if (test.get("mode") or "online") == "offline":  # oflayn testda majburiy obuna yo'q (eski testlarda qolgan bo'lsa ham)
+        return
     missing = await HOOKS["missing_in"](user["id"], test["channels"], recheck)
     if missing:
         raise ApiError(403, "Testni yechish uchun kanallarga obuna bo'ling", channels=public_channels(missing))
@@ -228,6 +230,8 @@ async def check_channel(request: web.Request) -> web.Response:
 async def set_channels(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
+    if (test.get("mode") or "online") == "offline":
+        raise ApiError(400, "Oflayn testda majburiy obuna yo'q")
     channels = await resolve_channels((await body(request)).get("channels") or [])
     await run(db.set_test_channels, test["id"], channels)
     return ok({"channels": public_channels(channels)})
@@ -523,14 +527,42 @@ async def create_test(request: web.Request) -> web.Response:
     keys = {"A": validate_key(items, raw_keys["A"])}  # bitta kalit; eski testlardagi B–D variantlar ishlashda davom etadi
     theme = payload.get("theme") if payload.get("theme") in THEMES else "classic"
     topic = str(payload.get("essay_topic") or "").strip()[:2000] or None
-    channels = await resolve_channels(payload.get("channels") or [])
+    mode = "offline" if payload.get("mode") == "offline" else "online"
+    # Oflayn (qog'ozdagi) testda majburiy obuna yo'q — o'quvchi testni ilovada ochmaydi
+    channels = await resolve_channels(payload.get("channels") or []) if mode == "online" else []
     test = await run(db.create_test, user["id"], title, fmt, count, items, keys, topic if fmt == "milliy" else None)
     await run(db.set_theme, test["id"], theme)
     if channels:
         await run(db.set_test_channels, test["id"], channels)
-    await run(db.set_mode, test["id"], "offline" if payload.get("mode") == "offline" else "online")
-    await HOOKS["send_pdf"](user["id"], test, "key")
-    return ok({"ok": True, "id": test["id"], "code": test["code"]})
+    await run(db.set_mode, test["id"], mode)
+    test = await run(db.get_test, test["id"])
+    sent, pdf_error = await send_created_pdfs(user["id"], test)
+    return ok({"ok": True, "id": test["id"], "code": test["code"], "mode": mode, "sent": sent, "pdf_error": pdf_error})
+
+
+async def send_created_pdfs(chat_id: int, test: dict) -> tuple[list[str], str | None]:
+    """Yangi test: kalit PDF'i, oflayn testga yana bo'sh titul PDF'i — bot chatiga. Yuborib bo'lmasa ham test
+    saqlanib qoladi (xato qaytarilsa, o'qituvchi qayta bosib, ikkinchi testni yaratib qo'yardi)."""
+    jobs = [("key", lambda: HOOKS["send_pdf"](chat_id, test, "key"))]
+    if test.get("mode") == "offline":
+        jobs.append(("sheets", lambda: HOOKS["send_sheets"](chat_id, test, [], 1)))
+    sent, error = [], None
+    for kind, job in jobs:
+        try:
+            await job()
+            sent.append(kind)
+        except Exception as exc:
+            logger.exception("Yangi test PDF'i (%s) yuborilmadi: test %s", kind, test["id"])
+            error = send_error_text(exc)
+    return sent, error
+
+
+def send_error_text(exc: Exception) -> str:
+    """Bot chatga fayl yubora olmadi — o'qituvchiga tushunarli sabab."""
+    text = str(exc).lower()
+    if "forbidden" in text or "chat not found" in text or "blocked" in text:
+        return "Bot sizga xabar yubora olmadi — botni oching va /start bosing, so'ng «Fayllar»dan qayta oling"
+    return "PDF yuborilmadi — test sahifasidagi «Fayllar»dan qayta oling"
 
 
 async def copy_test(request: web.Request) -> web.Response:
@@ -542,7 +574,7 @@ async def copy_test(request: web.Request) -> web.Response:
     keys = await run(db.get_keys, test["id"])
     copy = await run(db.create_test, user["id"], title, test["fmt"], test["count"], test["items"], keys, test.get("essay_topic"))
     await run(db.set_theme, copy["id"], test.get("theme") or "classic")
-    if test.get("channels"):
+    if test.get("channels") and (test.get("mode") or "online") == "online":
         await run(db.set_test_channels, copy["id"], test["channels"])
     await run(db.set_mode, copy["id"], test.get("mode") or "online")
     return ok({"ok": True, "id": copy["id"], "code": copy["code"]})
@@ -579,6 +611,7 @@ async def teacher_test(request: web.Request) -> web.Response:
     for _, grade_name in rasch.values():
         grades[grade_name] = grades.get(grade_name, 0) + 1
     written_review_info = await written_review_summary(test, attempts, keys)
+    offline_milliy = test["fmt"] == "milliy" and test.get("mode") == "offline"
     return ok({
         "written_review": written_review_info,
         "test": {"id": test["id"], "code": test["code"], "title": test["title"], "fmt": test["fmt"],
@@ -592,8 +625,9 @@ async def teacher_test(request: web.Request) -> web.Response:
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
         "ai": essay_ai.essay_enabled(), "ai_provider": essay_ai.essay_provider_name(),
-        "waiting_essays": await run(db.waiting_offline_essays, test["id"])
-        if test["fmt"] == "milliy" and test.get("mode") == "offline" else 0,
+        "waiting_essays": await run(db.waiting_offline_essays, test["id"]) if offline_milliy else 0,
+        "offline_essays": [offline_essay_view(e) for e in await run(db.list_offline_essays, test["id"])]
+        if offline_milliy else [],
     })
 
 
@@ -629,7 +663,11 @@ async def send_pdf(request: web.Request) -> web.Response:
     kind = (await body(request)).get("kind")
     if kind not in ("key", "results", "excel"):
         raise ApiError(400, "Noma'lum hujjat")
-    await HOOKS["send_pdf"](user["id"], test, kind)
+    try:
+        await HOOKS["send_pdf"](user["id"], test, kind)
+    except Exception as exc:
+        logger.exception("Fayl (%s) yuborilmadi: test %s", kind, test["id"])
+        raise ApiError(502, send_error_text(exc))
     return ok({"ok": True})
 
 
@@ -1508,7 +1546,10 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
         raise ApiError(400, f"Esse juda qisqa — kamida {ESSAY_MIN_WORDS} so'z yozing")
     if len(text) > ESSAY_MAX_CHARS:
         raise ApiError(400, "Esse juda uzun")
-    name = " ".join(str(payload.get("name") or "").split())[:60] or None
+    # Ism majburiy: o'qituvchi uni ro'yxatdagi ism bilan solishtiradi (begona ID bilan yuborilsa — ko'rinadi)
+    name = " ".join(str(payload.get("name") or "").split())[:60]
+    if len(name) < 3:
+        raise ApiError(400, "Ism va familiyangizni to'liq yozing")
     mine = await run(db.offline_essay_of_user, test["id"], user["id"])
     if mine and mine["number"] != number:
         raise ApiError(409, f"Siz bu testga ID {mine['number']:04d} bilan esse yuborgansiz — ID'ni o'zgartirib bo'lmaydi")
@@ -1520,10 +1561,54 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
     attempt = await run(db.get_attempt, student["attempt_id"]) if student and student["attempt_id"] else None
     if attempt and attempt["essay"] is not None:
         raise ApiError(409, "Essengiz allaqachon baholangan — o'zgartirib bo'lmaydi")
-    await run(db.save_offline_essay, test["id"], number, user["id"], name or (student["name"] if student else None), text)
+    await run(db.save_offline_essay, test["id"], number, user["id"], name, text)
     linked = bool(attempt) and await link_offline_essay(test, number, attempt["id"])
     return ok({"ok": True, "number": number, "words": len(text.split()), "linked": linked,
                "name": student["name"] if student else name})
+
+
+_APOSTROPHES = str.maketrans("", "", "'`ʻʼ‘’")
+
+
+def names_match(given: str | None, roster: str | None) -> bool | None:
+    """Botda yozilgan ism ro'yxatdagiga mosmi: kamida bitta so'z (3+ harf) bir xil. None — solishtirib bo'lmaydi.
+    Faqat ogohlantirish uchun (o'quvchi kirillda yozgan bo'lishi mumkin) — esse rad etilmaydi."""
+    words = lambda text: {w for w in str(text or "").lower().translate(_APOSTROPHES).split() if len(w) >= 3}
+    a, b = words(given), words(roster)
+    if not a or not b:
+        return None
+    return bool(a & b)
+
+
+def offline_essay_view(row: dict) -> dict:
+    return {"number": row["number"], "name": row["name"], "roster_name": row["roster_name"],
+            "name_ok": names_match(row["name"], row["roster_name"]),
+            "account": row["tg_name"] or "Foydalanuvchi", "username": row["username"],
+            "words": len((row["text"] or "").split()), "created_at": row["created_at"],
+            "linked": bool(row["attempt_id"]), "score": row["score"]}
+
+
+async def offline_essay_delete(request: web.Request) -> web.Response:
+    """O'qituvchi botda yozilgan esseni bekor qiladi (begona akkaunt boshqa o'quvchi ID'sini egallagan yoki
+    o'quvchi ID'ni xato yozgan): ID bo'shaydi, haqiqiy egasi qayta yuboradi. Yuborgan akkauntga xabar boradi."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    number = int(request.match_info["number"])
+    sender = await run(db.delete_offline_essay, test["id"], number)
+    if sender is None:
+        raise ApiError(404, "Bu ID bilan esse topilmadi")
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](
+                sender, f"⚠️ <b>{html.escape(test['title'])}</b>: ID {number:04d} bilan yuborgan essengizni o'qituvchi "
+                        "bekor qildi.\nTituldagi ID'ingizni tekshirib, esseni to'g'ri ID bilan qayta yuboring."
+                        if not test["closed"] else
+                        f"⚠️ <b>{html.escape(test['title'])}</b>: ID {number:04d} bilan yuborgan essengizni o'qituvchi "
+                        "bekor qildi.")
+        except Exception:
+            logger.warning("Esse bekor qilingani haqida xabar yuborilmadi", exc_info=True)
+    essays = await run(db.list_offline_essays, test["id"])
+    return ok({"ok": True, "offline_essays": [offline_essay_view(e) for e in essays]})
 
 
 async def store_written_image(test: dict, attempt: dict, image) -> None:
@@ -1797,6 +1882,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/test/{code:\\d{5}}/submit", submit)
     app.router.add_post("/api/test/{code:\\d{5}}/ping", ping)
     app.router.add_post("/api/test/{code:\\d{5}}/essay", offline_essay_submit)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/offline-essays/{number:\\d{1,4}}/delete", offline_essay_delete)
     app.router.add_get("/api/result/{attempt_id:\\d+}", result)
     app.router.add_post("/api/teacher/tests", create_test)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)

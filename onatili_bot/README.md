@@ -46,6 +46,8 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - **Esse (45) qog'ozda emas**: o'quvchi botga test kodini kiritadi va tituldagi ID'si bilan esseni
   telefonda yozadi. Titul skanerlanganda (oldin yoki keyin) esse shu ID'li natijaga o'zi qo'shiladi.
   Bitta Telegram akkaunt — bitta ID; baholangan esse o'zgartirilmaydi.
+  O'qituvchi «📝 Esselar»da botda yozilgan esselarni ko'radi: ID, yozilgan ism (ro'yxatdagidan farq qilsa — ⚠️),
+  yuborgan Telegram akkaunt. Begona/xato ID bilan yuborilgan esseni 🗑 bilan bekor qiladi — ID bo'shaydi, egasi qayta yuboradi.
 - **Oflayn skaner** (ilovada yoki Mini App'da):
   1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
      (~1–2 soniya, internet shart emas). Keyingi titulni ustiga qo'yavering.
@@ -60,7 +62,8 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   `flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=APP_URL=https://<sayt>.onrender.com/`
   so'ng `build/app/outputs/flutter-apk/app-release.apk` → `onatili_bot/downloads/onatili-skaner.apk`
   (bot uni `/download` manzilida beradi).
-- Ilovaga Telegram orqali kiriladi (bot tasdiqlaydi). Mini App'da «Skanerlash» → ilova shu testda ochiladi.
+- Ilovaga Telegram orqali kiriladi: botda «✅ Ha, men kiryapman» bosilgandagina kirish beriladi (kimdir havolani
+  yuborsa, bosishning o'zi akkauntni bermaydi). `/chiqish` — ilovadagi barcha qurilmalardan chiqish. Mini App'da «Skanerlash» → ilova shu testda ochiladi.
 
 ## AI (yozma javoblar va esse)
 - `AI_PROVIDER=gemini` — Google Gemini, **bepul tarifi bor**. Kalit: https://aistudio.google.com → API Keys.

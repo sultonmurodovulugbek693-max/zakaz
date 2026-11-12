@@ -400,6 +400,26 @@ def create_login(token: str) -> None:
         conn.execute("INSERT INTO app_tokens (token, kind, created) VALUES (?, 'login', ?)", (token, time.time()))
 
 
+def login_pending(token: str) -> bool:
+    """Kirish havolasi hali tasdiqlanmagan va eskirmagan."""
+    with connect() as conn:
+        row = conn.execute("SELECT created, tg_id FROM app_tokens WHERE token = ? AND kind = 'login'",
+                           (token,)).fetchone()
+    return bool(row) and row["tg_id"] is None and time.time() - row["created"] <= LOGIN_TTL
+
+
+def cancel_login(token: str) -> None:
+    """«Yo'q, men emas» — tasdiqlanmagan kirish havolasi o'chiriladi."""
+    with connect() as conn:
+        conn.execute("DELETE FROM app_tokens WHERE token = ? AND kind = 'login' AND tg_id IS NULL", (token,))
+
+
+def delete_user_sessions(tg_id: int) -> int:
+    """/chiqish — foydalanuvchining barcha ilova sessiyalari bekor qilinadi. Qaytaradi: nechta."""
+    with connect() as conn:
+        return conn.execute("DELETE FROM app_tokens WHERE kind = 'session' AND tg_id = ?", (tg_id,)).rowcount or 0
+
+
 def confirm_login(token: str, tg_id: int, session: str) -> bool:
     """Bot /start app_<token> ni oldi: kirish tasdiqlanadi va sessiya yaratiladi."""
     with connect() as conn:
@@ -407,7 +427,9 @@ def confirm_login(token: str, tg_id: int, session: str) -> bool:
                            (token,)).fetchone()
         if not row or row["tg_id"] is not None or time.time() - row["created"] > LOGIN_TTL:
             return False
-        conn.execute("UPDATE app_tokens SET tg_id = ?, session = ? WHERE token = ?", (tg_id, session, token))
+        if not conn.execute("UPDATE app_tokens SET tg_id = ?, session = ? WHERE token = ? AND tg_id IS NULL",
+                            (tg_id, session, token)).rowcount:  # ikki marta bosilsa — bitta sessiya
+            return False
         conn.execute("INSERT INTO app_tokens (token, kind, tg_id, created) VALUES (?, 'session', ?, ?)",
                      (session, tg_id, time.time()))
     return True
@@ -1117,6 +1139,43 @@ def save_offline_essay(test_id: int, number: int, tg_id: int, name: str | None, 
             "created_at = excluded.created_at",
             (test_id, number, tg_id, name, text, _now()),
         )
+
+
+def list_offline_essays(test_id: int) -> list[dict]:
+    """O'qituvchi uchun: botda ID bilan yozilgan esselar — kim (qaysi Telegram akkaunt) yuborgani,
+    ro'yxatdagi ism, natijaga biriktirilganmi. Begona ID bilan yuborilganini shu yerdan ko'radi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT e.number, e.tg_id, e.name, e.text, e.created_at, s.name AS roster_name, s.attempt_id, "
+            "a.essay AS score, u.full_name AS tg_name, u.username "
+            "FROM offline_essays e "
+            "LEFT JOIN students s ON s.test_id = e.test_id AND s.number = e.number "
+            "LEFT JOIN attempts a ON a.id = s.attempt_id "
+            "LEFT JOIN users u ON u.tg_id = e.tg_id "
+            "WHERE e.test_id = ? ORDER BY e.number",
+            (test_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_offline_essay(test_id: int, number: int) -> int | None:
+    """O'qituvchi esseni bekor qiladi (begona yoki xato ID bilan yuborilgan): ID bo'shaydi, egasi qayta yuboradi.
+    Natijaga biriktirilgan bo'lsa — o'sha esse va uning bahosi ham olib tashlanadi (qog'ozdagi esse suratlari
+    tegilmaydi). Qaytaradi: yuborgan akkaunt (tg_id) yoki None — bunday esse yo'q."""
+    with connect() as conn:
+        row = conn.execute("SELECT tg_id FROM offline_essays WHERE test_id = ? AND number = ?",
+                           (test_id, number)).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM offline_essays WHERE test_id = ? AND number = ?", (test_id, number))
+        student = conn.execute("SELECT attempt_id FROM students WHERE test_id = ? AND number = ? "
+                               "AND attempt_id IS NOT NULL", (test_id, number)).fetchone()
+        if student:
+            removed = conn.execute("DELETE FROM essays WHERE attempt_id = ? AND text IS NOT NULL AND photos = '[]'",
+                                   (student["attempt_id"],)).rowcount
+            if removed:
+                conn.execute("UPDATE attempts SET essay = NULL WHERE id = ?", (student["attempt_id"],))
+    return row["tg_id"]
 
 
 def waiting_offline_essays(test_id: int) -> int:

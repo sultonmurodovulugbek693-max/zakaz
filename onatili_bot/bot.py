@@ -135,15 +135,56 @@ async def send_register_prompt(message: Message) -> None:
     )
 
 
+LOGIN_EXPIRED = "⌛️ Kirish havolasi eskirgan yoki ishlatilgan. Ilovada «Telegram orqali kirish»ni qayta bosing."
+
+
 async def confirm_app_login(message: Message, token: str) -> None:
-    """APK ilovadagi «Telegram orqali kirish»: shu Telegram akkaunt bilan ilovaga kiriladi."""
+    """
+    APK ilovadagi «Telegram orqali kirish». Havolani bosishning o'zi kirish EMAS: boshqa odam o'z ilovasida
+    havola ochib, uni sizga yuborishi mumkin — bossangiz, u sizning akkauntingizga kirib qolardi.
+    Shuning uchun avval ogohlantirish va «Ha, kirish» tugmasi; sessiya faqat tugma bosilganda yaratiladi.
+    """
+    if not all(c in "0123456789abcdef" for c in token) or len(token) != 32 \
+            or not await asyncio.to_thread(db.login_pending, token):
+        await message.answer(LOGIN_EXPIRED)
+        return
+    await message.answer(
+        "🔐 <b>Skaner ilovasiga kirish</b>\n"
+        "Bu Telegram akkauntingiz bilan ilovaga kirish so'raldi.\n\n"
+        "⚠️ Faqat <b>hozir o'zingiz</b> telefoningizdagi ilovada «Telegram orqali kirish»ni bosgan bo'lsangiz "
+        "tasdiqlang. Havolani kimdir sizga yuborgan bo'lsa — <b>bosmang</b>: u akkauntingizga (testlar, kalitlar, "
+        "natijalar) kirib oladi.",
+        reply_markup=inline([[("✅ Ha, men kiryapman", f"applogin:ok:{token}")],
+                             [("❌ Yo'q, men emas", f"applogin:no:{token}")]]),
+    )
+
+
+@dp.callback_query(F.data.startswith("applogin:"))
+async def app_login_decision(callback: CallbackQuery) -> None:
+    _, action, token = (callback.data.split(":") + ["", ""])[:3]
+    if action == "no":
+        await asyncio.to_thread(db.cancel_login, token)
+        await callback.answer("Bekor qilindi")
+        await safe_edit(callback.message, "❌ <b>Kirish bekor qilindi</b>\nHech kim akkauntingizga kirmadi.")
+        return
     session = secrets.token_hex(24)
-    confirmed = await asyncio.to_thread(db.confirm_login, token, message.from_user.id, session)
-    if confirmed:
-        await message.answer("✅ <b>Ilovaga kirdingiz</b>\nSkaner ilovasiga qayting — testlaringiz o'sha yerda.\n\n"
-                             "<i>Agar siz kirmagan bo'lsangiz, bu xabarga e'tibor bermang.</i>")
-    else:
-        await message.answer("⌛️ Kirish havolasi eskirgan yoki ishlatilgan. Ilovada «Telegram orqali kirish»ni qayta bosing.")
+    if not await asyncio.to_thread(db.confirm_login, token, callback.from_user.id, session):
+        await callback.answer()
+        await safe_edit(callback.message, LOGIN_EXPIRED)
+        return
+    await callback.answer("✅ Kirdingiz")
+    await safe_edit(callback.message,
+                    "✅ <b>Ilovaga kirdingiz</b>\nSkaner ilovasiga qayting — testlaringiz o'sha yerda.\n\n"
+                    "Begona qurilma kirib qolgan deb o'ylasangiz — /chiqish (barcha qurilmalardan chiqish).")
+
+
+@dp.message(Command("chiqish"))
+async def cmd_logout_all(message: Message) -> None:
+    """Skaner ilovasidagi barcha sessiyalarni bekor qilish (telefon yo'qolsa yoki begona kirgan bo'lsa)."""
+    removed = await asyncio.to_thread(db.delete_user_sessions, message.from_user.id)
+    await message.answer(f"🚪 Skaner ilovasidagi barcha kirishlar bekor qilindi ({removed} ta qurilma).\n"
+                         "Ilovaga qayta kirish uchun ilovada «Telegram orqali kirish»ni bosing."
+                         if removed else "Skaner ilovasida faol kirish yo'q.")
 
 
 async def send_welcome(message: Message, user) -> None:
@@ -1174,6 +1215,7 @@ async def main() -> None:
         await bot.set_my_commands([
             BotCommand(command="start", description="Ilovani ochish"),
             BotCommand(command="royxat", description="Oflayn kursga ro'yxatdan o'tish"),
+            BotCommand(command="chiqish", description="Skaner ilovasidagi barcha qurilmalardan chiqish"),
         ])
     except Exception:
         logger.warning("Buyruqlar ro'yxatini o'rnatib bo'lmadi", exc_info=True)
