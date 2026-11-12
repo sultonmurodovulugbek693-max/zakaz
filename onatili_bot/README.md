@@ -76,6 +76,19 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi (24 ballik mezon, 75 ballikka o'zi o'tadi), yozma
   javoblarni «✍️ Yozmalarni tekshirish»da tuzatsa bo'ladi.
 
+## Natijalar bo'limi, sinf jadvali va mock sertifikat
+O'qituvchi ilovasining pastki panelidagi **«📊 Natijalar»** (test sahifasida faqat ish jarayoni qoladi:
+skaner, yozmalar, esselar, e'lon; «👥 Javoblar» — javoblarni ko'rish va tuzatish).
+- **Sinflar**: sinfni bosing → shu sinf qatnashgan barcha titulli testlar va o'quvchilar ro'yxati (o'rtacha
+  ball va daraja bo'yicha). Natijalar o'quvchining **doimiy ID'si** orqali yig'iladi — titulda shu ID bo'lsa
+  bas. Onlayn (kod bilan) testlar sinfga bog'lanmaydi, ular «Testlar» ro'yxatida.
+- **📄 Sinf jadvali (PDF)**: o'quvchilar × testlar, har katakda umumiy ball (75) va daraja, oxirida o'rtacha.
+- **🎓 Mock sertifikat (PDF)**: har o'quvchiga A4 yotiq bitta sahifa — ism, ID, sinf, test, umumiy ball,
+  test qismi, esse, daraja, o'qituvchi va sana. Butun test, bitta sinf yoki bitta o'quvchi uchun.
+  O'zimizning dizayn, pastida «Rasmiy sertifikat emas» deb yozilgan — DTM sertifikatiga o'xshatilmagan.
+- Rasch bali har doim testni ishlagan **hamma** qatnashchilar bo'yicha (sinf ichidagina emas) — sinf
+  jadvalidagi ball test sahifasidagi bilan bir xil.
+
 ## Obuna va to'lov
 Bot bir nechta o'qituvchiga xizmat qiladi — har birining testlari, sinflari va natijalari alohida.
 - **Bepul ro'yxat**: `FREE_IDS` (Render → Environment) dagi Telegram ID'larga hammasi **cheksiz bepul** —

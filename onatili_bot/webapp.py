@@ -26,7 +26,9 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 import db
 import essay_ai
 import places as places_data
+import pdfs
 import plans
+import results
 import sheet
 import sheet_styles
 from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN
@@ -1118,6 +1120,85 @@ async def class_send_ids(request: web.Request) -> web.Response:
     return ok({"ok": True, "count": len(students)})
 
 
+# ---------- «📊 Natijalar» bo'limi: sinf va test bo'yicha, PDF jadval va mock sertifikatlar ----------
+
+def _file_slug(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text).strip("_")[:40] or "fayl"
+
+
+async def _class_of(user: dict, raw) -> dict | None:
+    """So'rovdagi sinf (ixtiyoriy) — faqat o'qituvchining o'ziniki."""
+    if raw in (None, ""):
+        return None
+    if not str(raw).isdigit():
+        raise ApiError(400, "Sinf noto'g'ri")
+    cls = await run(db.get_class, int(raw))
+    if not cls or cls["owner_id"] != user["id"]:
+        raise ApiError(404, "Sinf topilmadi")
+    return cls
+
+
+async def results_overview(request: web.Request) -> web.Response:
+    user = await auth(request)
+    return ok(await run(results.overview, user["id"]))
+
+
+async def class_results(request: web.Request) -> web.Response:
+    """Sinf ichi: o'quvchilar × testlar (doimiy ID orqali), o'rtacha ball va daraja."""
+    user = await auth(request)
+    cls = await own_class(request, user)
+    return ok(await run(results.class_report, user["id"], cls))
+
+
+async def test_results_view(request: web.Request) -> web.Response:
+    """Bitta test natijalari (?class= berilsa — faqat shu sinf o'quvchilari)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    cls = await _class_of(user, request.query.get("class"))
+    data = await run(results.test_results, test, cls["id"] if cls else None)
+    return ok({"test": {"id": test["id"], "title": test["title"], "code": test["code"], "fmt": test["fmt"],
+                        "format": format_title(test["fmt"], test["count"]), "mode": test.get("mode") or "online",
+                        "date": (test.get("created_at") or "")[:10], "closed": bool(test["closed"])},
+               "class": {"id": cls["id"], "name": cls["name"]} if cls else None, **data})
+
+
+async def send_certificates(request: web.Request) -> web.Response:
+    """🎓 Mock sertifikatlar (PDF) bot chatiga: butun test, bitta sinf yoki tanlangan o'quvchi(lar)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    if test["fmt"] != "milliy":
+        raise ApiError(400, "Sertifikat Milliy sertifikat formatidagi test uchun chiqariladi")
+    payload = await body(request)
+    cls = await _class_of(user, payload.get("class"))
+    chosen = {int(x) for x in payload.get("attempt_ids") or [] if str(x).isdigit()}
+    data = await run(results.test_results, test, cls["id"] if cls else None)
+    rows = [r for r in data["rows"] if not chosen or r["attempt_id"] in chosen]
+    if not rows:
+        raise ApiError(400, "Sertifikat uchun natija topilmadi")
+    content = await run(pdfs.certificates_pdf, test, rows, user.get("name") or "")
+    single = len(rows) == 1
+    name = f"sertifikat_{_file_slug(rows[0]['name']) if single else test['code']}.pdf"
+    who = html.escape(rows[0]["name"]) if single else f"{len(rows)} ta o'quvchi" + (f" · {html.escape(cls['name'])}" if cls else "")
+    await HOOKS["send_file"](user["id"], content, name,
+                             f"🎓 <b>Mock sertifikat</b> · {html.escape(test['title'])}\n{who}\n"
+                             "Chop etish uchun — A4, yotiq. Rasmiy sertifikat emas.")
+    return ok({"ok": True, "count": len(rows)})
+
+
+async def send_class_report(request: web.Request) -> web.Response:
+    """📄 Sinf jadvali (PDF): o'quvchilar × barcha testlar, o'rtacha ball va daraja."""
+    user = await auth(request)
+    cls = await own_class(request, user)
+    report = await run(results.class_report, user["id"], cls)
+    if not report["tests"]:
+        raise ApiError(400, "Bu sinf hali titulli testda qatnashmagan")
+    content = await run(pdfs.class_report_pdf, report)
+    await HOOKS["send_file"](user["id"], content, f"sinf_{_file_slug(cls['name'])}.pdf",
+                             f"📄 <b>{html.escape(cls['name'])}</b> — natijalar jadvali\n"
+                             f"{report['class']['students']} ta o'quvchi · {len(report['tests'])} ta test")
+    return ok({"ok": True})
+
+
 async def students_from_class(request: web.Request) -> web.Response:
     """Titulli testga sinf o'quvchilari — doimiy ID'lari bilan (testda bor ID'lar o'tkazib yuboriladi)."""
     user = await auth(request)
@@ -1709,7 +1790,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/app/logout", app_logout)
     app.router.add_post("/api/role", set_role)
     app.router.add_post("/api/plan/order", plan_order)
-    app.router.add_post("/api/teacher/test/{test_id:\d+}/app-link", app_link)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/app-link", app_link)
     app.router.add_get("/open", open_app)
     app.router.add_get("/download", download_apk)
     app.router.add_get("/api/test/{code:\\d{5}}", test_info)
@@ -1758,6 +1839,12 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/attempt/{attempt_id:\\d+}/written-image", written_image)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/mark", written_mark)
     app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/answers", attempt_answers_save)
+    # «📊 Natijalar» bo'limi
+    app.router.add_get("/api/teacher/results", results_overview)
+    app.router.add_get("/api/teacher/class/{class_id:\\d+}/results", class_results)
+    app.router.add_post("/api/teacher/class/{class_id:\\d+}/report", send_class_report)
+    app.router.add_get("/api/teacher/test/{test_id:\\d+}/results", test_results_view)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/certificates", send_certificates)
     return app
 
 

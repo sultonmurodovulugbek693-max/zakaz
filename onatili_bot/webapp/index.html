@@ -551,7 +551,7 @@ const rerender = () => render(true);
 // ---------- Pastki navigatsiya ----------
 // Asosiy bo'limlar har doim bir bosishda; ichki ekranlarda (test yechish, yaratish, skaner) panel yashiriladi
 const TABS = {
-  teacher: [["home", "🏠", "Bosh"], ["tests", "📝", "Testlar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"]],
+  teacher: [["home", "🏠", "Bosh"], ["tests", "📝", "Testlar"], ["results", "📊", "Natijalar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
 };
 function paintTabs(view) {
@@ -618,7 +618,7 @@ function applyUiTheme(key) {
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
 const RESUMABLE = { student: ["answer", "result", "myresults", "profile"],
-                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written"] };
+                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written", "results", "classResults", "testResults"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
   if (view === "home") return store("lastView", "");
@@ -1286,12 +1286,9 @@ VIEWS.teacher = async ({ id, tab }) => {
   t.channels = t.channels || []; d.students = d.students || [];
   const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
   tab = tab || "home";
-  const totals = d.attempts.map(a => milliy ? (a.rasch ?? a.total) : a.percent);  // ro'yxatdagi katta son bilan bir xil: umumiy ball (75)
-  const avg = n ? totals.reduce((x, y) => x + y, 0) / n : 0, max = n ? Math.max(...totals) : 0;
-  const certified = d.attempts.filter(a => a.grade && a.grade !== "NC").length;
-  const gradeBar = milliy && n ? `<div class="card"><div class="row between"><h2>Darajalar</h2><span class="muted small">Rasch · taxminiy</span></div>
-    <div class="gradebar">${GRADE_ORDER.filter(g => d.grades[g]).map((g, i) => `<i style="width:${d.grades[g] / n * 100}%;background:${GRADE_COLORS[g]};animation-delay:${i * .08}s"></i>`).join("")}</div>
-    <div class="legend">${GRADE_ORDER.filter(g => d.grades[g]).map(g => `<span><i style="background:${GRADE_COLORS[g]}"></i>${g} — ${d.grades[g]}</span>`).join("")}</div></div>` : "";
+  // O'rtacha, darajalar, PDF jadval va sertifikatlar — alohida «📊 Natijalar» bo'limida (pastki panel)
+  const toResults = n ? `<button type="button" class="item" id="to-results"><span class="ico">📊</span>
+      <span><b>Natijalar va sertifikatlar</b><small>O'rtacha ball, darajalar, PDF va mock sertifikatlar</small></span><span class="muted">›</span></button>` : "";
   const people = d.attempts.map((a, i) => `<button class="item" data-res="${a.id}"><span class="rank">${i + 1}</span>
       <span><b>${esc(a.name)}</b><small>${t.variants.length > 1 ? `${a.variant} variant · ` : ""}${milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}${a.written_status === "pending" ? " · ⏳ AI yozmani o'qimoqda" : a.written_status === "failed" ? " · ❗ yozmani AI o'qiy olmadi" : ""}</small></span>
       <span class="score-col">${milliy
@@ -1328,21 +1325,17 @@ VIEWS.teacher = async ({ id, tab }) => {
       <button class="btn block" data-goto="essays">Esselarga o'tish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : ""}`;
   else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi${offline && d.students.length ? `, ${scanned} / ${d.students.length} titul skanerlangan` : ""}. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
       <button class="btn block" id="announce">📢 Natijalarni e'lon qilish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : `<button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`}`;
-  const strip = n ? `<div class="strip">
-      <div><b data-count="${n}" data-suffix="">${n}</b><span>Qatnashdi</span></div>
-      <div><b data-count="${avg}" data-suffix="${milliy ? "" : "%"}">${num(avg)}</b><span>O'rtacha</span></div>
-      <div><b data-count="${max}" data-suffix="${milliy ? "" : "%"}">${num(max)}</b><span>Eng yuqori</span></div>
-      <div><b data-count="${milliy ? certified : d.attempts.filter(a => a.percent >= 80).length}">0</b><span>${milliy ? "C+ daraja" : "80%+"}</span></div></div>` : "";
   const files = `<div class="card"><h2>Fayllar</h2><div class="files">
       ${offline ? `<button class="btn ghost sm" id="sheets2">📄 Titullar</button>` : ""}
       <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
-      ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}</div>
+      ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
+      ${n && milliy ? `<button class="btn ghost sm" id="certs-all">🎓 Sertifikatlar</button>` : ""}</div>
       <span class="muted small">Fayllar Telegram chatga yuboriladi.</span></div>
     <div class="card"><h2>Foydali</h2><div class="list">
       ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}
       <button class="item" id="copy-test"><span class="ico">📋</span><span><b>Boshqa guruh uchun nusxa</b><small>Yangi kod, kalitlar o'sha — qayta kiritish shart emas</small></span></button></div></div>`;
   const liveOn = !offline && !t.closed;
-  const tabsList = [["home", "🏠 Umumiy"], ...(liveOn ? [["live", "📡 Jonli"]] : []), ["people", `👥 Natijalar${n ? ` · ${n}` : ""}`], ...(offline ? [["students", `🗂 Ro'yxat · ${d.students.length}`]] : []), ["questions", "🧩 Tahlil"], ...(milliy ? [["essays", `📝 Esselar${suggested ? `<span class="badge">${suggested}</span>` : ""}`]] : []), ["design", `⚙️ Sozlama${t.channels.length ? ` · 📢${t.channels.length}` : ""}`]];
+  const tabsList = [["home", "🏠 Umumiy"], ...(liveOn ? [["live", "📡 Jonli"]] : []), ["people", `👥 Javoblar${n ? ` · ${n}` : ""}`], ...(offline ? [["students", `🗂 Ro'yxat · ${d.students.length}`]] : []), ["questions", "🧩 Tahlil"], ...(milliy ? [["essays", `📝 Esselar${suggested ? `<span class="badge">${suggested}</span>` : ""}`]] : []), ["design", `⚙️ Sozlama${t.channels.length ? ` · 📢${t.channels.length}` : ""}`]];
   $app.innerHTML = `<div class="view">
     <div class="thead"><h1>${esc(t.title)}</h1>
       <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)}${t.variants.length > 1 ? ` · ${t.variants.join(", ")}` : ""}</span></div></div>
@@ -1353,8 +1346,8 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${files}` : ""}
     ${tab === "students" ? rosterHTML(d) : ""}
     ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
-    ${tab === "people" ? `${strip}${gradeBar}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
-    ${tab === "questions" ? (n ? `${gradeBar}<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
+    ${tab === "people" ? `${toResults}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
+    ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
     ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}</div><div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" ? channelEditorHTML(t.channels) : ""}
@@ -1379,6 +1372,8 @@ VIEWS.teacher = async ({ id, tab }) => {
   document.querySelectorAll("[data-res]").forEach(x => x.onclick = () => attemptEditor(x.dataset.res));
   document.querySelectorAll("[data-essay]").forEach(x => x.onclick = () => essaySheet(x.dataset.essay, id));
   document.querySelectorAll("#written-review, #written-review-open").forEach(x => x.onclick = () => { haptic("light"); go("written", { id }); });
+  const tr = document.getElementById("to-results"); if (tr) tr.onclick = () => { haptic("light"); go("testResults", { id }); };
+  const ca2 = document.getElementById("certs-all"); if (ca2) ca2.onclick = () => sendCerts(t.id, {}, ca2);
   document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); } });
   const an = document.getElementById("announce");
   if (an) an.onclick = async () => {
@@ -1680,6 +1675,160 @@ VIEWS.klass = async ({ id }) => {
     if (!(await confirmBox(`«${c.name}» sinfini o'chirasizmi?\n\nTestlardagi natijalar o'chmaydi.`))) return;
     try { await api(`/api/teacher/class/${id}`, { delete: true }); haptic("success"); toast("🗑 O'chirildi"); S.boot = null; back(); } catch (e) { toast(e.message); }
   };
+};
+
+// ---------- 📊 Natijalar: sinf va test bo'yicha, PDF jadval va mock sertifikatlar ----------
+// Titulli testda o'quvchi doimiy ID'si bilan qatnashadi — sinf natijalari shu ID orqali yig'iladi.
+// Ball: Milliy formatda umumiy ball (75) va daraja, oddiy testda foiz.
+
+const dmy = s => s ? String(s).slice(0, 10).split("-").reverse().join(".") : "";
+const gradeChip = g => g ? `<span class="grade-chip" style="background:${GRADE_COLORS[g] || "#9aa5b1"}">${g}</span>` : "";
+
+function resultStrip(rows, milliy) {
+  if (!rows.length) return "";
+  const vals = rows.map(r => r.score || 0), sfx = milliy ? "" : "%";
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length, max = Math.max(...vals);
+  const good = milliy ? rows.filter(r => r.grade && r.grade !== "NC").length : rows.filter(r => r.score >= 80).length;
+  return `<div class="strip">
+      <div><b data-count="${rows.length}">${rows.length}</b><span>Qatnashdi</span></div>
+      <div><b data-count="${avg}" data-suffix="${sfx}">${num(avg)}${sfx}</b><span>O'rtacha</span></div>
+      <div><b data-count="${max}" data-suffix="${sfx}">${num(max)}${sfx}</b><span>Eng yuqori</span></div>
+      <div><b data-count="${good}">${good}</b><span>${milliy ? "C va yuqori" : "80%+"}</span></div></div>`;
+}
+
+function gradeBarHTML(rows) {
+  const grades = {}; rows.forEach(r => { if (r.grade) grades[r.grade] = (grades[r.grade] || 0) + 1; });
+  const n = rows.length, used = GRADE_ORDER.filter(g => grades[g]);
+  if (!n || !used.length) return "";
+  return `<div class="card"><div class="row between"><h2>Darajalar</h2><span class="muted small">Rasch · taxminiy</span></div>
+    <div class="gradebar">${used.map((g, i) => `<i style="width:${grades[g] / n * 100}%;background:${GRADE_COLORS[g]};animation-delay:${i * .08}s"></i>`).join("")}</div>
+    <div class="legend">${used.map(g => `<span><i style="background:${GRADE_COLORS[g]}"></i>${g} — ${grades[g]}</span>`).join("")}</div></div>`;
+}
+
+async function sendCerts(testId, payload, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api(`/api/teacher/test/${testId}/certificates`, payload);
+    haptic("success"); toast(`🎓 ${r.count > 1 ? `${r.count} ta sertifikat` : "Sertifikat"} chatga yuborildi`);
+  } catch (e) { toast(e.message); haptic("error"); }
+  if (btn) btn.disabled = false;
+}
+
+VIEWS.results = async ({ seg } = {}) => {
+  loading();
+  let r; try { r = await api("/api/teacher/results"); } catch (e) { return fail(e); }
+  seg = seg || store("resultsSeg") || "classes";
+  const classes = r.classes.map(c => `<button type="button" class="item" data-cr="${c.id}"><span class="ico">👥</span>
+      <span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi · ${c.tests ? `${c.tests} ta test` : "hali natija yo'q"}</small></span><span class="muted">›</span></button>`).join("");
+  const tests = r.tests.map(t => `<button type="button" class="item" data-tr="${t.id}"><span class="ico">${t.mode === "offline" ? "📄" : "📝"}</span>
+      <span><b>${esc(t.title)}</b><small>${dmy(t.date)} · ${t.n} ta qatnashchi</small></span>
+      <span class="score-col"><b>${num(t.avg)}${t.suffix}</b><small class="muted">o'rtacha</small></span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Natijalar</span><h1>Natijalar</h1>
+      <span class="muted small">Sinf yoki testni tanlang — ballar, PDF jadval va mock sertifikatlar.</span></div></div>
+    <div class="tabs bar"><button class="${seg === "classes" ? "on" : ""}" data-seg="classes">👥 Sinflar · ${r.classes.length}</button><button class="${seg === "tests" ? "on" : ""}" data-seg="tests">📝 Testlar · ${r.tests.length}</button></div>
+    <div data-pane="classes" ${seg === "classes" ? "" : "hidden"}><div class="list">${classes || `<div class="card empty"><div class="big">👥</div><b>Hali sinf yo'q</b><span>«Sinflar» bo'limida sinf yarating va titulli testning «🗂 Ro'yxat» bo'limida qo'shing — natijalar shu yerda yig'iladi.</span></div>`}</div>
+      ${classes ? `<span class="muted small">Sinf natijalari titulli testlardan o'quvchining doimiy ID'si orqali yig'iladi.</span>` : ""}</div>
+    <div data-pane="tests" ${seg === "tests" ? "" : "hidden"}><div class="list">${tests || `<div class="card empty"><div class="big">📝</div>Hali natijasi bor test yo'q.</div>`}</div></div>
+  </div>`;
+  document.querySelectorAll("[data-seg]").forEach(x => x.onclick = () => {
+    const to = x.dataset.seg; store("resultsSeg", to); S.current.params = { seg: to }; haptic("select");
+    document.querySelectorAll("[data-seg]").forEach(b => b.classList.toggle("on", b === x));
+    document.querySelectorAll("[data-pane]").forEach(p => { p.hidden = p.dataset.pane !== to; });
+  });
+  document.querySelectorAll("[data-cr]").forEach(x => x.onclick = () => go("classResults", { id: x.dataset.cr }));
+  document.querySelectorAll("[data-tr]").forEach(x => x.onclick = () => go("testResults", { id: x.dataset.tr }));
+};
+
+VIEWS.classResults = async ({ id }) => {
+  loading();
+  let r; try { r = await api(`/api/teacher/class/${id}/results`); } catch (e) { return fail(e); }
+  const c = r.class, tests = r.tests, rows = r.students, s = r.summary;
+  const strip = tests.length ? `<div class="strip">
+      <div><b data-count="${tests.length}">${tests.length}</b><span>Test</span></div>
+      <div><b data-count="${s.taken}">${s.taken}</b><span>Qatnashuv</span></div>
+      <div><b data-count="${s.avg || 0}">${num(s.avg)}</b><span>O'rtacha</span></div>
+      <div><b data-count="${s.max || 0}">${num(s.max)}</b><span>Eng yuqori</span></div></div>` : "";
+  const testList = tests.slice().reverse().map(t => `<button type="button" class="item" data-tr="${t.id}"><span class="ico">📄</span>
+      <span><b>${esc(t.title)}</b><small>${dmy(t.date)} · ${t.n} / ${c.students} qatnashdi</small></span>
+      <span class="score-col"><b>${num(t.avg)}${t.suffix}</b><small class="muted">o'rtacha</small></span></button>`).join("");
+  let place = 0;
+  const people = rows.map((p, i) => `<button type="button" class="item" data-st="${i}"><span class="rank">${p.avg == null ? "–" : ++place}</span>
+      <span><b>${esc(p.name)}</b><small>ID ${pad3(p.number)} · ${p.count ? `${p.count} ta test` : "hali qatnashmagan"}</small></span>
+      <span class="score-col">${p.avg == null ? `<span class="muted">—</span>` : `<span class="row" style="gap:8px"><b>${num(p.avg)}${p.suffix}</b>${gradeChip(p.grade)}</span><small class="muted">o'rtacha</small>`}</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Natijalar</span><h1>${esc(c.name)}</h1><span class="muted small">${c.students} ta o'quvchi · ${tests.length} ta titulli test</span></div>
+    ${strip}
+    ${tests.length ? `<button class="btn block" id="class-pdf">📄 Sinf jadvalini PDF qilish</button>`
+      : `<div class="card empty"><div class="big">📄</div><b>Hali natija yo'q</b><span>Titulli testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan shu sinfni qo'shing va titullarni skanerlang — natijalar shu yerga o'zi tushadi.</span></div>`}
+    ${tests.length ? `<div class="section-title"><h2>Testlar</h2><span class="muted small">bosing — o'rinlar va sertifikatlar</span></div><div class="list">${testList}</div>` : ""}
+    ${rows.length ? `<div class="section-title"><h2>O'quvchilar</h2><span class="muted small">o'rtacha ball bo'yicha</span></div><div class="list">${people}</div>` : ""}
+  </div>`;
+  countUp($app);
+  const pdf = document.getElementById("class-pdf");
+  if (pdf) pdf.onclick = async () => {
+    pdf.disabled = true;
+    try { await api(`/api/teacher/class/${id}/report`, {}); haptic("success"); toast("📨 Jadval chatga yuborildi"); } catch (e) { toast(e.message); }
+    pdf.disabled = false;
+  };
+  document.querySelectorAll("[data-tr]").forEach(x => x.onclick = () => go("testResults", { id: x.dataset.tr, cls: c.id }));
+  document.querySelectorAll("[data-st]").forEach(x => x.onclick = () => { haptic("light"); studentSheet(rows[+x.dataset.st], tests); });
+};
+
+// Sinf o'quvchisi: barcha testlardagi ballari va har biri uchun mock sertifikat
+function studentSheet(p, tests) {
+  const items = tests.slice().reverse().filter(t => p.results[t.id]).map(t => {
+    const x = p.results[t.id];
+    return `<div class="item" style="cursor:default"><span><b>${esc(t.title)}</b><small>${dmy(t.date)}${x.suffix ? "" : ` · test ${num(x.test)} · esse ${x.essay == null ? "—" : num(x.essay)}`}</small></span>
+      <span class="score-col"><span class="row" style="gap:6px"><b>${num(x.score)}${x.suffix}</b>${gradeChip(x.grade)}</span></span>
+      ${t.fmt === "milliy" ? `<button type="button" class="btn ghost sm" data-cert="${t.id}:${x.attempt_id}" aria-label="Sertifikat">🎓</button>` : ""}</div>`;
+  }).join("");
+  const modal = openModal(esc(p.name), `<span class="muted small">ID ${pad3(p.number)} · ${p.count} ta test${p.avg != null ? ` · o'rtacha ${num(p.avg)}${p.suffix}` : ""}</span>
+    <div class="list">${items || `<div class="card empty">Hali titulli testda qatnashmagan</div>`}</div>
+    ${items ? `<span class="muted small">🎓 — shu test bo'yicha mock sertifikat (PDF) chatga yuboriladi.</span>` : ""}`);
+  modal.querySelectorAll("[data-cert]").forEach(b => b.onclick = () => { const [tid, aid] = b.dataset.cert.split(":"); sendCerts(tid, { attempt_ids: [+aid] }, b); });
+}
+
+VIEWS.testResults = async ({ id, cls }) => {
+  loading();
+  let r; try { r = await api(`/api/teacher/test/${id}/results${cls ? `?class=${cls}` : ""}`); } catch (e) { return fail(e); }
+  const t = r.test, rows = r.rows, milliy = t.fmt === "milliy";
+  const list = rows.map((a, i) => `<button type="button" class="item" data-row="${i}"><span class="rank">${i + 1}</span>
+      <span><b>${esc(a.name)}</b><small>${a.number != null ? `ID ${pad3(a.number)} · ` : ""}${milliy ? `test ${num(a.test)} · esse ${a.essay == null ? "—" : num(a.essay)}` : `${a.test_correct + a.written_correct} / ${a.auto_total} to'g'ri`}${!r.class && a.class_name ? ` · ${esc(a.class_name)}` : ""}</small></span>
+      <span class="score-col">${milliy ? `<span class="row" style="gap:8px"><b>${num(a.score)}</b>${gradeChip(a.grade)}</span><small class="muted">/ 75</small>` : `<b>${num(a.score)}%</b>`}</span></button>`).join("");
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Natijalar</span><h1>${esc(t.title)}</h1>
+      <span class="muted small">${r.class ? `${esc(r.class.name)} sinfi · ` : ""}${dmy(t.date)} · ${esc(t.format)}</span></div>
+    ${resultStrip(rows, milliy)}
+    ${milliy ? gradeBarHTML(rows) : ""}
+    ${rows.length ? `<div class="card"><h2>Fayllar</h2><div class="files">
+        ${milliy ? `<button class="btn sm" id="certs">🎓 Sertifikatlar · ${rows.length}</button>` : ""}
+        <button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button></div>
+        <span class="muted small">${milliy ? `🎓 Har o'quvchiga bitta sahifa — mock sertifikat (A4, chop etishga tayyor)${r.class ? `, faqat ${esc(r.class.name)} sinfi` : ""}. ` : ""}${r.class ? "PDF va Excel — butun test bo'yicha. " : ""}Fayllar Telegram chatga yuboriladi.</span></div>` : ""}
+    <div class="section-title"><h2>O'rinlar</h2>${rows.length ? `<span class="muted small">o'quvchini bosing</span>` : ""}</div>
+    <div class="list">${list || `<div class="card empty"><div class="big">👀</div>${r.class ? "Bu sinf o'quvchilari hali bu testda qatnashmagan." : "Hali hech kim javob yubormagan."}</div>`}</div>
+    <button type="button" class="btn ghost block" id="open-test">⚙️ Test sahifasini ochish</button>
+  </div>`;
+  countUp($app);
+  const certs = document.getElementById("certs");
+  if (certs) certs.onclick = () => sendCerts(t.id, { class: r.class ? r.class.id : null }, certs);
+  document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => {
+    try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); }
+  });
+  document.getElementById("open-test").onclick = () => go("teacher", { id: t.id });
+  document.querySelectorAll("[data-row]").forEach(x => x.onclick = () => {
+    const a = rows[+x.dataset.row]; haptic("light");
+    const modal = openModal(esc(a.name), `<span class="muted small">${[a.number != null ? `ID ${pad3(a.number)}` : "", a.class_name ? `${esc(a.class_name)} sinfi` : "", `${a.variant} variant`].filter(Boolean).join(" · ")}</span>
+      <div class="strip" style="grid-template-columns:repeat(${milliy ? 3 : 2},1fr)">
+        <div><b>${num(a.score)}${milliy ? "" : "%"}</b><span>${milliy ? "Umumiy (75)" : "Natija"}</span></div>
+        ${milliy ? `<div><b>${num(a.test)}</b><span>Test qismi</span></div><div><b>${a.essay == null ? "—" : num(a.essay)}</b><span>Esse (75)</span></div>`
+          : `<div><b>${a.test_correct + a.written_correct}/${a.auto_total}</b><span>To'g'ri</span></div>`}</div>
+      ${milliy ? `<button type="button" class="btn block" id="one-cert">🎓 Mock sertifikat (PDF)</button>` : ""}
+      <button type="button" class="btn ghost block" id="one-edit">✏️ Javoblarini ko'rish va tuzatish</button>`);
+    const one = modal.querySelector("#one-cert");
+    if (one) one.onclick = () => sendCerts(t.id, { attempt_ids: [a.attempt_id] }, one);
+    modal.querySelector("#one-edit").onclick = () => { modal.remove(); S.teacherCache = null; attemptEditor(a.attempt_id); };
+  });
 };
 
 // ---------- Oflayn «Ona tili» kursiga ro'yxatdan o'tish ----------

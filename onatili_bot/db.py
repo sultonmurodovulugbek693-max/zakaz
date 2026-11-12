@@ -820,6 +820,14 @@ def list_class_students(class_id: int) -> list[dict]:
             "SELECT * FROM class_students WHERE class_id = ? ORDER BY name, number", (class_id,)).fetchall()]
 
 
+def owner_class_students(owner_id: int) -> list[dict]:
+    """O'qituvchining barcha sinflaridagi o'quvchilar (sinf nomi bilan) — natijalarni doimiy ID orqali topish uchun."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT s.*, c.name AS class_name FROM class_students s JOIN classes c ON c.id = s.class_id "
+            "WHERE s.owner_id = ?", (owner_id,)).fetchall()]
+
+
 def add_class_students(class_id: int, owner_id: int, names: list[str]) -> list[dict]:
     """Yangi o'quvchilar — o'qituvchining keyingi ID'lari bilan (o'chirilgan ID hech qachon qayta berilmaydi)."""
     with connect() as conn:

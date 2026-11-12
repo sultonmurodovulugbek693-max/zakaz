@@ -1159,6 +1159,8 @@ async def main() -> None:
         bot_username=lambda: bot_username(bot),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
+        send_file=lambda chat_id, content, name, caption: bot.send_document(
+            chat_id, BufferedInputFile(content, filename=name), caption=caption),
         essay_notice=lambda test, attempt, score: essay_notice(bot, test, attempt, score),
         registration_notice=lambda reg, username, again, teachers: registration_notice(bot, reg, username, again, teachers),
         missing=lambda user_id: subscription.missing_channels(bot, user_id),

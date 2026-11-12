@@ -367,17 +367,239 @@ def _analysis_table(test: dict, attempts: list[dict], width: float) -> Table:
 
 def _milliy_note(attempts: list[dict]) -> str:
     essay_note = (
-        "Esse hamma qatnashchida baholangani uchun Rasch'ga qo'shildi."
-        if attempts and all(a["essay"] is not None for a in attempts)
-        else "Esse hamma qatnashchida baholanmagan — Rasch bali hozircha essesiz hisoblandi."
+        "" if attempts and all(a["essay"] is not None for a in attempts)
+        else "Essesi hali baholanmagan qatnashchida umumiy ball o'rnida faqat test qismi turibdi."
     )
     return (
         "<b>Ball</b> — UZBMB rasmiy namunasidagi savol ballari bo'yicha (1,1 / 1,7 / 2,5; esse 24; jami 100). "
-        "<b>Rasch bali</b> — Milliy sertifikat uslubida (T-shkala, o'rtacha 50, eng yuqori 75), shu testni ishlagan "
-        "qatnashchilar javoblaridan hisoblanadi: qatnashchilar ko'p bo'lsa aniqroq. Taxminiy natija, rasmiy emas. "
-        f"{essay_note}<br/><b>Darajalar:</b> A+ — 70 va yuqori · A — 65–69,9 · B+ — 60–64,9 · B — 55–59,9 · "
-        "C+ — 50–54,9 · C — 46–49,9 · NC — 46 dan past (sertifikat berilmaydi)."
+        "<b>Umumiy (75)</b> — DTM tartibida: test qismi (Rasch, T-shkala, eng yuqori 75) va esse (24 ballik mezon → "
+        "75 ballik shkala) o'rtachasi. Rasch shu testni ishlagan qatnashchilar javoblaridan hisoblanadi: qatnashchilar "
+        f"ko'p bo'lsa aniqroq. Taxminiy natija, rasmiy emas. {essay_note}<br/><b>Darajalar:</b> A+ — 70 va yuqori · "
+        "A — 65–69,9 · B+ — 60–64,9 · B — 55–59,9 · C+ — 50–54,9 · C — 46–49,9 · NC — 46 dan past (sertifikat berilmaydi)."
     )
+
+
+# ---------- Mock sertifikat (Natijalar bo'limi) ----------
+# O'zimizning dizayn: rasmiy (DTM) sertifikatga o'xshatilmaydi va pastida «rasmiy emas» deb yoziladi.
+
+GOLD = colors.HexColor("#b8923a")
+MUTED = colors.HexColor("#52606d")
+PAPER = colors.HexColor("#fbfaf6")
+GRADE_SCALE = "A+ 70–75 · A 65–69,9 · B+ 60–64,9 · B 55–59,9 · C+ 50–54,9 · C 46–49,9 · NC — 46 dan past"
+
+
+def _date(value: str | None) -> str:
+    """2026-11-08 → 08.11.2026"""
+    parts = (value or "")[:10].split("-")
+    return ".".join(reversed(parts)) if len(parts) == 3 else (value or "")
+
+
+def _spaced(c: canvas.Canvas, x: float, y: float, text: str, font: str, size: float, space: float, color) -> None:
+    """Harflar orasi kengaytirilgan sarlavha — markazda."""
+    width = pdfmetrics.stringWidth(text, font, size) + space * (len(text) - 1)
+    obj = c.beginText(x - width / 2, y)
+    obj.setFont(font, size)
+    obj.setCharSpace(space)
+    obj.setFillColor(color)
+    obj.textOut(text)
+    obj.setCharSpace(0)  # Tc sahifa holatida qoladi — qaytarilmasa keyingi hamma matn ham kengayib ketadi
+    c.drawText(obj)
+
+
+def _fit(text: str, font: str, size: float, max_width: float, smallest: float = 10) -> float:
+    while size > smallest and pdfmetrics.stringWidth(text, font, size) > max_width:
+        size -= 0.5
+    return size
+
+
+def certificates_pdf(test: dict, rows: list[dict], teacher: str) -> bytes:
+    """Har qatnashchiga bitta sahifa (A4, yotiq). rows — results.test_results() qatorlari."""
+    buffer = io.BytesIO()
+    page = landscape(A4)
+    c = canvas.Canvas(buffer, pagesize=page)
+    c.setTitle(f"Sertifikatlar — {test['title']}")
+    for row in rows:
+        _certificate(c, page, test, row, teacher)
+        c.showPage()
+    c.save()
+    return buffer.getvalue()
+
+
+def _certificate(c: canvas.Canvas, page: tuple, test: dict, row: dict, teacher: str) -> None:
+    w, h = page
+    cx = w / 2
+    c.setFillColor(PAPER)
+    c.rect(0, 0, w, h, stroke=0, fill=1)
+    c.setStrokeColor(ACCENT)
+    c.setLineWidth(3)
+    c.rect(12 * mm, 12 * mm, w - 24 * mm, h - 24 * mm)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.rect(15.5 * mm, 15.5 * mm, w - 31 * mm, h - 31 * mm)
+    c.setFillColor(GOLD)
+    for x, y in ((15.5 * mm, 15.5 * mm), (w - 15.5 * mm, 15.5 * mm), (15.5 * mm, h - 15.5 * mm), (w - 15.5 * mm, h - 15.5 * mm)):
+        path = c.beginPath()
+        path.moveTo(x, y + 2.6 * mm)
+        path.lineTo(x + 2.6 * mm, y)
+        path.lineTo(x, y - 2.6 * mm)
+        path.lineTo(x - 2.6 * mm, y)
+        path.close()
+        c.drawPath(path, stroke=0, fill=1)
+
+    _spaced(c, cx, h - 34 * mm, "ONA TILI VA ADABIYOT · MOCK IMTIHON", "Sans-Bold", 10, 2.2, GOLD)
+    _spaced(c, cx, h - 54 * mm, "SERTIFIKAT", "Sans-Bold", 40, 7, ACCENT)
+    c.setFont("Sans", 11)
+    c.setFillColor(MUTED)
+    c.drawCentredString(cx, h - 65 * mm, "Ushbu sertifikat egasi")
+
+    name = row["name"] or "—"
+    size = _fit(name, "Sans-Bold", 30, w - 90 * mm, 16)
+    c.setFont("Sans-Bold", size)
+    c.setFillColor(INK)
+    c.drawCentredString(cx, h - 81 * mm, name)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.line(cx - 85 * mm, h - 85 * mm, cx + 85 * mm, h - 85 * mm)
+    meta = " · ".join(part for part in (
+        f"ID {row['number']:04d}" if row.get("number") is not None else "",
+        f"{row['class_name']} sinfi" if row.get("class_name") else "") if part)
+    if meta:
+        c.setFont("Sans", 10.5)
+        c.setFillColor(MUTED)
+        c.drawCentredString(cx, h - 91 * mm, meta)
+    line = f"«{test['title']}» mock imtihonida ({_date(row.get('date'))}) quyidagi natijani ko'rsatdi:"
+    c.setFont("Sans", _fit(line, "Sans", 12, w - 70 * mm))
+    c.setFillColor(INK)
+    c.drawCentredString(cx, h - 101 * mm, line)
+
+    # Natija: chapda umumiy ball, o'rtada daraja, o'ngda bo'limlar
+    band = 72 * mm
+    card_w, card_h = 66 * mm, 34 * mm
+    for x in (cx - 82 * mm, cx + 82 * mm):
+        c.setFillColor(LIGHT)
+        c.roundRect(x - card_w / 2, band - card_h / 2, card_w, card_h, 4 * mm, stroke=0, fill=1)
+    left = cx - 82 * mm
+    c.setFillColor(MUTED)
+    c.setFont("Sans-Bold", 8.5)
+    c.drawCentredString(left, band + 9 * mm, "UMUMIY BALL")
+    score = fmt_num(row["score"]) if row.get("score") is not None else "—"
+    c.setFillColor(ACCENT)
+    c.setFont("Sans-Bold", 30)
+    value_w = pdfmetrics.stringWidth(score, "Sans-Bold", 30)
+    c.drawString(left - (value_w + pdfmetrics.stringWidth(" / 75", "Sans", 12)) / 2, band - 6 * mm, score)
+    c.setFont("Sans", 12)
+    c.setFillColor(MUTED)
+    c.drawString(left - (value_w + pdfmetrics.stringWidth(" / 75", "Sans", 12)) / 2 + value_w, band - 6 * mm, " / 75")
+
+    grade = row.get("grade") or "—"
+    c.setFillColor(colors.HexColor(GRADE_COLORS.get(grade, "#9aa5b1")))
+    c.circle(cx, band + 2 * mm, 17 * mm, stroke=0, fill=1)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(1.2)
+    c.circle(cx, band + 2 * mm, 19 * mm, stroke=1, fill=0)
+    c.setFillColor(colors.white)
+    c.setFont("Sans-Bold", _fit(grade, "Sans-Bold", 34, 26 * mm, 18))
+    c.drawCentredString(cx, band - 2 * mm, grade)
+    c.setFillColor(MUTED)
+    c.setFont("Sans-Bold", 8.5)
+    c.drawCentredString(cx, band - 22 * mm, "DARAJA")
+
+    right = cx + 82 * mm
+    essay = row.get("essay")
+    parts = [("Test qismi", f"{fmt_num(row['test'])} / 75" if row.get("test") is not None else None),
+             ("Esse", f"{fmt_num(essay)} / 75" if essay is not None else None)]
+    for index, (label, value) in enumerate(parts):
+        y = band + 5 * mm - index * 13 * mm
+        c.setFont("Sans", 10)
+        c.setFillColor(MUTED)
+        c.drawString(right - card_w / 2 + 7 * mm, y, label)
+        c.setFont("Sans-Bold" if value else "Sans", 13 if value else 10)
+        c.setFillColor(INK if value else MUTED)
+        c.drawRightString(right + card_w / 2 - 7 * mm, y, value or "baholanmagan")
+
+    c.setFont("Sans", 8)
+    c.setFillColor(MUTED)
+    c.drawCentredString(cx, 41 * mm, f"Darajalar: {GRADE_SCALE}")
+
+    c.setStrokeColor(INK)
+    c.setLineWidth(0.6)
+    c.line(32 * mm, 31 * mm, 100 * mm, 31 * mm)
+    c.setFont("Sans", 9)
+    c.setFillColor(MUTED)
+    c.drawString(32 * mm, 26.5 * mm, f"O'qituvchi: {teacher}"[:60])
+    c.drawRightString(w - 32 * mm, 31.5 * mm, f"Sana: {_date(row.get('date'))}")
+    c.drawRightString(w - 32 * mm, 26.5 * mm, f"№ M-{test['id']}-{row['attempt_id']}")
+    c.setFont("Sans", 7.5)
+    c.setFillColor(GRID)
+    c.drawCentredString(cx, 19.5 * mm, "Rasmiy sertifikat emas — o'quv mashg'uloti (mock imtihon) natijasi. "
+                                        "Ball DTM tartibida, Rasch modeli bo'yicha taxminiy hisoblangan.")
+
+
+# ---------- Sinf jadvali (Natijalar bo'limi) ----------
+
+def class_report_pdf(report: dict) -> bytes:
+    """Sinf o'quvchilari × testlar: har katakda umumiy ball va daraja; oxirida o'rtacha. 8 testdan sahifalarga bo'linadi."""
+    buffer = io.BytesIO()
+    page = landscape(A4)
+    cls, tests, rows = report["class"], report["tests"], report["students"]
+    doc = SimpleDocTemplate(buffer, pagesize=page, leftMargin=12 * mm, rightMargin=12 * mm,
+                            topMargin=12 * mm, bottomMargin=14 * mm, title=f"Sinf natijalari — {cls['name']}")
+    width = page[0] - 24 * mm
+    banner = Table([[Paragraph(f"{_esc(cls['name'])} — NATIJALAR JADVALI", STYLES["banner"])],
+                    [Paragraph(f"{cls['students']} ta o'quvchi  ·  {len(tests)} ta test  ·  {datetime.now():%d.%m.%Y}",
+                               STYLES["banner_sub"])]], colWidths=[width])
+    banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), ACCENT),
+                                ("TOPPADDING", (0, 0), (-1, 0), 9), ("BOTTOMPADDING", (0, -1), (-1, -1), 9),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 12)]))
+    head = ParagraphStyle("head", fontName="Sans", fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.white)
+    story = [banner, Spacer(1, 5 * mm)]
+    chunks = [tests[i:i + 8] for i in range(0, len(tests), 8)] or [[]]
+    for index, chunk in enumerate(chunks):
+        if index:
+            story.append(PageBreak())
+        header = ["№", "ID", "F.I.Sh."] + [
+            Paragraph(f"<b>{_esc(t['title'][:28])}</b><br/>{_date(t['date'])}", head) for t in chunk] + ["O'rtacha"]
+        body, style = [header], _table_style()
+        for place, row in enumerate(rows, start=1):
+            line = [str(place), f"{row['number']:04d}", Paragraph(_esc(row["name"]), STYLES["cell"])]
+            for col, test in enumerate(chunk, start=3):
+                cell = row["results"].get(str(test["id"]))
+                if not cell:
+                    line.append("—")
+                    continue
+                line.append(f"{fmt_num(cell['score'])}{cell['suffix']}" + (f"\n{cell['grade']}" if cell["grade"] else ""))
+                _shade(style, (col, place), cell)
+            avg = row["avg"]
+            line.append("—" if avg is None else f"{fmt_num(avg)}{row['suffix']}" + (f"\n{row['grade']}" if row["grade"] else ""))
+            if avg is not None:
+                _shade(style, (len(line) - 1, place), {"score": avg, "grade": row["grade"], "suffix": row["suffix"]})
+            body.append(line)
+        if len(body) == 1:
+            body.append(["", "", "Sinfda hali o'quvchi yo'q"] + [""] * (len(header) - 3))
+        fixed = [10 * mm, 14 * mm, 62 * mm]
+        rest = width - sum(fixed) - 22 * mm
+        cols = fixed + [rest / max(1, len(chunk))] * max(1, len(chunk)) + [22 * mm] if chunk else fixed + [width - sum(fixed)]
+        table = Table(body, colWidths=cols, repeatRows=1)
+        style.add("ALIGN", (3, 0), (-1, -1), "CENTER")
+        table.setStyle(style)
+        story.append(table)
+    story += [Spacer(1, 4 * mm), Paragraph(
+        "Har katakda — o'quvchining shu testdagi <b>umumiy bali (75)</b> va darajasi (DTM tartibida: test qismi Rasch + "
+        "esse o'rtachasi; Rasch testni ishlagan barcha qatnashchilar bo'yicha). Oddiy testlarda — foiz. «—» — o'quvchi "
+        "bu testda qatnashmagan. <b>O'rtacha</b> — Milliy sertifikat formatidagi testlar bo'yicha. "
+        f"Taxminiy natija, rasmiy emas.<br/><b>Darajalar:</b> {GRADE_SCALE}.", STYLES["small"])]
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    return buffer.getvalue()
+
+
+def _shade(style: TableStyle, cell: tuple, value: dict) -> None:
+    if value.get("grade") in GRADE_COLORS:
+        style.add("BACKGROUND", cell, cell, colors.HexColor(GRADE_COLORS[value["grade"]]))
+        style.add("TEXTCOLOR", cell, cell, colors.white)
+        style.add("FONT", cell, cell, "Sans-Bold", 8.5)
+    elif value.get("suffix") == "%":
+        share = value["score"] or 0
+        style.add("BACKGROUND", cell, cell, GOOD if share >= 70 else MID if share >= 40 else BAD)
 
 
 def _esc(text: str) -> str:
