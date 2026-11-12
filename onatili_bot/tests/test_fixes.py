@@ -185,6 +185,58 @@ class ServerFixes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)  # ID bo'shadi — haqiqiy egasi yubora oladi
 
 
+class ClassFromId(ServerFixes):
+    """Titul qaysi testda skanerlansa ham o'quvchi va uning sinfi doimiy ID'dan aniqlanadi."""
+
+    async def test_scanned_id_resolves_pupil_from_any_class(self):
+        eleven = db.create_class(OWNER, "11-A")
+        seven = db.create_class(OWNER, "7-B")
+        ali = db.add_class_students(eleven["id"], OWNER, ["Ali Valiyev"])[0]
+        db.add_class_students(seven["id"], OWNER, ["Madina Yusupova"])
+        _, r = await self.create("offline")
+        test = db.get_test(r["id"])
+        # Test ro'yxati bo'sh (yoki boshqa sinfniki) — titulda faqat 11-A o'quvchisining ID'si
+        answers = {str(i): "A" for i in range(1, 6)}
+        status, saved = await self.post(f"/api/teacher/test/{test['id']}/scan/save",
+                                        {"number": str(ali["number"]), "variant": "A", "answers": answers})
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["name"], "Ali Valiyev")  # ism sinf ro'yxatidan
+        page = await (await self.client.get(f"/api/teacher/test/{test['id']}")).json()
+        self.assertEqual(page["students"][0]["class_name"], "11-A")
+        self.assertIn(ali["number"], [p["number"] for p in page["pupils"]])  # oflayn skaner uchun
+        # Natijalar bo'limida — 11-A sinfida (7-B da emas)
+        report = await (await self.client.get(f"/api/teacher/class/{eleven['id']}/results")).json()
+        self.assertIn("Ali Valiyev", str(report))
+        self.assertIn(test["title"], str(report))
+        other = await (await self.client.get(f"/api/teacher/class/{seven['id']}/results")).json()
+        self.assertNotIn("Ali Valiyev", str(other))
+        # Shu ID qayta skanerlansa — ikkinchi o'quvchi ochilmaydi, natija almashtiriladi
+        status, _ = await self.post(f"/api/teacher/test/{test['id']}/scan/save",
+                                    {"number": str(ali["number"]), "variant": "A", "answers": {"1": "B"}})
+        self.assertEqual(status, 200)
+        self.assertEqual(len(db.list_students(test["id"])), 1)
+        self.assertEqual(len(db.list_attempts(test["id"])), 1)
+
+    async def test_ninth_grader_scanned_inside_eleventh_grade_test(self):
+        """11-sinf testi ichida 9-sinf o'quvchisining titulini skanerlasa ham — natija 9-sinfga tushadi."""
+        eleven, nine = db.create_class(OWNER, "11-sinf"), db.create_class(OWNER, "9-sinf")
+        ali = db.add_class_students(eleven["id"], OWNER, ["Ali Valiyev"])[0]
+        vali = db.add_class_students(nine["id"], OWNER, ["Vali Karimov"])[0]
+        _, r = await self.create("offline")
+        await self.post(f"/api/teacher/test/{r['id']}/students/from-class", {"class_id": eleven["id"]})  # 11-sinf ro'yxati
+        status, saved = await self.post(f"/api/teacher/test/{r['id']}/scan/save",
+                                        {"number": str(vali["number"]), "variant": "A", "answers": {"1": "A"}})
+        self.assertEqual((status, saved["name"]), (200, "Vali Karimov"))
+        page = await (await self.client.get(f"/api/teacher/test/{r['id']}")).json()
+        classes = {s["name"]: s["class_name"] for s in page["students"]}
+        self.assertEqual(classes, {"Ali Valiyev": "11-sinf", "Vali Karimov": "9-sinf"})
+        nine_report = await (await self.client.get(f"/api/teacher/class/{nine['id']}/results")).json()
+        self.assertIn("Vali Karimov", str(nine_report))
+        eleven_report = await (await self.client.get(f"/api/teacher/class/{eleven['id']}/results")).json()
+        self.assertNotIn("Vali Karimov", str(eleven_report))
+        self.assertIsNotNone(ali)
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))

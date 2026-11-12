@@ -637,6 +637,7 @@ async def teacher_test(request: web.Request) -> web.Response:
     for _, grade_name in rasch.values():
         grades[grade_name] = grades.get(grade_name, 0) + 1
     written_review_info = await written_review_summary(test, attempts, keys)
+    pupils = await pupils_of(user["id"])
     offline_milliy = test["fmt"] == "milliy" and test.get("mode") == "offline"
     return ok({
         "written_review": written_review_info,
@@ -647,7 +648,8 @@ async def teacher_test(request: web.Request) -> web.Response:
                  "channels": public_channels(test["channels"]), "mode": test.get("mode") or "online",
                  "sheet_style": sheet_styles.style_of(test)},
         "sheet_styles": sheet_styles.STYLES,
-        "students": [student_view(s) for s in await run(db.list_students, test["id"])],
+        "students": [student_view(s, pupils) for s in await run(db.list_students, test["id"])],
+        "pupils": list(pupils.values()) if test.get("mode") == "offline" else [],
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
         "ai": essay_ai.essay_enabled(), "ai_provider": essay_ai.essay_provider_name(),
@@ -928,9 +930,18 @@ async def essays_confirm_all(request: web.Request) -> web.Response:
 
 # ---------- Oflayn test: o'quvchilar, titullar, skaner ----------
 
-def student_view(student: dict) -> dict:
+def student_view(student: dict, pupils: dict | None = None) -> dict:
+    pupil = (pupils or {}).get(student["number"])
     return {"id": student["id"], "number": student["number"], "name": student["name"],
-            "variant": student["variant"], "scanned": bool(student["attempt_id"]), "attempt_id": student["attempt_id"]}
+            "variant": student["variant"], "scanned": bool(student["attempt_id"]), "attempt_id": student["attempt_id"],
+            "class_name": pupil["class_name"] if pupil else None}
+
+
+async def pupils_of(owner_id: int) -> dict[int, dict]:
+    """{doimiy ID: {number, name, class_name}} — o'qituvchining BARCHA sinflari. ID o'qituvchi bo'yicha takrorlanmaydi,
+    shuning uchun titul qaysi testda skanerlansa ham o'quvchi va uning sinfi (masalan 11-A) ID'dan aniqlanadi."""
+    return {s["number"]: {"number": s["number"], "name": s["name"], "class_name": s["class_name"]}
+            for s in await run(db.owner_class_students, owner_id)}
 
 
 def assign_variants(count: int, variants: list[str], mode: str, start: int = 0) -> list[str]:
@@ -947,7 +958,8 @@ def assign_variants(count: int, variants: list[str], mode: str, start: int = 0) 
 async def students_list(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
-    return ok({"students": [student_view(s) for s in await run(db.list_students, test["id"])],
+    pupils = await pupils_of(user["id"])
+    return ok({"students": [student_view(s, pupils) for s in await run(db.list_students, test["id"])],
                "variants": list(await run(db.get_keys, test["id"]))})
 
 
@@ -1489,8 +1501,9 @@ async def scan(request: web.Request) -> web.Response:
     if not number and result.get("sheet_number_status") == "ok":
         number, id_source = result["sheet_number"], "bubbles"
     student = await run(db.get_student, test["id"], None, number) if number else None
-    if number and not student:
-        id_source = "unknown"  # ID o'qildi, lekin ro'yxatda bunday o'quvchi yo'q
+    pupil = (await pupils_of(test["owner_id"])).get(number) if number and not student else None
+    if number and not student and not pupil:
+        id_source = "unknown"  # ID o'qildi, lekin na test ro'yxatida, na sinflarda bunday o'quvchi yo'q
     variant = result["variant"] or (student["variant"] if student else None) or (variants[0] if len(variants) == 1 else None)
     written, ai_note = {}, None
     labels = [i["label"] for i in text_items(test["items"])]
@@ -1504,6 +1517,7 @@ async def scan(request: web.Request) -> web.Response:
             ai_note = "Yozma javoblarni keyin «✍️ Yozmalarni tekshirish» bo'limida rasmga qarab belgilaysiz"
     return ok({
         "student": student_view(student) if student else None,
+        "pupil": pupil,  # sinf ro'yxatidan topilgan o'quvchi (saqlanganda test ro'yxatiga o'zi qo'shiladi)
         "code_status": "ok" if student else ("blank" if result["sheet_code"] == 0 else "unclear"),
         "id_source": id_source, "id_read": number,
         "id_status": result.get("sheet_number_status"),
@@ -1530,15 +1544,27 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
         if student["variant"] != variant:
             await run(db.update_student, test["id"], student["id"], None, variant)
     else:
-        name = " ".join(str(payload.get("name") or "").split())[:60]
-        if len(name) < 3:
-            raise ApiError(400, "O'quvchi ismini yozing yoki ro'yxatdan tanlang")
-        # Titulda bo'yalgan ID ro'yxatda yo'q bo'lsa — o'quvchi shu ID bilan qo'shiladi (esse ID bo'yicha topiladi)
         raw = str(payload.get("number") or "")
         number = int(raw) if raw.isdigit() and 0 < int(raw) <= 9999 else None
-        before = {s["id"] for s in await run(db.list_students, test["id"])}
-        students = await run(db.add_students, test["id"], [name], [variant], [number] if number else None)
-        student = next(s for s in students if s["id"] not in before)
+        typed = " ".join(str(payload.get("name") or "").split())[:60]
+        student = await run(db.get_student, test["id"], None, number) if number else None
+        if student and typed and not same_name(typed, student["name"]):
+            student = None  # boshqa bola shu ID'ni xato bo'yagan — natijasi ustiga yozilmasin, alohida qo'shiladi
+        if student:  # bu ID test ro'yxatida bor — o'sha o'quvchi (ikkinchi nusxa ochilmaydi)
+            if student["attempt_id"]:
+                await run(db.delete_attempt, student["attempt_id"])
+            if student["variant"] != variant:
+                await run(db.update_student, test["id"], student["id"], None, variant)
+        else:
+            # ID o'qituvchining sinfida bo'lsa — ism o'sha yerdan (natija o'quvchining o'z sinfiga tushadi)
+            pupil = (await pupils_of(test["owner_id"])).get(number) if number else None
+            name = " ".join(str(payload.get("name") or "").split())[:60] or (pupil["name"] if pupil else "")
+            if len(name) < 3:
+                raise ApiError(400, "O'quvchi ismini yozing yoki ro'yxatdan tanlang")
+            # Titulda bo'yalgan ID ro'yxatda yo'q — o'quvchi shu ID bilan qo'shiladi (esse ID bo'yicha topiladi)
+            before = {s["id"] for s in await run(db.list_students, test["id"])}
+            students = await run(db.add_students, test["id"], [name], [variant], [number] if number else None)
+            student = next(s for s in students if s["id"] not in before)
     answers = clean_answers(test, payload.get("answers") or {})
     attempt = await HOOKS["record_attempt"](test, db.offline_tg_id(test["id"], student["number"]), student["name"],
                                             variant, answers, None, [], 0.0, notify=False)
@@ -1618,6 +1644,12 @@ def names_match(given: str | None, roster: str | None) -> bool | None:
     if not a or not b:
         return None
     return bool(a & b)
+
+
+def same_name(a: str | None, b: str | None) -> bool:
+    """Bir xil odammi: so'zlar to'plami bir xil (tartib, katta-kichik harf, tutuq belgisi farq qilmaydi)."""
+    words = lambda text: sorted(str(text or "").lower().translate(_APOSTROPHES).split())
+    return words(a) == words(b)
 
 
 def offline_essay_view(row: dict) -> dict:

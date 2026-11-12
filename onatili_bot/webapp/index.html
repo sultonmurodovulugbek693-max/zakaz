@@ -154,6 +154,10 @@ html.dark .quick-action i { background: #20302a; }
 .tcard .t-stats b { color: var(--ink); font-weight: 700; }
 .tcard .t-status { font-size: 12px; font-weight: 700; color: color-mix(in srgb, var(--warn) 80%, var(--ink)); }
 .tcard.is-done .t-status { color: var(--good); }
+.scan-steps { margin: 4px 0; padding: 0; list-style: none; counter-reset: st; display: grid; gap: 10px; }
+.scan-steps li { counter-increment: st; display: grid; grid-template-columns: 30px 1fr; column-gap: 10px; align-items: start; }
+.scan-steps li::before { content: counter(st); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
+.scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
 .tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
 .tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
 .tests-more { justify-self: center; }
@@ -1432,15 +1436,15 @@ VIEWS.teacher = async ({ id, tab }) => {
   if (t.closed) next = `<h2>📢 Natijalar e'lon qilindi</h2><p class="muted small">${n} ta o'quvchi natijasini oldi. Yangi javob qabul qilish uchun testni qayta oching.</p>
       <div class="row"><button class="btn ghost" id="reopen" style="flex:1">🔓 Qayta ochish</button><button class="btn" data-send="results" style="flex:1">📊 Natijalar PDF</button></div>`;
   else if (!n && offline) next = `<h2>Titullarni chiqaring va skanerlang</h2><p class="muted small">${d.students.length ? `${d.students.length} ta o'quvchiga shaxsiy titul tayyor.` : "Ro'yxat ixtiyoriy — bo'sh titullar ham chiqarish mumkin."} Test tugagach, titullarni telefon kamerasida skanerlang.</p>
-      <button class="btn block" id="scan">📷 Kamerada skanerlash</button><button class="btn ghost block" id="sheets">📄 Titullarni chiqarish (PDF)</button>`;
+      <button class="btn block" id="scan">${scanLabel()}</button><button class="btn ghost block" id="sheets">📄 Titullarni chiqarish (PDF)</button>`;
   else if (!n) next = `<h2>O'quvchilarga kodni bering</h2><p class="muted small">Ular botga shu kodni yozib testni boshlaydi.</p>
       <div class="bigcode">${t.code}</div><button class="btn block" id="copy-code">Kodni nusxalash</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
   else if (writtenLeft) next = `<h2>✍️ Yozma javoblarni tekshiring</h2><p class="muted small">${wr.students} ta titul · ${wr.done} / ${wr.total} katak belgilangan. Har savol bo'yicha: o'quvchi yozgani rasmi va kalit yonma-yon — ✅ yoki ❌.</p>
-      <button class="btn block" id="written-review">✍️ Yozmalarni tekshirish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : ""}`;
+      <button class="btn block" id="written-review">✍️ Yozmalarni tekshirish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : ""}`;
   else if (essaysLeft) next = `<h2>📝 Esselarni tekshiring</h2><p class="muted small">${suggested ? `${suggested} ta esseni AI baholadi — tasdiqlang.` : ""} ${pending ? `${pending} ta esse AI navbatida.` : ""}</p>
-      <button class="btn block" data-goto="essays">Esselarga o'tish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : ""}`;
+      <button class="btn block" data-goto="essays">Esselarga o'tish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : ""}`;
   else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi${offline && d.students.length ? `, ${scanned} / ${d.students.length} titul skanerlangan` : ""}. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
-      <button class="btn block" id="announce">📢 Natijalarni e'lon qilish</button>${offline ? `<button class="btn ghost block" id="scan">📷 Yana skanerlash</button>` : `<button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`}`;
+      <button class="btn block" id="announce">📢 Natijalarni e'lon qilish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : `<button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`}`;
   const files = `<div class="card"><h2>Fayllar</h2><div class="files">
       ${offline ? `<button class="btn ghost sm" id="sheets2">📄 Titullar</button>` : ""}
       <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
@@ -2138,7 +2142,7 @@ async function fromClassModal(testId, vmode, done) {
 function rosterHTML(d) {
   const vs = d.test.variants;
   const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
-    <span><b>${esc(s.name)}</b><small>${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
+    <span><b>${esc(s.name)}</b><small>${s.class_name ? `🏫 ${esc(s.class_name)} · ` : ""}${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
     <span class="row" style="gap:6px">${vs.length > 1 ? `<button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button>` : ""}<button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
   return `<div class="card"><h2>O'quvchilarni qo'shish</h2>
     <textarea class="input" id="names" rows="5" placeholder="Har bir o'quvchi yangi qatorda:\nAli Valiyev\nMadina Yusupova\n…"></textarea>
@@ -2192,26 +2196,38 @@ function bindRoster(d, id) {
 }
 
 // Telegram ichida «Skanerlash»: skaner ilovasi (APK) shu testda, o'qituvchi akkaunti bilan ochiladi
+// Mini App'da skanerlash yo'q — skaner ilovasida (kamera tez va barqaror). Ilova shu test bilan ochiladi va
+// Telegram akkauntingiz bilan o'zi kiradi; o'rnatilmagan bo'lsa — yuklab olish. Ilova faqat Android uchun,
+// shuning uchun iPhone'da zaxira sifatida shu yerda skanerlash qoladi
 function appScanModal(t) {
+  const ios = !!(tg && tg.platform === "ios");
   const modal = document.createElement("div"); modal.className = "sheet-modal";
-  modal.innerHTML = `<div role="dialog" aria-label="Skaner">
-    <div class="row between"><h2>📷 Titullarni skanerlash</h2><button class="btn plain" data-close>Yopish</button></div>
-    <p class="muted small" style="margin:0">Skaner ilovasida kamera tezroq va barqaror ishlaydi. Ilova shu test bilan ochiladi — qayta kirish shart emas. Har natija bot chatiga ham keladi.</p>
-    <button class="btn block" id="open-app" style="padding:16px">📲 Skaner ilovasida ochish</button>
-    <button class="btn ghost block" id="here">Shu yerda skanerlash</button>
-    <span class="muted small">Ilova o'rnatilmagan bo'lsa — ochilgan sahifada «⬇️ Yuklab olish»ni bosing (Android).</span></div>`;
+  modal.innerHTML = `<div role="dialog" aria-label="Skaner ilovasi">
+    <div class="row between"><h2>📲 Skaner ilovasida skanerlang</h2><button class="btn plain" data-close>Yopish</button></div>
+    <ol class="scan-steps">
+      <li><b>Ilovani oching</b><span>Telegram akkauntingiz bilan o'zi kiradi — parol shart emas</span></li>
+      <li><b>«${esc(t.title)}» testi ochiladi</b><span>Titulni kamera ostiga qo'ying — o'zi o'qiydi va saqlaydi</span></li>
+      <li><b>«📤 Botga yuborish»</b><span>Natijalar shu yerda va bot chatida chiqadi</span></li>
+    </ol>
+    <button class="btn block" id="open-app" style="padding:16px">📲 Ilovani ochish</button>
+    <button class="btn ghost block" id="get-app">⬇️ Ilovani yuklab olish (Android)</button>
+    <span class="muted small">Ilovada qo'lda kirish: «✈️ Telegram orqali kirish» → botda «✅ Ha, men kiryapman».</span>
+    ${ios ? `<button class="btn plain block" id="here">iPhone: shu yerda skanerlash</button>` : ""}</div>`;
   document.body.appendChild(modal);
   modal.onclick = e => { if (e.target === modal || e.target.closest("[data-close]")) modal.remove(); };
-  modal.querySelector("#here").onclick = () => { modal.remove(); go("scan", { id: t.id }); };
+  const open = url => { try { tg.openLink(url); } catch (e) { location.href = url; } };
+  const here = modal.querySelector("#here"); if (here) here.onclick = () => { modal.remove(); go("scan", { id: t.id }); };
+  modal.querySelector("#get-app").onclick = () => { haptic("light"); open(location.origin + "/download"); };
   modal.querySelector("#open-app").onclick = async () => {
-    const btn = modal.querySelector("#open-app"); btn.disabled = true;
+    const btn = modal.querySelector("#open-app"); btn.disabled = true; btn.textContent = "Ochilmoqda…";
     try {
       const r = await api(`/api/teacher/test/${t.id}/app-link`, {});
-      try { tg.openLink(r.url); } catch (e) { location.href = r.url; }
-      haptic("success"); modal.remove();
-    } catch (e) { toast(e.message); btn.disabled = false; }
+      open(r.url); haptic("success"); modal.remove();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "📲 Ilovani ochish"; }
   };
 }
+// Skaner tugmasi yozuvi: Mini App'da — ilovaga yo'naltiradi, ilovaning o'zida — kamera
+const scanLabel = (again = false) => tg && tg.initData ? (again ? "📲 Yana skanerlash (ilovada)" : "📲 Skaner ilovasida skanerlash") : (again ? "📷 Yana skanerlash" : "📷 Kamerada skanerlash");
 
 // Titul ko'rinishlari: skaner chop etilgan ko'rinishni testdan biladi.
 // Milliy sertifikat testida faqat standart titul — yozma javoblar (36–44) harf kataklari faqat unda
@@ -2351,7 +2367,9 @@ function recPayload(rec) {
   if (rec.payload) return rec.payload;
   const answers = {};
   rec.r.questions.forEach(q => { if (q.chosen) answers[q.label] = q.chosen; });
-  return { variant: rec.r.variant, answers, ...(rec.r.student ? { student_id: rec.r.student.id } : rec.r.id_read ? { number: rec.r.id_read } : {}) };
+  const pupil = rec.r.pupil;
+  return { variant: rec.r.variant, answers, ...(rec.r.student ? { student_id: rec.r.student.id }
+    : pupil ? { number: pupil.number, name: pupil.name } : rec.r.id_read ? { number: rec.r.id_read } : {}) };
 }
 function recReady(rec) {
   const p = recPayload(rec);
@@ -2367,7 +2385,7 @@ VIEWS.scan = async ({ id }) => {
   S.fromCache = false;
   try {
     [d, layout] = await Promise.all([
-      apiCached(`/api/teacher/test/${id}`, x => ({ test: x.test, students: x.students, attempts: [] })),
+      apiCached(`/api/teacher/test/${id}`, x => ({ test: x.test, students: x.students, pupils: x.pupils || [], attempts: [] })),
       apiCached(`/api/teacher/test/${id}/scan/layout`).catch(() => null),
     ]);
   } catch (e) { return fail(e); }
@@ -2530,7 +2548,9 @@ VIEWS.scan = async ({ id }) => {
     let number = code || null, idSource = code ? "code" : null;
     if (!number && res.sheet_number_status === "ok") { number = res.sheet_number; idSource = "bubbles"; }
     const student = number ? d.students.find(s => s.number === number) || null : null;
-    if (number && !student) idSource = "unknown";
+    // Test ro'yxatida yo'q — o'qituvchining sinflaridan (ID hamma sinflar bo'yicha yagona): ism va sinf o'zi qo'yiladi
+    const pupil = number && !student ? (d.pupils || []).find(p => p.number === number) || null : null;
+    if (number && !student && !pupil) idSource = "unknown";
     const variant = res.variant || (student && student.variant) || (t.variants.length === 1 ? t.variants[0] : null);
     const needWritten = (layout.written_labels || []).length > 0;
     const crops = a.crops || {};
@@ -2541,7 +2561,7 @@ VIEWS.scan = async ({ id }) => {
     const rec = {
       uid: newUid(), testId: testKey, created: Date.now(), payload: null, written, name, essays: [], error: null,
       r: {
-        student: student ? { ...student } : null, id_source: idSource, id_read: number, id_status: res.sheet_number_status,
+        student: student ? { ...student } : null, pupil, id_source: idSource, id_read: number, id_status: res.sheet_number_status,
         code_status: student ? "ok" : (res.sheet_code === 0 ? "blank" : "unclear"), variant, variant_read: res.variant,
         questions: res.questions.map(q => ({ label: q.label, chosen: q.chosen, status: q.status })),
       },
@@ -2553,7 +2573,8 @@ VIEWS.scan = async ({ id }) => {
     haptic("success");
     cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 500);
     const warn = recWarnings(rec);
-    savedText = `✅ ${student ? `№ ${pad3(student.number)} ${student.name}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}`;
+    const who = student || pupil;
+    savedText = `✅ ${who ? `№ ${pad3(who.number)} ${who.name}${(who.class_name) ? ` · ${who.class_name}` : ""}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}`;
     setStatus(savedText, "ok");
     await refreshQueue();
   }
@@ -2564,7 +2585,9 @@ VIEWS.scan = async ({ id }) => {
   function whoOf(rec) {
     const p = recPayload(rec);
     const st = p.student_id ? d.students.find(s => s.id === p.student_id) || (rec.r.student && rec.r.student.id === p.student_id ? rec.r.student : null) : null;
-    return st ? `№ ${pad3(st.number)} · ${esc(st.name)}` : p.name ? esc(p.name) : "❗ O'quvchi aniqlanmadi — bosib tanlang";
+    const cls = (st && st.class_name) || (!st && rec.r.pupil && p.name === rec.r.pupil.name ? rec.r.pupil.class_name : null);
+    const label = st ? `№ ${pad3(st.number)} · ${esc(st.name)}` : p.name ? `${p.number ? `№ ${pad3(p.number)} · ` : ""}${esc(p.name)}` : "❗ O'quvchi aniqlanmadi — bosib tanlang";
+    return label + (cls ? ` · 🏫 ${esc(cls)}` : "");
   }
   async function refreshQueue() {
     if (!local) return;
@@ -2720,8 +2743,11 @@ function showReview(r, d, allItems, box, onNext, local = null) {
   let variant = r.variant;
   const taken = new Set(r.taken || []);  // oflayn skaner: telefonda boshqa titulga biriktirilgan o'quvchilar
   const free = d.students.filter(s => !s.scanned && !taken.has(s.id));
-  const who = r.student
-    ? `<div class="row between"><span><b>№ ${pad3(r.student.number)} · ${esc(r.student.name)}</b><br><small class="muted">${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
+  const pupilOnly = !r.student && r.pupil && (!r.prefill_name || r.prefill_name === r.pupil.name);
+  const who = pupilOnly
+    ? `<div class="row between"><span><b>№ ${pad3(r.pupil.number)} · ${esc(r.pupil.name)}</b><br><small class="muted">🏫 ${esc(r.pupil.class_name)} · sinf ro'yxatidan ID bo'yicha topildi — testga o'zi qo'shiladi</small></span><span class="pill-tag done">✓</span></div>`
+    : r.student
+    ? `<div class="row between"><span><b>№ ${pad3(r.student.number)} · ${esc(r.student.name)}</b><br><small class="muted">${r.student.class_name ? `🏫 ${esc(r.student.class_name)} · ` : ""}${r.id_source === "bubbles" ? "o'quvchi bo'yagan ID bo'yicha topildi" : "titul kodi bo'yicha topildi"}</small></span><span class="pill-tag done">✓</span></div>
        ${r.student.scanned ? `<span class="pill-tag wait">⚠️ Avval skanerlangan — saqlasangiz almashtiriladi</span>` : ""}`
     : `${r.name_image ? `<img src="${r.name_image}" alt="Ism katagi" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
        <span class="muted small">${r.id_source === "unknown" ? `⚠️ ID ${pad3(r.id_read)} o'qildi, lekin ro'yxatda bunday o'quvchi yo'q — tanlang yoki ismini yozing`
@@ -2755,6 +2781,7 @@ function showReview(r, d, allItems, box, onNext, local = null) {
     const payload = { variant, answers: { ...answers } };
     box.querySelectorAll(".wq").forEach(x => { if (x.value.trim()) payload.answers[x.dataset.q] = x.value.trim(); });
     if (r.student) payload.student_id = r.student.id;
+    else if (pupilOnly) { payload.number = r.pupil.number; payload.name = r.pupil.name; }
     else {
       const pick = box.querySelector("#pick"), nn = box.querySelector("#newname");
       if (pick && pick.value) payload.student_id = +pick.value;
