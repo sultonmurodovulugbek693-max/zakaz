@@ -1424,11 +1424,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   }).catch(() => {});
   document.querySelectorAll("[data-oe-del]").forEach(x => x.onclick = async () => {
     const num = x.dataset.oeDel;
-    if (!(await confirmBox(`ID ${pad3(num)} bilan yuborilgan esse bekor qilinsinmi?
-
-ID bo'shaydi — haqiqiy egasi esseni qayta yuboradi. Yuborgan akkauntga xabar boradi.${t.closed ? "
-
-⚠️ Natijalar e'lon qilingan: qayta yuborish uchun testni qayta oching." : ""}`))) return;
+    if (!(await confirmBox(`ID ${pad3(num)} bilan yuborilgan esse bekor qilinsinmi?\n\nID bo'shaydi — haqiqiy egasi esseni qayta yuboradi. Yuborgan akkauntga xabar boradi.${t.closed ? "\n\n⚠️ Natijalar e'lon qilingan: qayta yuborish uchun testni qayta oching." : ""}`))) return;
     x.disabled = true;
     try { await api(`/api/teacher/test/${t.id}/offline-essays/${num}/delete`, {}); toast("🗑 Esse bekor qilindi"); haptic("success"); rerender(); }
     catch (e) { toast(e.message); x.disabled = false; }
