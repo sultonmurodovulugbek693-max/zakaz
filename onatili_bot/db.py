@@ -109,6 +109,14 @@ SCHEMA = [
         attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
         UNIQUE (test_id, number)
     )""",
+    # Telefondan yuborilgan titullar: uid bo'yicha — tarmoq uzilib qayta yuborilsa ikkinchi natija ochilmaydi
+    f"""CREATE TABLE IF NOT EXISTS scan_uploads (
+        uid        TEXT PRIMARY KEY,
+        test_id    {BIG} NOT NULL,
+        student_id {BIG},
+        response   TEXT,
+        created    {FLOAT} NOT NULL
+    )""",
     # Onlayn test jonli holati: kim ochgan, nechta belgilagan, oxirgi faolligi (unix soniya)
     f"""CREATE TABLE IF NOT EXISTS live (
         test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
@@ -269,6 +277,9 @@ MIGRATIONS = [
     ("registrations", "district", "TEXT"),
     ("payments", "essays", "INTEGER"),  # esse paketi (period = 'pack'): nechta esse — buyurtma paytidagi hajm
     ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
+    ("tests", "sheets_sent", "INTEGER NOT NULL DEFAULT 0"),  # titul PDF'i botga yuborilgan (1-qadam bajarilgan)
+    ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
+    ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
 ]
 
 
@@ -575,6 +586,45 @@ def find_attempt(test_id: int, tg_id: int) -> dict | None:
         return _attempt_dict(
             conn.execute("SELECT * FROM attempts WHERE test_id = ? AND tg_id = ?", (test_id, tg_id)).fetchone()
         )
+
+
+def mark_sheets_sent(test_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET sheets_sent = 1 WHERE id = ?", (test_id,))
+
+
+def set_announcing(test_id: int, value: bool) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET announcing = ? WHERE id = ?", (1 if value else 0, test_id))
+
+
+def announcing_tests() -> list[dict]:
+    """E'loni tugamay qolgan testlar (server qayta ishga tushgan) — davom ettiriladi."""
+    with connect() as conn:
+        return [_test_dict(r) for r in conn.execute("SELECT * FROM tests WHERE announcing = 1").fetchall()]
+
+
+UPLOAD_KEEP = 14 * 24 * 3600
+
+
+def get_upload(uid: str, test_id: int) -> dict | None:
+    """Telefondagi titul avval yuborilganmi: {student_id, response (yoki None — yarmida uzilgan)}."""
+    with connect() as conn:
+        row = conn.execute("SELECT student_id, response FROM scan_uploads WHERE uid = ? AND test_id = ?",
+                           (uid, test_id)).fetchone()
+    if not row:
+        return None
+    return {"student_id": row["student_id"], "response": json.loads(row["response"]) if row["response"] else None}
+
+
+def save_upload(uid: str, test_id: int, student_id: int, response: dict | None = None) -> None:
+    with connect() as conn:
+        if random.random() < 0.02:  # eskilarini vaqti-vaqti bilan tozalash
+            conn.execute("DELETE FROM scan_uploads WHERE created < ?", (time.time() - UPLOAD_KEEP,))
+        conn.execute(
+            "INSERT INTO scan_uploads (uid, test_id, student_id, response, created) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(uid) DO UPDATE SET student_id = excluded.student_id, response = excluded.response",
+            (uid, test_id, student_id, json.dumps(response, ensure_ascii=False) if response else None, time.time()))
 
 
 def mark_notified(attempt_id: int) -> None:
@@ -1150,13 +1200,14 @@ def offline_essay_of_user(test_id: int, tg_id: int) -> dict | None:
                                  (test_id, tg_id)).fetchone())
 
 
-def save_offline_essay(test_id: int, number: int, tg_id: int, name: str | None, text: str) -> None:
+def save_offline_essay(test_id: int, number: int, tg_id: int, name: str | None, text: str, verified: bool = False) -> None:
+    """Shu ID'li esse (yangi yoki almashtirilgan). Esse kodi bilan kelgan bo'lsa — egasi o'zgaradi va «tasdiqlangan»."""
     with connect() as conn:
         conn.execute(
-            "INSERT INTO offline_essays (test_id, number, tg_id, name, text, created_at) VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(test_id, number) DO UPDATE SET name = excluded.name, text = excluded.text, "
-            "created_at = excluded.created_at",
-            (test_id, number, tg_id, name, text, _now()),
+            "INSERT INTO offline_essays (test_id, number, tg_id, name, text, created_at, verified) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(test_id, number) DO UPDATE SET tg_id = excluded.tg_id, name = excluded.name, text = excluded.text, "
+            "created_at = excluded.created_at, verified = CASE WHEN excluded.verified = 1 THEN 1 ELSE offline_essays.verified END",
+            (test_id, number, tg_id, name, text, _now(), 1 if verified else 0),
         )
 
 
@@ -1165,7 +1216,7 @@ def list_offline_essays(test_id: int) -> list[dict]:
     ro'yxatdagi ism, natijaga biriktirilganmi. Begona ID bilan yuborilganini shu yerdan ko'radi."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT e.number, e.tg_id, e.name, e.text, e.created_at, s.name AS roster_name, s.attempt_id, "
+            "SELECT e.number, e.tg_id, e.name, e.text, e.created_at, e.verified, s.name AS roster_name, s.attempt_id, "
             "a.essay AS score, u.full_name AS tg_name, u.username "
             "FROM offline_essays e "
             "LEFT JOIN students s ON s.test_id = e.test_id AND s.number = e.number "

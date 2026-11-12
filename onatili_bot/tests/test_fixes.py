@@ -4,6 +4,7 @@ Tuzatishlar: ilovaga kirish faqat tugma bilan, oflayn esseni o'qituvchi bekor qi
 va oflayn testda majburiy obuna yo'qligi. Telegram almashtirilgan — internet kerak emas.
 """
 import asyncio
+import json
 import types
 import unittest
 
@@ -235,6 +236,104 @@ class ClassFromId(ServerFixes):
         eleven_report = await (await self.client.get(f"/api/teacher/class/{eleven['id']}/results")).json()
         self.assertNotIn("Vali Karimov", str(eleven_report))
         self.assertIsNotNone(ali)
+
+
+class SixProblems(ServerFixes):
+    async def test_sheets_sent_marks_first_step(self):
+        _, r = await self.create("offline")
+        page = await (await self.client.get(f"/api/teacher/test/{r['id']}")).json()
+        self.assertTrue(page["test"]["sheets_sent"])  # yaratishda titul PDF'i ketdi — 1-qadam bajarilgan
+        _, r2 = await self.create("online")
+        page = await (await self.client.get(f"/api/teacher/test/{r2['id']}")).json()
+        self.assertFalse(page["test"]["sheets_sent"])
+
+    async def test_announce_resumes_after_restart(self):
+        _, r = await self.create()
+        test = db.get_test(r["id"])
+        for uid in (STUDENT, OTHER):
+            await bot.record_attempt(self.bot, test, uid, f"O'quvchi {uid}", "A", {"1": "A"}, None, [], 0.0)
+        # E'lon boshlangan, birinchi o'quvchiga yuborilgan, keyin server o'chib qolgan
+        db.set_closed(test["id"], True)
+        db.set_announcing(test["id"], True)
+        first = db.list_attempts(test["id"])[0]
+        db.mark_notified(first["id"])
+        self.bot.messages.clear()
+        await bot.resume_announcements(self.bot)
+        targets = [c for c, _ in self.bot.messages if c in (STUDENT, OTHER)]
+        self.assertEqual(targets, [OTHER])  # faqat qolgan o'quvchiga
+        self.assertEqual(db.announcing_tests(), [])
+        self.bot.messages.clear()
+        await bot.resume_announcements(self.bot)  # ikkinchi marta — hech narsa
+        self.assertEqual(self.bot.messages, [])
+
+    async def test_rate_limit(self):
+        webapp._HITS.clear()
+        codes = [(await self.client.post("/api/app/login")).status for _ in range(32)]
+        self.assertEqual(codes.count(429), 2)  # daqiqasiga 30 ta kirish havolasi
+        webapp._HITS.clear()
+
+    async def test_upload_dedupe_survives_restart(self):
+        from aiohttp import FormData
+        _, r = await self.create("offline")
+        answers = {str(i): "A" for i in range(1, 6)}
+
+        async def upload():
+            form = FormData()
+            form.add_field("data", json.dumps({"uid": "phone-1", "name": "Ali Valiyev", "variant": "A", "answers": answers}))
+            response = await self.client.post(f"/api/teacher/test/{r['id']}/scan/upload", data=form)
+            return response.status, await response.json()
+
+        status, first = await upload()
+        self.assertEqual(status, 200)
+        webapp._UPLOADED.clear()
+        webapp._STUDENT_OF.clear()  # server qayta ishga tushdi — xotira bo'sh
+        status, again = await upload()
+        self.assertEqual((status, again), (200, first))
+        self.assertEqual(len(db.list_attempts(r["id"])), 1)
+
+    async def test_essay_pin(self):
+        import sheet
+        _, r = await self.create("offline", fmt="milliy")
+        test = db.get_test(r["id"])
+        db.add_students(test["id"], ["Ali Valiyev"], ["A"], [7])
+        pin = sheet.essay_pin(test["id"], 7)
+        self.assertRegex(pin, r"^\d{4}$")
+        self.assertEqual(pin, sheet.essay_pin(test["id"], 7))
+        essay = {"number": "0007", "essay": "so'z " * 40}
+        # Begona akkaunt kodsiz egallab oladi
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay", {**essay, "name": "Hacker Boy"}))[0], 200)
+        # Haqiqiy egasi: noto'g'ri kod — 400; kodsiz — 409; to'g'ri kod — o'zi oladi
+        self.user = {"id": STUDENT, "name": "Ali", "username": None}
+        wrong = "0000" if pin != "0000" else "1111"
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay", {**essay, "name": "Ali Valiyev", "pin": wrong}))[0], 400)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay", {**essay, "name": "Ali Valiyev"}))[0], 409)
+        self.bot.messages.clear()
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay", {**essay, "name": "Ali Valiyev", "pin": pin}))[0], 200)
+        row = db.get_offline_essay(test["id"], 7)
+        self.assertEqual((row["tg_id"], row["verified"]), (STUDENT, 1))
+        self.assertTrue(any(c == OTHER for c, _ in self.bot.messages))  # begonaga xabar
+        # Endi begona kod bilan ham olib qo'ya olmaydi (kodni bilmaydi), kodsiz — 409
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay", {**essay, "name": "Hacker Boy"}))[0], 409)
+        page = await self._teacher_page(test["id"])
+        self.assertTrue(page["offline_essays"][0]["verified"])
+
+    async def _teacher_page(self, test_id):
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        return await (await self.client.get(f"/api/teacher/test/{test_id}")).json()
+
+    def test_sheet_prints_pin(self):
+        import sheet
+        test = db.create_test(OWNER, "Mock", "milliy", 45, structure.build_items("milliy"), {"A": {}})
+        drawn = []
+
+        class Canvas:
+            def __getattr__(self, name):
+                return lambda *a, **k: drawn.append(a)
+        sheet.draw_answer_page(Canvas(), test, ["A"], {"number": 7, "name": "Ali"})
+        texts = " ".join(str(x) for args in drawn for x in args)
+        self.assertIn(f"Esse kodi: {sheet.essay_pin(test['id'], 7)}", texts)
 
 
 class Names(unittest.TestCase):

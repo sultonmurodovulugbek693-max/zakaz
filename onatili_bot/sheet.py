@@ -16,6 +16,8 @@ Varaq tuzilishi:
 Koordinatalar punktlarda; doirachalar PDF tizimida (y pastdan), kataklar — tepadan.
 """
 
+import hashlib
+import hmac
 import io
 import math
 
@@ -25,6 +27,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
 from structure import ESSAY_MAX, LETTERS, choice_items, format_title, text_items
+
+
+def essay_pin(test_id: int, number: int) -> str:
+    """Shaxsiy titulda ID yonida chop etiladigan 4 xonali esse kodi. Bot tokenidan hisoblanadi (bazada saqlanmaydi):
+    begona odam o'quvchining ID'sini bilsa ham, kodni bilmasdan uning nomidan esse yubora olmaydi."""
+    from config import BOT_TOKEN
+    digest = hmac.new(f"essay:{BOT_TOKEN}".encode(), f"{test_id}:{number}".encode(), hashlib.sha256).hexdigest()
+    return f"{int(digest[:8], 16) % 10000:04d}"
 
 W, H = A4
 CORNER, CORNER_SIZE = 32, 14
@@ -202,6 +212,9 @@ def draw_answer_page(c: canvas.Canvas, test: dict, variant_names: list[str], stu
     if student:
         c.setFont("Sans-Bold", 11)
         c.drawString(410, H - 104, f"ID: {student['number']:0{ID_DIGITS}d}")
+        if test["fmt"] == "milliy" and test.get("id"):  # esse botda yoziladi — ID bilan birga shu kod so'raladi
+            c.setFont("Sans", 8.5)
+            c.drawString(410, H - 117, f"Esse kodi: {essay_pin(test['id'], student['number'])}")
 
     # ID: tepada raqam kataklari, ostida har raqam uchun 0–9 ustuni
     digits = f"{student['number']:0{ID_DIGITS}d}" if student else None

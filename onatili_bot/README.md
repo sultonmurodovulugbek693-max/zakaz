@@ -48,6 +48,9 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   Bitta Telegram akkaunt — bitta ID; baholangan esse o'zgartirilmaydi.
   O'qituvchi «📝 Esselar»da botda yozilgan esselarni ko'radi: ID, yozilgan ism (ro'yxatdagidan farq qilsa — ⚠️),
   yuborgan Telegram akkaunt. Begona/xato ID bilan yuborilgan esseni 🗑 bilan bekor qiladi — ID bo'shaydi, egasi qayta yuboradi.
+  **Esse kodi**: shaxsiy titulda ID yonida 4 xonali kod chop etiladi. O'quvchi esse yuborayotganda uni yozsa, esse
+  «🔐 kod bilan» tasdiqlanadi: begona akkaunt kodsiz egallagan ID'ni egasi kod bilan qaytarib oladi, tasdiqlangan
+  esseni esa boshqa akkaunt almashtira olmaydi. Bo'sh (ismsiz) titulda kod yo'q — u yerda o'qituvchi nazorati qoladi.
 - **Oflayn skaner** (ilovada yoki Mini App'da):
   1. Titul ramkada qimirlamay tursa — telefonning o'zida o'qiladi va **telefon xotirasiga** saqlanadi
      (~1–2 soniya, internet shart emas). Keyingi titulni ustiga qo'yavering.

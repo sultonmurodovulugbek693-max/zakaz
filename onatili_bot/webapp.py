@@ -577,6 +577,8 @@ async def send_created_pdfs(chat_id: int, test: dict) -> tuple[list[str], str | 
         try:
             await job()
             sent.append(kind)
+            if kind == "sheets":
+                await run(db.mark_sheets_sent, test["id"])
         except Exception as exc:
             logger.exception("Yangi test PDF'i (%s) yuborilmadi: test %s", kind, test["id"])
             error = send_error_text(exc)
@@ -646,6 +648,7 @@ async def teacher_test(request: web.Request) -> web.Response:
                  "theme": test.get("theme") or "classic", "variants": list(keys), "created_at": test["created_at"],
                  "essay_topic": test.get("essay_topic"), "max_points": max_points(test["items"], test["fmt"]),
                  "channels": public_channels(test["channels"]), "mode": test.get("mode") or "online",
+                 "sheets_sent": bool(test.get("sheets_sent")),
                  "sheet_style": sheet_styles.style_of(test)},
         "sheet_styles": sheet_styles.STYLES,
         "students": [student_view(s, pupils) for s in await run(db.list_students, test["id"])],
@@ -669,6 +672,7 @@ async def announce(request: web.Request) -> web.Response:
         raise ApiError(400, "Hali hech kim javob yubormagan")
     # Test darhol yopiladi, xabarlar fonda ketadi: 300 o'quvchida ham so'rov kutib qolmaydi (tugagach bot xabar beradi)
     await run(db.set_closed, test["id"], True)
+    await run(db.set_announcing, test["id"], True)
     queued = sum(1 for a in attempts if a["tg_id"] > 0 and not a.get("notified"))
     task = asyncio.create_task(HOOKS["announce"]({**test, "closed": 1}, user["id"]))
     _BACKGROUND.add(task)
@@ -1420,7 +1424,12 @@ async def sheets(request: web.Request) -> web.Response:
         students = [s for s in students if s["id"] in wanted]
     if not students and not blanks:
         raise ApiError(400, "Titul tanlanmadi")
-    await HOOKS["send_sheets"](user["id"], test, students, blanks)
+    try:
+        await HOOKS["send_sheets"](user["id"], test, students, blanks)
+    except Exception as exc:
+        logger.exception("Titullar yuborilmadi: test %s", test["id"])
+        raise ApiError(502, send_error_text(exc))
+    await run(db.mark_sheets_sent, test["id"])
     return ok({"ok": True, "pages": len(students) + blanks})
 
 
@@ -1615,19 +1624,34 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
     name = " ".join(str(payload.get("name") or "").split())[:60]
     if len(name) < 3:
         raise ApiError(400, "Ism va familiyangizni to'liq yozing")
+    # Esse kodi (shaxsiy titulda ID yonida): to'g'ri bo'lsa — esse shu ID egasiniki deb tasdiqlanadi
+    pin = "".join(ch for ch in str(payload.get("pin") or "") if ch.isdigit())
+    if pin and pin != sheet.essay_pin(test["id"], number):
+        raise ApiError(400, "Esse kodi noto'g'ri — titulingizda ID yonida yozilgan 4 ta raqam")
+    verified = bool(pin)
     await run(db.remember_user, user["id"], user["name"], user.get("username"))  # o'qituvchi kim yuborganini ko'radi
     mine = await run(db.offline_essay_of_user, test["id"], user["id"])
     if mine and mine["number"] != number:
         raise ApiError(409, f"Siz bu testga ID {mine['number']:04d} bilan esse yuborgansiz — ID'ni o'zgartirib bo'lmaydi")
     existing = await run(db.get_offline_essay, test["id"], number)
+    takeover = False
     if existing and existing["tg_id"] != user["id"]:
-        raise ApiError(409, f"ID {number:04d} bilan esse boshqa akkauntdan yuborilgan — ID'ingizni tekshiring "
-                            "yoki o'qituvchingizga ayting")
+        if verified and not existing.get("verified"):
+            takeover = True  # kodsiz yuborgan begona akkaunt — egasi kod bilan o'z ID'sini qaytarib oladi
+        else:
+            raise ApiError(409, f"ID {number:04d} bilan esse boshqa akkauntdan yuborilgan — "
+                                + ("titulingizdagi esse kodini ham yozing" if not verified else "o'qituvchingizga ayting"))
     student = await run(db.get_student, test["id"], None, number)
     attempt = await run(db.get_attempt, student["attempt_id"]) if student and student["attempt_id"] else None
     if attempt and attempt["essay"] is not None:
         raise ApiError(409, "Essengiz allaqachon baholangan — o'zgartirib bo'lmaydi")
-    await run(db.save_offline_essay, test["id"], number, user["id"], name, text)
+    await run(db.save_offline_essay, test["id"], number, user["id"], name, text, verified)
+    if takeover and "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](existing["tg_id"], f"⚠️ <b>{html.escape(test['title'])}</b>: ID {number:04d} bilan yuborgan "
+                                     "essengiz bekor qilindi — bu ID egasi esse kodi bilan yubordi. ID'ingizni tekshiring.")
+        except Exception:
+            logger.warning("Esse egasi o'zgargani haqida xabar yuborilmadi", exc_info=True)
     linked = bool(attempt) and await link_offline_essay(test, number, attempt["id"])
     return ok({"ok": True, "number": number, "words": len(text.split()), "linked": linked,
                "name": student["name"] if student else name})
@@ -1657,7 +1681,7 @@ def offline_essay_view(row: dict) -> dict:
             "name_ok": names_match(row["name"], row["roster_name"]),
             "account": row["tg_name"] or "Foydalanuvchi", "username": row["username"],
             "words": len((row["text"] or "").split()), "created_at": row["created_at"],
-            "linked": bool(row["attempt_id"]), "score": row["score"]}
+            "linked": bool(row["attempt_id"]), "score": row["score"], "verified": bool(row.get("verified"))}
 
 
 async def offline_essay_delete(request: web.Request) -> web.Response:
@@ -1763,8 +1787,12 @@ async def scan_upload(request: web.Request) -> web.Response:
     uid = str(payload.get("uid") or "")[:64]
     if uid and uid in _UPLOADED:
         return ok(_UPLOADED[uid])
-    if uid in _STUDENT_OF:  # oldingi urinishda o'quvchi yaratilgan, keyin xato bo'lgan — ikkinchi nusxa ochilmasin
-        payload = {**payload, "student_id": _STUDENT_OF[uid], "name": None}
+    previous = await run(db.get_upload, uid, test["id"]) if uid else None  # server qayta ishga tushgan bo'lsa ham
+    if previous and previous["response"]:
+        return ok(previous["response"])
+    if uid in _STUDENT_OF or (previous and previous["student_id"]):
+        # oldingi urinishda o'quvchi yaratilgan, keyin xato bo'lgan — ikkinchi nusxa ochilmasin
+        payload = {**payload, "student_id": _STUDENT_OF.get(uid) or previous["student_id"], "name": None}
 
     def part(field) -> bytes | None:
         if field is None or not hasattr(field, "file"):
@@ -1779,6 +1807,7 @@ async def scan_upload(request: web.Request) -> web.Response:
     attempt, student = await save_scanned(test, payload)
     if uid:
         _STUDENT_OF[uid] = student["id"]
+        await run(db.save_upload, uid, test["id"], student["id"])
     labels = [i["label"] for i in text_items(test["items"])]
     # O'qituvchi hamma yozma javobni o'zi kiritgan bo'lsa — AI kerak emas
     need_ai = [label for label in labels if not (payload.get("answers") or {}).get(label)]
@@ -1796,6 +1825,7 @@ async def scan_upload(request: web.Request) -> web.Response:
             _UPLOADED.clear()
             _STUDENT_OF.clear()
         _UPLOADED[uid] = response
+        await run(db.save_upload, uid, test["id"], student["id"], response)
     return ok(response)
 
 
@@ -1923,6 +1953,40 @@ async def health(_request: web.Request) -> web.Response:
     return web.Response(text="Bot ishlayapti")
 
 
+# So'rovlarni cheklash (IP bo'yicha, daqiqasiga). Maktab WiFi'sida 30+ o'quvchi bitta IP'dan kiradi —
+# shuning uchun umumiy chegara keng; kirish havolasi va og'ir (rasm) so'rovlar alohida, torroq
+RATE_LIMITS = [  # (yo'l boshlanishi, daqiqasiga)
+    ("/api/app/login", 30),
+    ("/api/teacher/test/", 600),
+    ("/api/", 1500),
+]
+_HITS: dict = {}
+
+
+def client_ip(request: web.Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return forwarded.split(",")[0].strip() or request.remote or "?"
+
+
+@web.middleware
+async def rate_limit(request: web.Request, handler):
+    path = request.path
+    if path.startswith("/api/"):
+        minute = int(time.time() // 60)
+        ip = client_ip(request)
+        for prefix, limit in RATE_LIMITS:
+            if path.startswith(prefix) and not (prefix == "/api/app/login" and request.method != "POST"):
+                key = (ip, prefix, minute)
+                _HITS[key] = _HITS.get(key, 0) + 1
+                if _HITS[key] > limit:
+                    return web.json_response({"error": "Juda ko'p so'rov — bir daqiqa kutib, qayta urinib ko'ring"}, status=429)
+                break
+        if len(_HITS) > 20000:  # eski daqiqalar
+            for key in [k for k in _HITS if k[2] < minute]:
+                _HITS.pop(key, None)
+    return await handler(request)
+
+
 @web.middleware
 async def errors(request: web.Request, handler):
     try:
@@ -1935,7 +1999,7 @@ async def errors(request: web.Request, handler):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[errors], client_max_size=14 * 1024 * 1024)
+    app = web.Application(middlewares=[rate_limit, errors], client_max_size=14 * 1024 * 1024)
     app.router.add_get("/", index)
     app.router.add_get("/app", index)
     app.router.add_get("/health", health)

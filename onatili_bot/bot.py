@@ -920,11 +920,22 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
         f"📨 <b>{esc(test['title'])}</b>: natijalar <b>{sent}</b> ta o'quvchiga yuborildi."
         + (f"\n📄 {offline} ta titul (qog'oz) natijasi — PDF'da." if offline else ""),
         reply_markup=app_markup("◈ Statistika", t=test["id"]))
+    await asyncio.to_thread(db.set_announcing, test["id"], False)
     try:
         await send_pdf(bot, owner_chat, test, "results")
     except Exception:
         logger.exception("Natijalar PDF'i yuborilmadi: test %s", test["id"])
     return sent
+
+
+async def resume_announcements(bot: Bot) -> None:
+    """Server e'lon o'rtasida qayta ishga tushgan bo'lsa — qolgan o'quvchilarga davom etadi (xabar olganlarga takror yo'q)."""
+    for test in await asyncio.to_thread(db.announcing_tests):
+        logger.info("E'lon davom ettirilmoqda: test %s", test["id"])
+        try:
+            await announce_test(bot, test, test["owner_id"])
+        except Exception:
+            logger.exception("E'lonni davom ettirib bo'lmadi: test %s", test["id"])
 
 
 async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> None:
@@ -1257,6 +1268,7 @@ async def main() -> None:
     logger.info("Bot ishga tushdi")
     tasks = [
         asyncio.create_task(essay_worker(bot)),   # AI navbati: yozma javoblar va esselar
+        asyncio.create_task(resume_announcements(bot)),  # tugamay qolgan e'lonlar
         asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
         asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
         asyncio.create_task(ops.plan_reminders(bot)),  # obuna tugashiga 3 va 1 kun qolganda — o'qituvchiga

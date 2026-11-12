@@ -306,6 +306,9 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .topbar:not([hidden]) ~ #app .tabs.bar { top: 48px; }
 .tabs.bar button { background: transparent; border-radius: 0; padding: 10px 12px; font-size: 14px; flex: 1 0 auto; box-shadow: inset 0 -2.5px 0 transparent; transition: color .2s, box-shadow .2s; }
 .tabs.bar button.on { background: transparent; color: var(--accent); box-shadow: inset 0 -2.5px 0 var(--accent); }
+.tabs.bar.more-right { -webkit-mask-image: linear-gradient(to right, #000 82%, transparent); mask-image: linear-gradient(to right, #000 82%, transparent); }
+.tabs.bar.more-left { -webkit-mask-image: linear-gradient(to left, #000 82%, transparent); mask-image: linear-gradient(to left, #000 82%, transparent); }
+.tabs.bar.more-left.more-right { -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent); }
 .tabs.bar .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: var(--warn); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
 .steps { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; counter-reset: st; }
 .steps li { list-style: none; display: grid; gap: 6px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.2; }
@@ -596,6 +599,18 @@ async function render(soft = false) {
   }
 }
 const rerender = () => render(true);
+// Bo'limlar qatori sig'masa: faol bo'lim ko'rinadigan joyga suriladi, chetida «yana bor» soyasi
+function bindTabStrip() {
+  const bar = document.querySelector(".tabs.bar"); if (!bar) return;
+  const mark = () => {
+    bar.classList.toggle("more-left", bar.scrollLeft > 4);
+    bar.classList.toggle("more-right", bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4);
+  };
+  const on = bar.querySelector(".on");
+  if (on) bar.scrollLeft = Math.max(0, on.offsetLeft - (bar.clientWidth - on.offsetWidth) / 2);
+  bar.addEventListener("scroll", mark, { passive: true });
+  mark();
+}
 // Foydalanuvchi biror narsa kiritayotgan yoki oyna ochiq: fonda kelgan ma'lumot uchun ekranni qayta chizmaymiz
 function userBusy() {
   if (document.querySelector(".sheet-modal")) return true;
@@ -1120,6 +1135,9 @@ function offlineEssay(t) {
         <input class="code-input" id="eid" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off" value="${sent ? pad3(sent.number) : esc(draft.id || "")}" ${sent ? "readonly" : ""}></div>
       <span class="muted small">Titulda 4 ta katakka yozgan va bo'yagan raqamingiz (masalan 0007). Xato bo'lsa — esse boshqa o'quvchiga tushadi.</span>
       <div class="field"><label for="ename">Ism va familiya</label><input class="input" id="ename" autocomplete="name" value="${esc(draft.name || (sent && sent.name) || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+      <div class="field"><label for="epin">Esse kodi <span class="muted">(titulda ID yonida bo'lsa)</span></label>
+        <input class="input" id="epin" inputmode="numeric" maxlength="4" placeholder="4 ta raqam" autocomplete="off" value="${esc(draft.pin || "")}"></div>
+      <span class="muted small">🔐 Kod bilan yuborilgan esseni ID'ingizni bilgan boshqa odam almashtira olmaydi.</span>
     </div>
     <div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
     <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
@@ -1129,7 +1147,9 @@ function offlineEssay(t) {
   </div>`;
   const idEl = document.getElementById("eid"), nameEl = document.getElementById("ename"), essayEl = document.getElementById("essay");
   const words = () => (essayEl.value.trim() ? essayEl.value.trim().split(/\s+/).length : 0);
-  const save = () => store(draftKey, JSON.stringify({ id: idEl.value, name: nameEl.value, essay: essayEl.value }));
+  const pinEl = document.getElementById("epin");
+  const save = () => store(draftKey, JSON.stringify({ id: idEl.value, name: nameEl.value, pin: pinEl.value, essay: essayEl.value }));
+  pinEl.oninput = () => { pinEl.value = pinEl.value.replace(/\D/g, "").slice(0, 4); save(); };
   const count = () => { const n = words(); document.getElementById("essay-count").textContent = `${n} so'z${n < 30 ? " · kamida 30" : ""}`; };
   idEl.oninput = () => { idEl.value = idEl.value.replace(/\D/g, "").slice(0, 4); save(); };
   nameEl.oninput = save;
@@ -1143,7 +1163,7 @@ function offlineEssay(t) {
     if (!sent && !(await confirmBox(`ID ${idEl.value} bilan yuborilsinmi?\n\nTituldagi ID bilan bir xil ekanini tekshiring — keyin o'zgartirib bo'lmaydi.`))) return;
     btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      const r = await api(`/api/test/${t.code}/essay`, { number: idEl.value, name: nameEl.value.trim(), essay: essayEl.value.trim() });
+      const r = await api(`/api/test/${t.code}/essay`, { number: idEl.value, name: nameEl.value.trim(), pin: pinEl.value, essay: essayEl.value.trim() });
       haptic("success");
       S.stack = []; S.current = { view: "home", params: {} }; showBack(false);
       $app.innerHTML = `<div class="view"><div class="card success">
@@ -1428,15 +1448,17 @@ VIEWS.teacher = async ({ id, tab }) => {
   // Yozma javoblar (36–44): skanerdagi rasmlarga qarab o'qituvchi belgilaydi — har savol bo'yicha
   const wr = d.written_review, writtenLeft = !!(wr && wr.done < wr.total);
   const steps = offline
-    ? [["Titul PDF", n > 0 || d.students.length > 0], ["Skaner", n > 0 && (!d.students.length || scanned >= d.students.length)], ...(wr ? [["Yozmalar", !writtenLeft]] : []), ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]]
+    ? [["Titul PDF", !!t.sheets_sent || n > 0], ["Skaner", n > 0 && (!d.students.length || scanned >= d.students.length)], ...(wr ? [["Yozmalar", !writtenLeft]] : []), ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]]
     : [["Kodni berish", n > 0], ["Javoblar", n > 0], ...(milliy ? [["Esselar", n > 0 && !essaysLeft]] : []), ["E'lon", !!t.closed]];
   const nowStep = t.closed ? -1 : steps.findIndex(s => !s[1]);
   const stepsHTML = `<ol class="steps">${steps.map(([label, done], i) => `<li class="${t.closed || done ? "done" : i === nowStep ? "now" : ""}">${label}</li>`).join("")}</ol>`;
   let next;
   if (t.closed) next = `<h2>📢 Natijalar e'lon qilindi</h2><p class="muted small">${n} ta o'quvchi natijasini oldi. Yangi javob qabul qilish uchun testni qayta oching.</p>
       <div class="row"><button class="btn ghost" id="reopen" style="flex:1">🔓 Qayta ochish</button><button class="btn" data-send="results" style="flex:1">📊 Natijalar PDF</button></div>`;
+  else if (!n && offline && t.sheets_sent) next = `<h2>Titullar botda — test o'tkazing</h2><p class="muted small">📨 Titul PDF'i Telegram chatingizda: chop etib tarqating. Test tugagach, bo'yalgan titullarni skanerlang.${d.students.length ? "" : " Shaxsiy titul kerak bo'lsa — «🗂 Ro'yxat»ga o'quvchilarni qo'shib, qayta chiqaring."}</p>
+      <button class="btn block" id="scan">${scanLabel()}</button><button class="btn ghost block" id="sheets">📄 Titullarni qayta chiqarish</button>`;
   else if (!n && offline) next = `<h2>Titullarni chiqaring va skanerlang</h2><p class="muted small">${d.students.length ? `${d.students.length} ta o'quvchiga shaxsiy titul tayyor.` : "Ro'yxat ixtiyoriy — bo'sh titullar ham chiqarish mumkin."} Test tugagach, titullarni telefon kamerasida skanerlang.</p>
-      <button class="btn block" id="scan">${scanLabel()}</button><button class="btn ghost block" id="sheets">📄 Titullarni chiqarish (PDF)</button>`;
+      <button class="btn block" id="sheets">📄 Titullarni chiqarish (PDF)</button><button class="btn ghost block" id="scan">${scanLabel()}</button>`;
   else if (!n) next = `<h2>O'quvchilarga kodni bering</h2><p class="muted small">Ular botga shu kodni yozib testni boshlaydi.</p>
       <div class="bigcode">${t.code}</div><button class="btn block" id="copy-code">Kodni nusxalash</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
   else if (writtenLeft) next = `<h2>✍️ Yozma javoblarni tekshiring</h2><p class="muted small">${wr.students} ta titul · ${wr.done} / ${wr.total} katak belgilangan. Har savol bo'yicha: o'quvchi yozgani rasmi va kalit yonma-yon — ✅ yoki ❌.</p>
@@ -1474,7 +1496,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
-  countUp($app); bindFlash();
+  countUp($app); bindFlash(); bindTabStrip();
   function preview(th) {
     const el = document.getElementById("preview"); if (!el) return;
     el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
@@ -1544,7 +1566,7 @@ function offlineEssaysHTML(list) {
     <span class="muted small">ID bo'yicha. Esse begona ID bilan yuborilgan bo'lsa (ism mos emas yoki o'quvchi «ID band» deyapti) — bekor qiling, egasi qayta yuboradi.</span>
     ${warn ? `<p class="small" style="color:var(--warn);margin:6px 0 0">⚠️ ${warn} ta esseda ism ro'yxatdagidan farq qiladi — tekshiring.</p>` : ""}
     <div class="list">${list.map(e => `<div class="item"${e.name_ok === false ? ` style="border-left:3px solid var(--warn)"` : ""}><span class="ico">${e.name_ok === false ? "⚠️" : "📝"}</span>
-      <span><b>ID ${pad3(e.number)} · ${esc(e.name || "ismsiz")}</b>
+      <span><b>ID ${pad3(e.number)} · ${esc(e.name || "ismsiz")}${e.verified ? ` <span class="pill-tag done" title="Tituldagi esse kodi bilan yuborilgan">🔐 kod bilan</span>` : ""}</b>
         <small>${e.roster_name ? `Ro'yxatda: ${esc(e.roster_name)}${e.name_ok === false ? " — mos emas" : ""} · ` : "Ro'yxatda yo'q · "}Akkaunt: ${esc(e.account)}${e.username ? ` (@${esc(e.username)})` : ""} · ${e.words} so'z${e.linked ? " · titulga biriktirilgan" : ""}</small></span>
       <button class="btn danger sm" data-oe-del="${e.number}" title="Bekor qilish">🗑</button></div>`).join("")}</div></div>`;
 }
@@ -2264,7 +2286,8 @@ function sheetsModal(t, students) {
   });
   modal.querySelector("#make").onclick = async () => {
     const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: students.length ? 0 : 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove(); }
+    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: students.length ? 0 : 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove();
+      if (!t.sheets_sent) { t.sheets_sent = true; if (S.current.view === "teacher") { S.useCache = true; rerender(); } } }
     catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "📄 PDF'ni chatga yuborish"; }
   };
 }
