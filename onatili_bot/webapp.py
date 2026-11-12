@@ -58,6 +58,7 @@ INIT_DATA_MAX_AGE = 24 * 3600
 ESSAY_MIN_CHARS = 200
 
 HOOKS: dict = {}  # bot.py to'ldiradi: record_attempt, announce, send_pdf
+_BACKGROUND: set = set()  # fondagi vazifalar (e'lon) — tugaguncha havola saqlanadi
 
 
 class ApiError(web.HTTPException):
@@ -122,6 +123,16 @@ async def body(request: web.Request) -> dict:
     return payload
 
 
+def to_int(value, default: int = 0, what: str = "Son") -> int:
+    """So'rovdagi son: noto'g'ri bo'lsa — 400 (500 emas)."""
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"{what} noto'g'ri")
+
+
 def run(fn, *args):
     return asyncio.to_thread(fn, *args)
 
@@ -148,14 +159,14 @@ async def bootstrap(request: web.Request) -> web.Response:
         return ok({"user": user, "subscribe": missing})
     attempts = await run(db.attempts_of_user, user["id"])
     tests = await run(db.list_tests, user["id"], 50)
+    all_totals = await run(db.owner_totals, user["id"]) if tests else {}
     teacher_tests = []
     for test in tests:
-        test_attempts = await run(db.list_attempts, test["id"])
-        totals = [total_points(a) for a in test_attempts]
+        totals = all_totals.get(test["id"], [])
         teacher_tests.append({
             "id": test["id"], "code": test["code"], "title": test["title"], "fmt": test["fmt"],
             "format": format_title(test["fmt"], test["count"]), "closed": bool(test["closed"]),
-            "students": len(test_attempts), "created_at": test["created_at"], "theme": test.get("theme") or "classic",
+            "students": len(totals), "created_at": test["created_at"], "theme": test.get("theme") or "classic",
             "mode": test.get("mode") or "online",
             "avg": round(sum(totals) / len(totals), 1) if totals else None,
             "max_points": max_points(test["items"], test["fmt"]),
@@ -322,8 +333,8 @@ async def ping(request: web.Request) -> web.Response:
     if not test or test["closed"] or (test.get("mode") or "online") == "offline":
         return ok({"ok": False})
     try:
-        total = max(0, min(int(payload.get("total") or 0), 500))
-        answered = max(0, min(int(payload.get("answered") or 0), total))
+        total = max(0, min(to_int(payload.get("total")), 500))
+        answered = max(0, min(to_int(payload.get("answered")), total))
     except (TypeError, ValueError):
         raise ApiError(400, "Noto'g'ri ma'lumot")
     name = " ".join(str(payload.get("name") or "").split())[:60]
@@ -350,6 +361,21 @@ async def live(request: web.Request) -> web.Response:
     return ok({"people": people, "closed": bool(test["closed"])})
 
 
+_RASCH_CACHE: dict = {}
+
+
+async def cached_rasch(test: dict, attempts: list[dict]) -> dict:
+    """Rasch — natijalar o'zgarmaguncha bir marta hisoblanadi: e'londan keyin yuzlab o'quvchi kartasini
+    bir vaqtda ochganda har biri uchun qayta hisoblanmaydi."""
+    state = json.dumps([(a["id"], a["wrong"], a["essay"], a.get("points")) for a in attempts], sort_keys=True)
+    key = (test["id"], hash(state))
+    if key not in _RASCH_CACHE:
+        if len(_RASCH_CACHE) > 200:
+            _RASCH_CACHE.clear()
+        _RASCH_CACHE[key] = await run(rasch_breakdown, test, attempts)
+    return _RASCH_CACHE[key]
+
+
 def key_display(test: dict, key: dict) -> dict:
     out = {}
     for item in test["items"]:
@@ -373,7 +399,7 @@ async def result(request: web.Request) -> web.Response:
     rasch = None
     if test["fmt"] == "milliy":
         all_attempts = await run(db.list_attempts, test["id"])
-        parts = (await run(rasch_breakdown, test, all_attempts)).get(attempt["id"])
+        parts = (await cached_rasch(test, all_attempts)).get(attempt["id"])
         if parts:  # umumiy = (test qismi + esse 75 ballik) / 2 — DTM tartibi
             rasch = {"score": parts["score"], "grade": parts["grade"], "test": parts["test"], "essay": parts["essay"]}
     essay = await run(db.get_essay, attempt["id"])
@@ -515,7 +541,7 @@ async def create_test(request: web.Request) -> web.Response:
     fmt = payload.get("fmt")
     if fmt not in ("milliy", "oddiy"):
         raise ApiError(400, "Test turini tanlang")
-    count = 45 if fmt == "milliy" else int(payload.get("count") or 0)
+    count = 45 if fmt == "milliy" else to_int(payload.get("count"), 0, "Savollar soni")
     if fmt == "oddiy" and not 5 <= count <= 100:
         raise ApiError(400, "Savollar soni 5–100 bo'lishi kerak")
     items = build_items(fmt, count)
@@ -636,10 +662,16 @@ async def announce(request: web.Request) -> web.Response:
     test = await own_test(request, user)
     if test["closed"]:
         raise ApiError(409, "Natijalar allaqachon e'lon qilingan")
-    if not await run(db.list_attempts, test["id"]):
+    attempts = await run(db.list_attempts, test["id"])
+    if not attempts:
         raise ApiError(400, "Hali hech kim javob yubormagan")
-    sent = await HOOKS["announce"](test, user["id"])
-    return ok({"ok": True, "sent": sent})
+    # Test darhol yopiladi, xabarlar fonda ketadi: 300 o'quvchida ham so'rov kutib qolmaydi (tugagach bot xabar beradi)
+    await run(db.set_closed, test["id"], True)
+    queued = sum(1 for a in attempts if a["tg_id"] > 0 and not a.get("notified"))
+    task = asyncio.create_task(HOOKS["announce"]({**test, "closed": 1}, user["id"]))
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    return ok({"ok": True, "queued": queued, "sent": queued})
 
 
 async def delete_test(request: web.Request) -> web.Response:
@@ -886,6 +918,11 @@ async def essays_confirm_all(request: web.Request) -> web.Response:
         if a["essay"] is None and essay and essay["status"] == "graded":
             await run(db.set_essay, a["id"], essay["ai_score"])
             count += 1
+            if HOOKS.get("essay_notice"):  # e'londan keyin tasdiqlansa — o'quvchiga yangi ball
+                try:
+                    await HOOKS["essay_notice"](test, a, essay["ai_score"])
+                except Exception:
+                    logger.warning("Esse bahosi o'quvchiga yuborilmadi", exc_info=True)
     return ok({"ok": True, "count": count})
 
 
@@ -1242,7 +1279,7 @@ async def students_from_class(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
-    cls = await run(db.get_class, int(payload.get("class_id") or 0))
+    cls = await run(db.get_class, to_int(payload.get("class_id"), 0, "Sinf"))
     if not cls or cls["owner_id"] != user["id"]:
         raise ApiError(404, "Sinf topilmadi")
     pupils = await run(db.list_class_students, cls["id"])
@@ -1349,7 +1386,7 @@ async def sheets(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
-    blanks = max(0, min(200, int(payload.get("blanks", 1) or 0)))  # bo'sh titul — printerda ko'paytiriladi
+    blanks = max(0, min(200, to_int(payload.get("blanks", 1), 0, "Bo'sh titullar soni")))  # bo'sh titul — printerda ko'paytiriladi
     if payload.get("only") is None and await run(db.list_students, test["id"]):
         blanks = 0  # ro'yxat bor — faqat shaxsiy titullar, qo'shimcha bo'sh titulsiz
     style = payload.get("style")
@@ -1366,7 +1403,9 @@ async def sheets(request: web.Request) -> web.Response:
         test = {**test, "sheet_style": style}
     students = await run(db.list_students, test["id"])
     if payload.get("only"):
-        students = [s for s in students if s["id"] in set(payload["only"])]
+        only = payload["only"] if isinstance(payload["only"], list) else []
+        wanted = {to_int(x, 0, "O'quvchi") for x in only}
+        students = [s for s in students if s["id"] in wanted]
     if not students and not blanks:
         raise ApiError(400, "Titul tanlanmadi")
     await HOOKS["send_sheets"](user["id"], test, students, blanks)
@@ -1483,7 +1522,7 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
         raise ApiError(400, "Variantni tanlang")
     student = None
     if payload.get("student_id"):
-        student = await run(db.get_student, test["id"], int(payload["student_id"]))
+        student = await run(db.get_student, test["id"], to_int(payload["student_id"], 0, "O'quvchi"))
         if not student:
             raise ApiError(404, "O'quvchi topilmadi")
         if student["attempt_id"]:
@@ -1550,6 +1589,7 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
     name = " ".join(str(payload.get("name") or "").split())[:60]
     if len(name) < 3:
         raise ApiError(400, "Ism va familiyangizni to'liq yozing")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))  # o'qituvchi kim yuborganini ko'radi
     mine = await run(db.offline_essay_of_user, test["id"], user["id"])
     if mine and mine["number"] != number:
         raise ApiError(409, f"Siz bu testga ID {mine['number']:04d} bilan esse yuborgansiz — ID'ni o'zgartirib bo'lmaydi")
@@ -1732,7 +1772,7 @@ async def scan_upload_done(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
-    count = lambda key: max(0, min(10000, int(payload.get(key) or 0)))
+    count = lambda key: max(0, min(10000, to_int(payload.get(key))))
     status = await run(db.written_status, test["id"])
     if "scan_batch_notice" in HOOKS and count("saved"):
         try:

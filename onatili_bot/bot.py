@@ -21,7 +21,7 @@ import time
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -359,6 +359,10 @@ async def receipt_received(message: Message) -> None:
     if not payment:
         await message.answer("🧾 Chek qabul qilinmadi: avval ilovadagi «💎 Obuna» tugmasidan muddatni tanlang.",
                              reply_markup=app_markup("💎 Obuna"))
+        return
+    if payment["status"] == "sent":  # chek allaqachon adminda — har rasm bilan adminlarni qayta bezovta qilmaymiz
+        await message.answer(f"⏳ Chekingiz allaqachon adminga yuborilgan · {plans.payment_title(payment)}.\n"
+                             "Tasdiqlanishini kuting. Chek xato bo'lsa — ilovada «💎 Obuna»dan to'lovni qaytadan boshlang.")
         return
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     await asyncio.to_thread(db.attach_receipt, payment["id"], file_id)
@@ -870,32 +874,56 @@ def result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None, mult
     return "\n".join(lines)
 
 
+async def send_with_retry(bot: Bot, chat_id: int, text: str, **kwargs) -> bool:
+    """Ko'p xabar ketma-ket yuborilganda Telegram «kuting» desa (flood) — aytilgan vaqt kutib, qayta yuboradi."""
+    for _ in range(3):
+        try:
+            await bot.send_message(chat_id, text, **kwargs)
+            return True
+        except TelegramRetryAfter as error:
+            await asyncio.sleep(error.retry_after + 1)
+        except Exception:
+            logger.warning("Xabar yuborilmadi: %s", chat_id)
+            return False
+    return False
+
+
+def announce_targets(attempts: list[dict]) -> list[dict]:
+    """E'londa xabar oladiganlar: Telegram'i bor (oflayn titul emas) va hali xabar olmaganlar."""
+    return [a for a in attempts if a["tg_id"] > 0 and not a.get("notified")]
+
+
 async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
-    """Natijalarni e'lon qilish: har bir qatnashchiga qisqa natija + ilovadagi natija kartasi."""
+    """Natijalarni e'lon qilish (fonda): har qatnashchiga qisqa natija + ilovadagi natija kartasi.
+    Qayta ochib yana e'lon qilinsa — avval xabar olganlarga takror yuborilmaydi."""
     await asyncio.to_thread(db.set_closed, test["id"], True)
     test["closed"] = 1
     attempts = await asyncio.to_thread(db.list_attempts, test["id"])
     rasch = await asyncio.to_thread(rasch_results, test, attempts) if test["fmt"] == "milliy" else {}
     multi_variant = len(await asyncio.to_thread(db.get_keys, test["id"])) > 1
     sent = 0
-    for attempt in attempts:
-        if attempt["tg_id"] < 0:  # oflayn (qog'ozdagi) o'quvchi — Telegram'i yo'q
-            continue
-        try:
-            await bot.send_message(
-                attempt["tg_id"],
-                f"📢 <b>Natijalar e'lon qilindi</b> · {esc(test['title'])}\n{LINE}\n"
-                f"{result_text(attempt, test, rasch.get(attempt['id']), multi_variant)}\n\n"
-                "Har bir savol tahlili, to'g'ri javoblar va natija kartasi — ilovada 👇",
-                reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
-            )
+    for attempt in announce_targets(attempts):
+        ok = await send_with_retry(
+            bot, attempt["tg_id"],
+            f"📢 <b>Natijalar e'lon qilindi</b> · {esc(test['title'])}\n{LINE}\n"
+            f"{result_text(attempt, test, rasch.get(attempt['id']), multi_variant)}\n\n"
+            "Har bir savol tahlili, to'g'ri javoblar va natija kartasi — ilovada 👇",
+            reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
+        )
+        if ok:
             sent += 1
-        except Exception:
-            logger.warning("Qatnashchiga xabar yuborilmadi: %s", attempt["tg_id"])
+            await asyncio.to_thread(db.mark_notified, attempt["id"])
         await asyncio.sleep(0.05)
-    await bot.send_message(owner_chat, f"📨 <b>{esc(test['title'])}</b>: natijalar <b>{sent}</b> ta o'quvchiga yuborildi.",
-                           reply_markup=app_markup("◈ Statistika", t=test["id"]))
-    await send_pdf(bot, owner_chat, test, "results")
+    offline = sum(1 for a in attempts if a["tg_id"] < 0)
+    await send_with_retry(
+        bot, owner_chat,
+        f"📨 <b>{esc(test['title'])}</b>: natijalar <b>{sent}</b> ta o'quvchiga yuborildi."
+        + (f"\n📄 {offline} ta titul (qog'oz) natijasi — PDF'da." if offline else ""),
+        reply_markup=app_markup("◈ Statistika", t=test["id"]))
+    try:
+        await send_pdf(bot, owner_chat, test, "results")
+    except Exception:
+        logger.exception("Natijalar PDF'i yuborilmadi: test %s", test["id"])
     return sent
 
 

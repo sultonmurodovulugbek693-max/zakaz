@@ -129,6 +129,35 @@ html.dark .quick-action i { background: #20302a; }
 
 /* Asosiy amal kartalari (bosh sahifada) */
 .big-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* Bosh sahifa: «Testlarim» — ikki ustunli kartochkalar, tepada holat rangi */
+.tests-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.tests-head h2 { margin: 0; font-family: var(--font-display); font-size: 21px; }
+.tests-head .muted { font-size: 13px; }
+.seg { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 8px 13px; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background .2s, color .2s, border-color .2s; }
+.seg button i { font-style: normal; opacity: .6; margin-left: 4px; font-weight: 700; }
+.seg button.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.seg button.on i { opacity: .8; }
+.tgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 340px) { .tgrid { grid-template-columns: 1fr; } }
+.tcard { position: relative; display: grid; gap: 8px; align-content: start; padding: 16px 14px 13px; border-radius: 22px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--ink); cursor: pointer; text-align: left; overflow: hidden; transition: transform .15s, border-color .2s; min-width: 0; }
+.tcard::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: var(--warn); }
+.tcard.is-done::before { background: var(--good); }
+.tcard:active { transform: scale(.97); }
+.tcard:hover, .tcard:focus-visible { border-color: var(--accent); }
+.tcard .t-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tcard .t-mode { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tcard .t-title { font-weight: 700; font-size: 15px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; min-height: 2.5em; }
+.tcard .t-code { justify-self: start; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 800; font-size: 13px; letter-spacing: .08em; padding: 5px 10px; border-radius: 10px; cursor: copy; }
+.tcard .t-stats { display: flex; gap: 10px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.tcard .t-stats b { color: var(--ink); font-weight: 700; }
+.tcard .t-status { font-size: 12px; font-weight: 700; color: color-mix(in srgb, var(--warn) 80%, var(--ink)); }
+.tcard.is-done .t-status { color: var(--good); }
+.tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
+.tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
+.tests-more { justify-self: center; }
+
 .big-act { display: grid; gap: 6px; justify-items: start; text-align: left; padding: 18px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; font: inherit; transition: transform .15s, border-color .2s; }
 .big-act:active { transform: scale(.97); }
 .big-act:hover, .big-act:focus-visible { border-color: var(--accent); }
@@ -475,12 +504,19 @@ function relogin(json) {
   S.boot = null; S.stack = []; S.current = { view: "appLogin", params: {} }; render();
 }
 
+// Eskirgan ekranning javobi: hech qachon tugamaydigan va'da — kech kelgan ma'lumot yangi ekran ustiga chizilmaydi
+const STALE = () => new Promise(() => {});
+
 async function api(path, data) {
   const opts = { headers: authHeaders() };
   if (data !== undefined) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
+  // GET — ekran uchun ma'lumot. Javob kelguncha foydalanuvchi boshqa sahifaga o'tgan bo'lsa (yangi render),
+  // eski ekranning davomi to'xtatiladi. POST (amal) — har doim oxirigacha: natijasi yo'qolmasin
+  const seq = S.seq, view = data === undefined;
   let res;
-  try { res = await fetch(path, opts); } catch (e) { throw new Error("Internet aloqasi yo'q"); }
+  try { res = await fetch(path, opts); } catch (e) { if (view && seq !== S.seq) return STALE(); throw new Error("Internet aloqasi yo'q"); }
   const json = await res.json().catch(() => ({}));
+  if (view && seq !== S.seq) return STALE();
   if (res.status === 403 && json.subscribe) {  // majburiy obuna — kanallar ekraniga
     S.boot = { subscribe: json.subscribe, user: (S.boot && S.boot.user) || { name: "" } };
     S.stack = []; S.current = { view: "home", params: {} }; render();
@@ -533,11 +569,14 @@ function back() { if (S.stack.length) { S.current = S.stack.pop(); render(); } e
 // soft = true — shu sahifaning o'zini yangilash (amal, bo'lim almashtirish): eski ekran joyida turadi,
 // yuklanish kartalari, tepaga sakrash va kirish animatsiyalari bo'lmaydi
 async function render(soft = false) {
+  S.seq = (S.seq || 0) + 1;  // har chizishning raqami — eskirgan chizishlar api() da to'xtatiladi
+  const seq = S.seq;
   clearInterval(S.liveTimer); clearInterval(S.pingTimer);
   stopCamera();
   // Fokusdagi maydon o'chirilayotganda «change» chiqarib, chizish ichida yana chizishni boshlamasin
   if ($app.contains(document.activeElement)) document.activeElement.blur();
   const y = window.scrollY;
+  if (!soft) document.querySelectorAll(".sheet-modal").forEach(m => m.remove());  // boshqa sahifaga o'tildi — eski oyna qolmasin
   S.soft = soft; $app.classList.toggle("soft", soft);
   if (!soft) window.scrollTo(0, 0);
   const { view, params } = S.current;
@@ -546,17 +585,25 @@ async function render(soft = false) {
   const home = APP && !(tg && tg.initData) ? VIEWS.appHome : VIEWS.home;
   try { await (view === "home" ? home : VIEWS[view] || home)(params); }
   finally {
+    if (seq !== S.seq) return;  // shu orada boshqa sahifa ochildi — panel va scroll uniki
     paintTabs(view);
     if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
     S.soft = false;
   }
 }
 const rerender = () => render(true);
+// Foydalanuvchi biror narsa kiritayotgan yoki oyna ochiq: fonda kelgan ma'lumot uchun ekranni qayta chizmaymiz
+function userBusy() {
+  if (document.querySelector(".sheet-modal")) return true;
+  const el = document.activeElement;
+  if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+  return [...$app.querySelectorAll("input:not([readonly]), textarea:not([readonly])")].some(x => x.type !== "checkbox" && x.type !== "radio" && x.value !== x.defaultValue);
+}
 
 // ---------- Pastki navigatsiya ----------
 // Asosiy bo'limlar har doim bir bosishda; ichki ekranlarda (test yechish, yaratish, skaner) panel yashiriladi
 const TABS = {
-  teacher: [["home", "🏠", "Bosh"], ["tests", "📝", "Testlar"], ["results", "📊", "Natijalar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"]],
+  teacher: [["home", "🏠", "Bosh"], ["results", "📊", "Natijalar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
 };
 function paintTabs(view) {
@@ -748,6 +795,64 @@ const testItem = t => `<div class="item test-item ${t.closed ? "is-done" : "is-o
       <span class="pill-tag ${t.closed ? "done" : "wait"}" style="display:inline-block;margin-top:5px">${t.closed ? "E'lon qilingan" : "Javob yig'ilmoqda"}</span></span>
     <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`;
 
+// Bosh sahifadagi test kartochkasi (o'qituvchi): holat rangi, kod (bosilsa nusxa), qatnashchilar va o'rtacha
+const testTile = t => `<div class="tcard test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" data-kind="${t.closed ? "done" : "open"} ${t.mode === "offline" ? "offline" : "online"}" role="button" tabindex="0">
+    <div class="t-top"><span class="t-mode">${t.mode === "offline" ? "📄 Oflayn" : "📱 Onlayn"}</span>
+      <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>
+    <div class="t-title">${esc(t.title)}</div>
+    <button type="button" class="t-code" data-copy-code="${t.code}" title="Kodni nusxalash">${t.code}</button>
+    <div class="t-stats"><span>👥 <b>${t.students}</b></span>${t.avg != null ? `<span>o'rt. <b>${num(t.avg)}</b></span>` : ""}</div>
+    <span class="t-status">${t.closed ? "✓ E'lon qilingan" : t.students ? "● Javob yig'ilmoqda" : "○ Javob kutilmoqda"}</span>
+    ${!t.closed && t.mode === "offline" ? `<button type="button" class="t-scan" data-scan-test="${t.id}">📷 Skaner</button>` : ""}</div>`;
+
+const TEST_SEGS = [["all", "Hammasi"], ["open", "Ochiq"], ["done", "E'lon qilingan"], ["online", "Onlayn"], ["offline", "Oflayn"]];
+const TESTS_SHOWN = 6;
+
+function myTestsHTML(tests) {
+  if (!tests.length) return `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b>
+      <span>Yuqoridagi «Onlayn test» yoki «Oflayn test»ni bosing — bir necha daqiqada tayyor.</span></div>`;
+  const seg = S.testSeg || "all", count = k => k === "all" ? tests.length : tests.filter(t => testKind(t).includes(k)).length;
+  return `<div class="tests-head" id="my-tests"><h2>Testlarim</h2><span class="muted" id="tests-count">${tests.length} ta</span></div>
+    ${tests.length > 4 ? `<input class="input" id="t-find" placeholder="🔎 Test nomi yoki kodi" value="${esc(S.testFilter || "")}" autocomplete="off" enterkeyhint="search">` : ""}
+    ${tests.length > 2 ? `<div class="seg" role="tablist">${TEST_SEGS.filter(([k]) => k === "all" || count(k)).map(([k, label]) =>
+      `<button type="button" role="tab" class="${seg === k ? "on" : ""}" data-seg="${k}">${label}<i>${count(k)}</i></button>`).join("")}</div>` : ""}
+    <div class="tgrid">${tests.map(testTile).join("")}</div>
+    <button type="button" class="btn plain tests-more" id="tests-more" hidden></button>`;
+}
+const testKind = t => `${t.closed ? "done" : "open"} ${t.mode === "offline" ? "offline" : "online"}`;
+
+// Filtr, qidiruv va «yana ko'rsatish» — ekranni qayta chizmasdan (faqat kartochkalar ko'rinadi/yashiriladi)
+function bindMyTests() {
+  const tiles = [...document.querySelectorAll(".tcard[data-test]")];
+  if (!tiles.length) return;
+  const find = document.getElementById("t-find"), more = document.getElementById("tests-more"), countEl = document.getElementById("tests-count");
+  const apply = () => {
+    const seg = S.testSeg || "all", needle = (S.testFilter || "").trim().toLowerCase();
+    const hits = tiles.filter(el => (seg === "all" || el.dataset.kind.includes(seg)) && (!needle || el.textContent.toLowerCase().includes(needle)));
+    const limit = S.testsAll || needle ? hits.length : TESTS_SHOWN;
+    tiles.forEach(el => { el.hidden = true; });
+    hits.forEach((el, i) => { el.hidden = i >= limit; });
+    if (countEl) countEl.textContent = `${hits.length} ta`;
+    if (more) { more.hidden = hits.length <= limit; more.textContent = `Yana ${hits.length - limit} ta ko'rsatish ↓`; }
+  };
+  document.querySelectorAll("[data-seg]").forEach(x => x.onclick = () => {
+    S.testSeg = x.dataset.seg; haptic("select");
+    document.querySelectorAll("[data-seg]").forEach(y => y.classList.toggle("on", y === x)); apply();
+  });
+  if (find) find.oninput = () => { S.testFilter = find.value; apply(); };
+  if (more) more.onclick = () => { S.testsAll = true; haptic("light"); apply(); };
+  document.querySelectorAll("[data-copy-code]").forEach(x => x.onclick = e => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(x.dataset.copyCode).then(() => { toast(`Kod ${x.dataset.copyCode} nusxalandi`); haptic("success"); }, () => toast(x.dataset.copyCode));
+  });
+  document.querySelectorAll("[data-scan-test]").forEach(x => x.onclick = e => {
+    e.stopPropagation(); haptic("light");
+    const t = S.boot.tests.find(y => String(y.id) === x.dataset.scanTest);
+    tg && tg.initData ? appScanModal(t) : go("scan", { id: t.id });
+  });
+  apply();
+}
+
 // Bo'lim ekranlarining umumiy «qobig'i»: tepada sarlavha, ichida ro'yxat
 async function boot() {
   if (!S.boot) { loading(); try { S.boot = await api("/api/bootstrap"); } catch (e) { fail(e); return null; } }
@@ -777,8 +882,8 @@ VIEWS.home = async () => {
       <div class="hero-stats">${stats.map(([n, label, sun]) => `<div class="hero-stat ${sun ? "is-sun" : ""}"><b>${n}</b><small>${label}</small></div>`).join("")}</div>
     </section>`;
   // Bosh sahifa — asosiy amal; ro'yxatlarning to'lig'i pastki paneldagi alohida bo'limlarda
-  const recent = role === "student" ? b.attempts.slice(0, 4) : b.tests.slice(0, 4);
-  const recentHTML = recent.map(role === "student" ? attemptItem : testItem).join("");
+  const recent = role === "student" ? b.attempts.slice(0, 4) : [];
+  const recentHTML = recent.map(attemptItem).join("");
   $app.innerHTML = `<div class="view">${top}
     ${role === "student" ? `
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
@@ -792,13 +897,11 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>
-      ${planCard(b.plan)}
-      ${recent.length ? `<div class="section-title"><h2>So'nggi testlar</h2>
-        <button type="button" class="btn plain sm" data-go="tests">Hammasi · ${b.tests.length} ›</button></div>
-      <div class="list">${recentHTML}</div>` : `<div class="card empty"><div class="big">🗂</div><b>Hali test yo'q</b>
-        <span>Yuqoridagi «Onlayn test» yoki «Oflayn test»ni bosing — bir necha daqiqada tayyor.</span></div>`}`}
+      ${myTestsHTML(b.tests)}
+      ${planCard(b.plan)}`}
   </div>`;
-  bindHomeActions();
+  bindHomeActions(); bindMyTests();
+  if (S.scrollToTests) { S.scrollToTests = false; const el = document.getElementById("my-tests"); if (el) el.scrollIntoView({ block: "start" }); }
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); S.stack = []; rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => go("plan");
@@ -840,37 +943,9 @@ function bindHomeActions() {
 
 // ---------- Pastki paneldagi bo'limlar ----------
 
-VIEWS.tests = async () => {
-  const b = await boot(); if (!b) return;
-  if (S.role !== "teacher") return go("home", {}, true);
-  const q = (S.testFilter || "").trim().toLowerCase();
-  const list = b.tests.filter(t => !q || (t.title + " " + t.code).toLowerCase().includes(q));
-  $app.innerHTML = `<div class="view">
-    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Testlar</span>
-      <h1>Testlarim</h1></div></div>
-    <div class="big-acts">
-      <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi</small></button>
-      <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul va skaner</small></button>
-    </div>
-    ${b.tests.length > 5 ? `<input class="input" id="t-find" placeholder="🔎 Test nomi yoki kodi" value="${esc(S.testFilter || "")}" autocomplete="off">` : ""}
-    <div class="section-title"><h2>Hammasi</h2><span class="muted small" id="tests-count">${list.length} ta</span></div>
-    <div class="list">${list.map(testItem).join("") || `<div class="card empty"><div class="big">🗂</div><b>${q ? "Topilmadi" : "Hali test yo'q"}</b>
-      <span>${q ? "Boshqa nom yoki kod bilan qidiring." : "Yuqoridagi tugmalardan birini bosing."}</span></div>`}</div>
-  </div>`;
-  bindHomeActions();
-  document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
-  const find = document.getElementById("t-find");
-  if (find) find.oninput = () => {
-    const needle = find.value.trim().toLowerCase();
-    S.testFilter = find.value;
-    let shown = 0;
-    document.querySelectorAll("[data-test]").forEach(el => {
-      const hit = !needle || el.textContent.toLowerCase().includes(needle);
-      el.style.display = hit ? "" : "none";
-      if (hit) shown++;
-    });
-    const count = document.getElementById("tests-count"); if (count) count.textContent = `${shown} ta`;
-  };
+VIEWS.tests = async () => {  // «Testlar» endi bosh sahifada — eski havolalar u yerga, ro'yxat ochiq holda
+  S.scrollToTests = true; S.testsAll = true; S.stack = [];
+  return go("home", {}, true);
 };
 
 VIEWS.myresults = async () => {
@@ -1128,7 +1203,17 @@ VIEWS.result = async ({ id }) => {
   countUp($app);
 };
 
+// Test yaratish qoralamasi telefonda saqlanadi: ilova yopilib qolsa, kiritilgan kalitlar yo'qolmaydi
+const DRAFT_KEY = "createDraft";
+function loadDraft() {
+  try { const d = JSON.parse(store(DRAFT_KEY) || "null"); return d && d.keys && (d.title || Object.keys(d.keys.A || {}).length) ? d : null; } catch (e) { return null; }
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+document.addEventListener("visibilitychange", () => { if (document.hidden && S.saveDraft) S.saveDraft(); });
+
 VIEWS.create = async () => {
+  let restored = false;
+  if (!S.create) { const d = loadDraft(); if (d) { S.create = d; restored = true; } }
   const st = S.create || (S.create = { title: "", fmt: "milliy", count: 30, topic: "", theme: "classic", mode: "online", variants: ["A"], cur: "A", keys: { A: {} }, channels: [] });
   if (S.createMode) { st.mode = S.createMode; S.createMode = null; }  // bosh sahifadagi plitkadan
   st.channels = st.channels || [];
@@ -1138,6 +1223,8 @@ VIEWS.create = async () => {
   const key = st.keys.A || (st.keys.A = {});
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Yangi test</span><h1>Test yaratish</h1></div>
+    ${restored ? `<div class="flash" role="status"><span><b>📝 Oldingi qoralama tiklandi</b><br>${Object.keys(st.keys.A || {}).length} ta kalit kiritilgan edi — davom eting.</span>
+      <button type="button" class="btn plain sm" id="draft-clear" style="margin-left:auto">Tozalash</button></div>` : ""}
     <div class="card">
       <div class="field"><label for="title">Test nomi</label><input class="input" id="title" value="${esc(st.title)}" placeholder="Masalan: Mock №3 · 11-sinf"></div>
       <div class="field"><label>Turi</label><div class="chips">
@@ -1174,7 +1261,16 @@ VIEWS.create = async () => {
       if (parts.length) key[box.dataset.q] = parts.join(" | "); else delete key[box.dataset.q];
     });
   }
-  function counter() { const n = items.filter(i => i.kind === "choice" && key[i.label]).length; document.getElementById("key-count").textContent = `${n} / ${items.filter(i => i.kind === "choice").length}`; }
+  function counter() { const n = items.filter(i => i.kind === "choice" && key[i.label]).length; document.getElementById("key-count").textContent = `${n} / ${items.filter(i => i.kind === "choice").length}`; saveDraft(); }
+  function saveDraft() { if (S.create !== st) return; collect(); store(DRAFT_KEY, JSON.stringify(st)); }
+  S.saveDraft = saveDraft;
+  let draftTimer;
+  $app.firstElementChild.addEventListener("input", () => { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 400); });
+  const dc = document.getElementById("draft-clear");
+  if (dc) dc.onclick = async () => {
+    if (!(await confirmBox("Qoralamani tozalaysizmi? Kiritilgan kalitlar o'chadi."))) return;
+    clearDraft(); S.create = null; haptic("select"); rerender();
+  };
   bindBubbles(key, counter); counter();
   // «＋ Ma'nodosh qo'shish» — bitta maydon qo'shadi (ko'pi bilan 2 ta); ✕ — o'chiradi
   document.querySelectorAll(".wkey").forEach(box => {
@@ -1204,10 +1300,10 @@ VIEWS.create = async () => {
       const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
       if (st.mode === "offline") {  // titul: darhol test sahifasiga — titul chiqarish va skanerlash shu yerda
-        S.create = null; S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
+        S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
         return go("teacher", { id: res.id });
       }
-      S.create = null; S.boot = null; haptic("success");
+      S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; haptic("success");
       S.stack = [];
       $app.innerHTML = `<div class="view"><div class="card success">
         <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
@@ -1296,7 +1392,9 @@ VIEWS.teacher = async ({ id, tab }) => {
     const view = S.current;
     api(`/api/teacher/test/${id}`).then(fresh => {
       if (S.current !== view || JSON.stringify(fresh) === JSON.stringify(S.teacherCache.d)) return;
-      S.teacherCache = { id, d: fresh }; S.useCache = true; rerender();
+      S.teacherCache = { id, d: fresh };
+      if (userBusy()) return;  // yozayotgan / oyna ochiq — ekran sakramasin, yangi ma'lumot keyingi chizishda
+      S.useCache = true; rerender();
     }).catch(() => {});
   }
   if (!d) { try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); } S.teacherCache = { id, d }; }
@@ -1400,7 +1498,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     if (!n) { toast("Hali hech kim javob yubormagan"); return; }
     if (!(await confirmBox(`${n} ta o'quvchiga natijalar yuborilsinmi?${waiting ? `\n\n⚠️ ${waiting} ta esse hali tasdiqlanmagan.` : ""}${wPending ? `\n\n⏳ ${wPending} ta titulda yozma javoblarni AI hali o'qimoqda.` : ""}${writtenLeft ? `\n\n✍️ ${wr.total - wr.done} ta yozma katak hali belgilanmagan — ular noto'g'ri hisoblanadi.` : ""}\n\nJavob qabul qilish to'xtaydi.`))) return;
     an.disabled = true; an.textContent = "Yuborilmoqda…";
-    try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(`📢 ${res.sent} ta o'quvchiga yuborildi`); S.boot = null; rerender(); }
+    try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(res.queued ? `📢 ${res.queued} ta o'quvchiga natija yuborilmoqda — tugagach bot xabar beradi` : "📢 Natijalar e'lon qilindi"); S.boot = null; rerender(); }
     catch (e) { toast(e.message); an.disabled = false; an.textContent = "📢 Natijalarni e'lon qilish"; }
   };
   const ro = document.getElementById("reopen");

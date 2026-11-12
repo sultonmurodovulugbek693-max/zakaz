@@ -268,6 +268,7 @@ MIGRATIONS = [
     ("registrations", "region", "TEXT"),  # manzil endi ro'yxatdan tanlanadi (places.py)
     ("registrations", "district", "TEXT"),
     ("payments", "essays", "INTEGER"),  # esse paketi (period = 'pack'): nechta esse — buyurtma paytidagi hajm
+    ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
 ]
 
 
@@ -474,10 +475,12 @@ def _test_dict(row) -> dict | None:
 def create_test(owner_id: int, title: str, fmt: str, count: int, items: list[dict],
                 keys: dict[str, dict[str, str]], essay_topic: str | None = None) -> dict:
     with connect() as conn:
-        while True:
+        for _ in range(1000):  # 90 000 ta kod: band bo'lsa qayta tanlanadi, hammasi band bo'lsa cheksiz aylanmaydi
             code = str(random.randint(10000, 99999))
             if not conn.execute("SELECT 1 FROM tests WHERE code = ?", (code,)).fetchone():
                 break
+        else:
+            raise RuntimeError("Bo'sh test kodi topilmadi")
         test_id = conn.execute(
             "INSERT INTO tests (code, owner_id, title, fmt, count, items, created_at, essay_topic) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
@@ -572,6 +575,22 @@ def find_attempt(test_id: int, tg_id: int) -> dict | None:
         return _attempt_dict(
             conn.execute("SELECT * FROM attempts WHERE test_id = ? AND tg_id = ?", (test_id, tg_id)).fetchone()
         )
+
+
+def mark_notified(attempt_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE attempts SET notified = 1 WHERE id = ?", (attempt_id,))
+
+
+def owner_totals(owner_id: int) -> dict[int, list[float]]:
+    """{test_id: [har qatnashchining jami bali]} — o'qituvchining barcha testlari bitta so'rovda (bosh sahifa uchun)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT a.test_id, a.points, a.essay FROM attempts a JOIN tests t ON t.id = a.test_id "
+                            "WHERE t.owner_id = ?", (owner_id,)).fetchall()
+    out: dict[int, list[float]] = {}
+    for row in rows:
+        out.setdefault(row["test_id"], []).append(round((row["points"] or 0) + (row["essay"] or 0), 1))
+    return out
 
 
 def list_attempts(test_id: int) -> list[dict]:
