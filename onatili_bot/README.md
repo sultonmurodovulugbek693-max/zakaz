@@ -25,6 +25,12 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - **Natijani tuzatish**: «👥 Natijalar»da o'quvchini bosing — javoblari, kalit bilan solishtiruv,
   AI o'qigan yozma kataklar rasmi. Tuzatilsa, ball va Rasch qayta hisoblanadi.
 - **Majburiy obuna**: admin botda kanallar qo'shadi; testga alohida kanal ham biriktirsa bo'ladi.
+- **Test yaratish ruxsati** (obuna sotish hozircha yopiq, `PLANS_ENABLED=0`): test yaratishni faqat `FREE_IDS`,
+  `ADMIN_IDS` va admin botda ruxsat bergan o'qituvchilar qiladi. Admin: `/ruxsat <ID>` — berish,
+  `/ruxsat_ol <ID>` — olish, `/ruxsatlar` — ro'yxat. Ruxsatsiz o'qituvchi ilovada o'z ID'sini ko'radi va adminga yuboradi.
+  O'quvchilar test yechishda davom etadi. Obunani qayta yoqish: Render → `PLANS_ENABLED=1`.
+- **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
+  to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.
 
 ## Titul va skaner

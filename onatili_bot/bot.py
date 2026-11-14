@@ -233,6 +233,60 @@ def _who(user: dict) -> str:
     return f"{name}{username} · <code>{user['tg_id']}</code>"
 
 
+# ---------- Admin: o'qituvchiga test yaratish ruxsati (obuna yopiq paytida) ----------
+
+@dp.message(Command("ruxsat", "ruxsat_ol"))
+async def cmd_access(message: Message, command: CommandObject) -> None:
+    """/ruxsat <ID yoki @username> — test yaratishga ruxsat; /ruxsat_ol <...> — olib qo'yish."""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    allow = command.command == "ruxsat"
+    ref = (command.args or "").strip()
+    if not ref:
+        await message.answer("Ishlatish:\n<code>/ruxsat 123456789</code> — test yaratishga ruxsat berish\n"
+                             "<code>/ruxsat_ol 123456789</code> — ruxsatni olish\n<code>/ruxsatlar</code> — ro'yxat\n\n"
+                             "ID o'rniga @username ham bo'ladi (botga /start bosgan bo'lsa). O'qituvchi ID'sini "
+                             "ilovadagi «🔒 Test yaratish hozircha yopiq» kartasidan yoki /myid dan biladi.")
+        return
+    user = await asyncio.to_thread(db.find_user, ref.split()[0])
+    if not user:
+        await message.answer("Bunday foydalanuvchi topilmadi — Telegram ID'sini yozing (o'qituvchi /myid bilan biladi).")
+        return
+    if user["tg_id"] in ADMIN_IDS or user["tg_id"] in config.FREE_IDS:
+        await message.answer(f"ℹ️ {_who(user)} — Render'dagi ro'yxatda (ADMIN_IDS / FREE_IDS), ruxsat u yerda boshqariladi.")
+        return
+    changed = await asyncio.to_thread(plans.set_access, user["tg_id"], allow)
+    if not changed:
+        await message.answer(f"ℹ️ {_who(user)} — " + ("allaqachon ruxsat bor." if allow else "ruxsati yo'q edi."))
+        return
+    await message.answer(("✅ Ruxsat berildi: " if allow else "🚫 Ruxsat olindi: ") + _who(user))
+    try:
+        await message.bot.send_message(
+            user["tg_id"],
+            "✅ <b>Sizga test yaratishga ruxsat berildi</b>\nIlovani oching — «Onlayn test» yoki «Oflayn test»ni bosing."
+            if allow else "🔒 Test yaratish ruxsatingiz olib qo'yildi. Eski testlaringiz va natijalar saqlanib qoladi.",
+            reply_markup=app_markup() if allow else None)
+    except Exception:
+        logger.warning("Ruxsat haqida xabar yuborilmadi: %s", user["tg_id"])
+
+
+@dp.message(Command("ruxsatlar"))
+async def cmd_access_list(message: Message) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("Bu buyruq faqat admin uchun.")
+        return
+    ids = sorted(await asyncio.to_thread(plans.granted_ids))
+    lines = []
+    for tg_id in ids:
+        lines.append("• " + _who(await asyncio.to_thread(db.find_user, str(tg_id))))
+    env = sorted(config.FREE_IDS)
+    await message.answer(
+        f"👩‍🏫 <b>Test yaratishga ruxsat</b> (botda berilgan): {len(ids)} ta\n" + ("\n".join(lines) or "— yo'q")
+        + (f"\n\n⚙️ Render (FREE_IDS): {', '.join(str(x) for x in env)}" if env else "")
+        + "\n\nBerish: <code>/ruxsat ID</code> · olish: <code>/ruxsat_ol ID</code>")
+
+
 @dp.message(Command("obuna"))
 async def cmd_grant(message: Message, command: CommandObject) -> None:
     """Admin: /obuna <@username yoki ID> <muddat|paket> [nechta] — obunani yoqish/uzaytirish yoki esse paketi."""
@@ -322,6 +376,11 @@ async def cmd_subscriptions(message: Message) -> None:
 async def cmd_prices(message: Message) -> None:
     if plans.is_free(message.from_user.id):
         await message.answer("♾ <b>Sizga hammasi bepul</b> — obuna sotib olish shart emas.")
+        return
+    if not config.SALES_ENABLED:
+        await message.answer("🔒 Obuna hozircha yopiq. Test yaratish faqat ruxsat berilgan o'qituvchilarga.\n"
+                             f"Telegram ID'ingiz: <code>{message.from_user.id}</code>"
+                             + (f" — ruxsat uchun @{esc(config.ADMIN_CONTACT)} ga yuboring." if config.ADMIN_CONTACT else ""))
         return
     trial = await asyncio.to_thread(plans.trial_days)
     contact = f"\n\nSavol bo'lsa: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
@@ -773,7 +832,7 @@ async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
     keys = await asyncio.to_thread(db.get_keys, test["id"])
     if kind == "key":
         content = await asyncio.to_thread(pdfs.answer_key_pdf, test, keys)
-        name, caption = f"kalit_{test['code']}.pdf", "🔑 <b>Javoblar kaliti</b> — faqat o'zingiz uchun (uzatib bo'lmaydi)."
+        name, caption = f"kalit_{test['code']}.pdf", "🔑 <b>Javoblar kaliti</b> — faqat o'zingiz uchun, o'quvchilarga bermang."
     elif kind == "excel":
         attempts = await asyncio.to_thread(db.list_attempts, test["id"])
         content = await asyncio.to_thread(excel.results_xlsx, test, attempts)
@@ -782,8 +841,9 @@ async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
         attempts = await asyncio.to_thread(db.list_attempts, test["id"])
         content = await asyncio.to_thread(pdfs.results_pdf, test, attempts)
         name, caption = f"natijalar_{test['code']}.pdf", f"📊 <b>{esc(test['title'])}</b> — {len(attempts)} ta qatnashchi"
-    await bot.send_document(chat_id, BufferedInputFile(content, filename=name), caption=caption,
-                            protect_content=kind == "key")
+    # protect_content ishlatilmaydi: himoyalangan PDF'ni Telegram saqlash/tashqi ilovada ochishga bermaydi —
+    # telefonda kalit «kelgan, lekin ochilmaydi» bo'lib qolardi
+    await bot.send_document(chat_id, BufferedInputFile(content, filename=name), caption=caption)
 
 
 async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], blanks: int) -> None:

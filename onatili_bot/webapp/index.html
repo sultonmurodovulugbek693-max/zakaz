@@ -78,6 +78,10 @@ h2 { font-family: var(--font-display); font-size: 16.5px; margin: 0; font-weight
 .flash { display: flex; gap: 10px; align-items: flex-start; padding: 13px 14px; border-radius: 14px; margin-bottom: 12px; font-size: 14px; line-height: 1.4;
   background: color-mix(in srgb, var(--good) 13%, transparent); border: 1.5px solid color-mix(in srgb, var(--good) 45%, transparent); animation: flash-in .35s ease; }
 .flash.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.flash-dl { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.flash-dl .btn { padding: 8px 12px; font-size: 13.5px; }
+.files-dl { display: flex; gap: 8px; flex-wrap: wrap; }
+.files-dl .btn { padding: 8px 12px; font-size: 13.5px; }
 .flash .x { margin-left: auto; background: none; border: 0; font-size: 16px; color: inherit; opacity: .6; cursor: pointer; padding: 0 2px; }
 @keyframes flash-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 .btn.danger { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); box-shadow: none; }
@@ -158,6 +162,8 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps li { counter-increment: st; display: grid; grid-template-columns: 30px 1fr; column-gap: 10px; align-items: start; }
 .scan-steps li::before { content: counter(st); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
+.locked-card { display: grid; gap: 10px; border: 1.5px dashed color-mix(in srgb, var(--warn) 55%, transparent); }
+.locked-card .t-code { justify-self: start; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 800; padding: 7px 12px; border-radius: 10px; cursor: copy; }
 .tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
 .tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
 .tests-more { justify-self: center; }
@@ -629,7 +635,7 @@ function paintTabs(view) {
   const bar = document.getElementById("tabbar");
   // Rol tanlash va majburiy obuna ekranlarida panel chiqmaydi
   const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
-  const tabs = ready ? (TABS[S.role] || TABS.student) : null;
+  const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) => key !== "plan" || S.boot.sales) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return; }
   bar.setAttribute("data-on", "1");
   bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
@@ -912,14 +918,16 @@ VIEWS.home = async () => {
         <button type="button" class="btn plain sm" data-go="myresults">Hammasi ›</button></div>
       <div class="list">${recentHTML}</div>` : `<div class="card empty"><div class="big">📭</div>Hali test topshirmagansiz.<br>O'qituvchingiz bergan kodni kiriting.</div>`}`
     : `
-      <div class="big-acts">
+      ${b.can_create === false ? lockedCard(b) : `<div class="big-acts">
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
-      </div>
+      </div>`}
       ${myTestsHTML(b.tests)}
-      ${planCard(b.plan)}`}
+      ${b.sales ? planCard(b.plan) : ""}`}
   </div>`;
   bindHomeActions(); bindMyTests();
+  document.querySelectorAll("[data-copy-id]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.copyId).then(() => { toast("ID nusxalandi"); haptic("success"); }, () => toast(x.dataset.copyId)));
+  document.querySelectorAll("[data-admin]").forEach(x => x.onclick = () => { const u = "https://t.me/" + x.dataset.admin; try { tg.openTelegramLink(u); } catch (e) { location.href = u; } });
   if (S.scrollToTests) { S.scrollToTests = false; const el = document.getElementById("my-tests"); if (el) el.scrollIntoView({ block: "start" }); }
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); S.stack = []; rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
@@ -1338,6 +1346,7 @@ VIEWS.create = async () => {
       document.getElementById("open").onclick = () => { S.current = { view: "home", params: {} }; go("teacher", { id: res.id }); };
     } catch (e) {
       haptic("error"); btn.disabled = false; btn.textContent = "Saqlash va PDF olish";
+      if (e.data && e.data.closed) { toast(e.message); return; }
       if (e.data && e.data.plan) { S.boot = null; try { S.boot = await api("/api/bootstrap"); } catch (x) {} return planModal(); }
       toast(e.message);
     }
@@ -1345,11 +1354,30 @@ VIEWS.create = async () => {
 };
 
 // ---------- Testning majburiy kanallari: qo'shish / olib tashlash ----------
+// Faylni to'g'ridan-to'g'ri yuklab olish (bot chatiga kelmasa ham): imzolangan 10 daqiqalik havola
+async function downloadFile(testId, kind, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api(`/api/teacher/test/${testId}/download`, { kind });
+    const name = { key: "kalit", sheets: "titullar", results: "natijalar", excel: "natijalar" }[kind] + (kind === "excel" ? ".xlsx" : ".pdf");
+    if (tg && tg.downloadFile) { try { tg.downloadFile({ url: r.url, file_name: name }); haptic("success"); return; } catch (e) {} }
+    if (tg && tg.openLink) { try { tg.openLink(r.url); haptic("success"); return; } catch (e) {} }
+    location.href = r.url;
+  } catch (e) { toast(e.message); haptic("error"); }
+  finally { if (btn) btn.disabled = false; }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-dl]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const [id, kind] = b.dataset.dl.split(":"); downloadFile(id, kind, b);
+});
+
 // «Saqlash va PDF olish»dan keyin: test bot chatiga yuborildimi — sahifa tepasida banner (bir marta)
 function createdFlash(res) {
   const files = (res.sent || []).map(k => k === "key" ? "🔑 kalit" : "📄 titul").join(" va ");
-  if (res.pdf_error) return { warn: true, text: `<b>✅ Test saqlandi · kod ${res.code}</b><br>${files ? `${files} PDF'i bot chatiga yuborildi. ` : ""}⚠️ ${esc(res.pdf_error)}` };
-  return { text: `<b>📨 Test bot chatiga yuborildi</b><br>Kod ${res.code} · ${files} PDF'i botda — Telegram chatini oching.${res.mode === "offline" ? " Titulni chop etib o'quvchilarga tarqating." : ""}` };
+  const dl = `<span class="flash-dl"><button type="button" class="btn ghost sm" data-dl="${res.id}:key">📥 Kalit</button><button type="button" class="btn ghost sm" data-dl="${res.id}:sheets">📥 Titul</button></span>`;
+  if (res.pdf_error) return { warn: true, text: `<b>✅ Test saqlandi · kod ${res.code}</b><br>${files ? `${files} PDF'i bot chatiga yuborildi. ` : ""}⚠️ ${esc(res.pdf_error)}<br>Hozir shu yerdan yuklab oling:${dl}` };
+  return { text: `<b>📨 Test bot chatiga yuborildi</b><br>Kod ${res.code} · ${files} PDF'i botda — Telegram chatini oching. Titulni chop etib o'quvchilarga tarqating.<br>Chatga kelmasa — shu yerdan:${dl}` };
 }
 function takeFlash() {
   const f = S.flash; S.flash = null;
@@ -1468,11 +1496,13 @@ VIEWS.teacher = async ({ id, tab }) => {
   else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi${offline && d.students.length ? `, ${scanned} / ${d.students.length} titul skanerlangan` : ""}. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
       <button class="btn block" id="announce">📢 Natijalarni e'lon qilish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : `<button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`}`;
   const files = `<div class="card"><h2>Fayllar</h2><div class="files">
-      ${offline ? `<button class="btn ghost sm" id="sheets2">📄 Titullar</button>` : ""}
+      <button class="btn ghost sm" id="sheets2">📄 Titul</button>
       <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
       ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
       ${n && milliy ? `<button class="btn ghost sm" id="certs-all">🎓 Sertifikatlar</button>` : ""}</div>
-      <span class="muted small">Fayllar Telegram chatga yuboriladi.</span></div>
+      <span class="muted small">Fayllar Telegram chatga yuboriladi. Kelmasa — to'g'ridan-to'g'ri yuklab oling:</span>
+      <div class="files-dl"><button type="button" class="btn plain sm" data-dl="${t.id}:sheets">📥 Titul</button><button type="button" class="btn plain sm" data-dl="${t.id}:key">📥 Kalit</button>
+      ${n ? `<button type="button" class="btn plain sm" data-dl="${t.id}:results">📥 Natijalar PDF</button><button type="button" class="btn plain sm" data-dl="${t.id}:excel">📥 Excel</button>` : ""}</div></div>
     <div class="card"><h2>Foydali</h2><div class="list">
       ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}
       <button class="item" id="copy-test"><span class="ico">📋</span><span><b>Boshqa guruh uchun nusxa</b><small>Yangi kod, kalitlar o'sha — qayta kiritish shart emas</small></span></button></div></div>`;
@@ -1621,7 +1651,7 @@ function copyTestModal(t) {
   modal.querySelector("#make-copy").onclick = async e => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Yaratilmoqda…";
     try { const r = await api(`/api/teacher/test/${t.id}/copy`, { title: modal.querySelector("#copy-title").value }); haptic("success"); toast(`✅ Yangi kod: ${r.code}`); modal.remove(); S.boot = null; go("teacher", { id: r.id }); }
-    catch (err) { btn.disabled = false; btn.textContent = "Nusxa yaratish"; if (err.data && err.data.plan) { modal.remove(); return planModal(); } toast(err.message); }
+    catch (err) { btn.disabled = false; btn.textContent = "Nusxa yaratish"; if (err.data && err.data.closed) { toast(err.message); return; } if (err.data && err.data.plan) { modal.remove(); return planModal(); } toast(err.message); }
   };
 }
 
@@ -1654,6 +1684,16 @@ function compressImage(file, max = 2000) {
 // ---------- Obuna: muddat, narx, to'lov (karta → chek → admin tasdiqlaydi) ----------
 const sum = n => String(n == null ? 0 : n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
+// Obuna yopiq va o'qituvchi ruxsat ro'yxatida (Render → FREE_IDS) emas: ID'sini ko'rsatamiz — adminga yuboradi
+function lockedCard(b) {
+  const id = b.user && b.user.id;
+  return `<div class="card locked-card"><b>🔒 Test yaratish hozircha yopiq</b>
+    <span class="muted small">Hozir faqat ruxsat berilgan o'qituvchilar test yarata oladi. Ruxsat olish uchun Telegram ID'ingizni adminga yuboring.</span>
+    ${id ? `<button type="button" class="t-code" data-copy-id="${id}" title="Nusxalash">ID: ${id}</button>` : ""}
+    ${b.admin_contact ? `<button type="button" class="btn ghost block" data-admin="${esc(b.admin_contact)}">✉️ Admin bilan bog'lanish</button>` : ""}
+    <span class="muted small">O'quvchi sifatida test yechish ochiq — yuqoridagi «O'qituvchi ⇄» tugmasi bilan almashing.</span></div>`;
+}
+
 function planCard(p) {
   if (!p || p.unlimited) return "";
   if (!p.plan) return `<button type="button" class="item" id="plan-open"><span class="ico">💎</span>
@@ -1669,6 +1709,7 @@ function planCard(p) {
 
 // Obuna — pastki paneldagi alohida bo'lim (oldin modal edi)
 VIEWS.plan = async () => {
+  if (S.boot && S.boot.sales === false) return go("home", {}, true);  // obuna hozircha yopiq
   const b = await boot(); if (!b) return;
   const p = b.plan || {}, me = (b.user && b.user.id) || "";
   const contact = b.admin_contact ? `<a class="btn ghost block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish (@${esc(b.admin_contact)})</a>` : "";

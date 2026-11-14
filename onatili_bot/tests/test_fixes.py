@@ -5,6 +5,7 @@ va oflayn testda majburiy obuna yo'qligi. Telegram almashtirilgan — internet k
 """
 import asyncio
 import json
+import time
 import types
 import unittest
 
@@ -59,7 +60,7 @@ class AppLogin(unittest.TestCase):
         self.assertIsNone(db.session_user("s3"))
 
 
-class ServerFixes(unittest.IsolatedAsyncioTestCase):
+class ServerBase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _env.fresh_db()
         plans.grant(OWNER, "month")
@@ -71,6 +72,8 @@ class ServerFixes(unittest.IsolatedAsyncioTestCase):
 
         self._auth = webapp.auth
         webapp.auth = fake_auth
+        self._current = webapp.current_user
+        webapp.current_user = fake_auth
         webapp.HOOKS.clear()
         webapp.HOOKS.update(
             record_attempt=lambda *a, **k: bot.record_attempt(self.bot, *a, **k),
@@ -86,6 +89,7 @@ class ServerFixes(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         webapp.auth = self._auth
+        webapp.current_user = self._current
         webapp.HOOKS.clear()
         await self.client.close()
 
@@ -99,6 +103,8 @@ class ServerFixes(unittest.IsolatedAsyncioTestCase):
         return await self.post("/api/teacher/tests", {"title": "Sinov", "fmt": fmt, "count": 5, "mode": mode,
                                                       "keys": {"A": key}, "channels": list(channels)})
 
+
+class ServerFixes(ServerBase):
     async def test_offline_test_sends_key_and_sheet_without_channels(self):
         status, r = await self.create("offline", channels=["@kanal"])
         self.assertEqual(status, 200)
@@ -186,7 +192,7 @@ class ServerFixes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)  # ID bo'shadi — haqiqiy egasi yubora oladi
 
 
-class ClassFromId(ServerFixes):
+class ClassFromId(ServerBase):
     """Titul qaysi testda skanerlansa ham o'quvchi va uning sinfi doimiy ID'dan aniqlanadi."""
 
     async def test_scanned_id_resolves_pupil_from_any_class(self):
@@ -238,14 +244,16 @@ class ClassFromId(ServerFixes):
         self.assertIsNotNone(ali)
 
 
-class SixProblems(ServerFixes):
+class SixProblems(ServerBase):
     async def test_sheets_sent_marks_first_step(self):
         _, r = await self.create("offline")
         page = await (await self.client.get(f"/api/teacher/test/{r['id']}")).json()
         self.assertTrue(page["test"]["sheets_sent"])  # yaratishda titul PDF'i ketdi — 1-qadam bajarilgan
+        # Onlayn testga ham titul yuboriladi — o'qituvchi chop etib tarqatadi
+        self.bot.documents.clear()
         _, r2 = await self.create("online")
-        page = await (await self.client.get(f"/api/teacher/test/{r2['id']}")).json()
-        self.assertFalse(page["test"]["sheets_sent"])
+        self.assertEqual(sorted(r2["sent"]), ["key", "sheets"])
+        self.assertEqual(sorted(n.split("_")[0] for _, n in self.bot.documents), ["kalit", "titullar"])
 
     async def test_announce_resumes_after_restart(self):
         _, r = await self.create()
@@ -334,6 +342,95 @@ class SixProblems(ServerFixes):
         sheet.draw_answer_page(Canvas(), test, ["A"], {"number": 7, "name": "Ali"})
         texts = " ".join(str(x) for args in drawn for x in args)
         self.assertIn(f"Esse kodi: {sheet.essay_pin(test['id'], 7)}", texts)
+
+
+class DirectDownload(ServerBase):
+    async def test_download_link_gives_files(self):
+        _, r = await self.create("offline", fmt="milliy")
+        for kind, magic in (("key", b"%PDF"), ("sheets", b"%PDF"), ("results", b"%PDF"), ("excel", b"PK")):
+            status, res = await self.post(f"/api/teacher/test/{r['id']}/download", {"kind": kind})
+            self.assertEqual(status, 200)
+            path = res["url"].split("/dl/")[1]
+            response = await self.client.get(f"/dl/{path}")
+            self.assertEqual(response.status, 200, kind)
+            self.assertTrue((await response.read()).startswith(magic), kind)
+            self.assertIn("attachment", response.headers["Content-Disposition"])
+
+    async def test_download_link_is_signed_and_expires(self):
+        _, r = await self.create()
+        _, res = await self.post(f"/api/teacher/test/{r['id']}/download", {"kind": "key"})
+        test_id, kind, expires, sig = res["url"].split("/dl/")[1].split(".")
+        forged = f"{int(test_id) + 1}.{kind}.{expires}.{sig}"  # boshqa test — imzo mos emas
+        self.assertEqual((await self.client.get(f"/dl/{forged}")).status, 404)
+        old = f"{test_id}.{kind}.{int(time.time()) - 5}"
+        self.assertEqual((await self.client.get(f"/dl/{old}.{webapp._sign(old)}")).status, 410)
+
+    async def test_key_pdf_is_not_protected(self):
+        sent = {}
+
+        class Bot:
+            async def send_document(self, chat_id, document, **kwargs):
+                sent.update(kwargs)
+        _, r = await self.create()
+        await bot.send_pdf(Bot(), OWNER, db.get_test(r["id"]), "key")
+        self.assertNotIn("protect_content", sent)  # himoyalangan PDF telefonda ochilmasdi
+
+
+class SalesClosed(ServerBase):
+    """Obuna sotish o'chiq: test yaratishni faqat FREE_IDS / admin / admin botda ruxsat bergan o'qituvchi qiladi."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._sales = (plans.SALES_ENABLED, webapp.SALES_ENABLED)
+        plans.SALES_ENABLED = webapp.SALES_ENABLED = False
+
+    async def asyncTearDown(self):
+        plans.SALES_ENABLED, webapp.SALES_ENABLED = self._sales
+        await super().asyncTearDown()
+
+    async def test_only_allowed_teachers_create(self):
+        # OWNER'da obuna bor (asyncSetUp), lekin sotish yopiq — baribir mumkin emas
+        status, r = await self.create()
+        self.assertEqual(status, 403)
+        self.assertTrue(r["closed"])
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual((boot["sales"], boot["can_create"]), (False, False))
+        status, _ = await self.post("/api/plan/order", {"period": "month"})
+        self.assertEqual(status, 403)
+        # Admin botda ruxsat beradi — endi yarata oladi
+        self.assertTrue(plans.set_access(OWNER, True))
+        self.assertFalse(plans.set_access(OWNER, True))  # ikkinchi marta — o'zgarmaydi
+        status, _ = await self.create()
+        self.assertEqual(status, 200)
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertTrue(boot["can_create"])
+        # Ruxsat olinadi — yana yopiq
+        plans.set_access(OWNER, False)
+        self.assertEqual((await self.create())[0], 403)
+
+    async def test_admin_command(self):
+        replies, sent = [], []
+
+        class Msg:
+            def __init__(self, uid):
+                self.from_user = types.SimpleNamespace(id=uid)
+                self.bot = types.SimpleNamespace(send_message=lambda chat, text, **k: asyncio.sleep(0, sent.append(chat)))
+
+            async def answer(self, text, **_):
+                replies.append(text)
+
+        admin = 999
+        bot.ADMIN_IDS.add(admin)
+        try:
+            await bot.cmd_access(Msg(admin), types.SimpleNamespace(command="ruxsat", args=str(OTHER)))
+            self.assertIn(OTHER, plans.granted_ids())
+            self.assertEqual(sent, [OTHER])  # o'qituvchiga xabar
+            await bot.cmd_access(Msg(admin), types.SimpleNamespace(command="ruxsat_ol", args=str(OTHER)))
+            self.assertNotIn(OTHER, plans.granted_ids())
+            await bot.cmd_access(Msg(OTHER), types.SimpleNamespace(command="ruxsat", args=str(OTHER)))
+            self.assertNotIn(OTHER, plans.granted_ids())  # admin emas — o'zi ruxsat ololmaydi
+        finally:
+            bot.ADMIN_IDS.discard(admin)
 
 
 class Names(unittest.TestCase):

@@ -19,7 +19,7 @@ qiymatlar — faqat boshlang'ich (sozlanmagan bo'lsa ishlatiladi).
 from datetime import datetime, timedelta, timezone
 
 import db
-from config import ADMIN_IDS, FREE_IDS
+from config import ADMIN_IDS, FREE_IDS, SALES_ENABLED
 
 TASHKENT = timezone(timedelta(hours=5))
 
@@ -57,9 +57,25 @@ def is_admin(tg_id: int) -> bool:
     return tg_id in ADMIN_IDS
 
 
+def granted_ids() -> set[int]:
+    """Admin botda /ruxsat bilan ruxsat bergan o'qituvchilar (bazada — Render'ni o'zgartirish shart emas)."""
+    raw = db.get_settings().get("allowed_ids", "")
+    return {int(x) for x in raw.split(",") if x.strip().isdigit()}
+
+
+def set_access(tg_id: int, allowed: bool) -> bool:
+    """Ruxsat berish/olish. Qaytaradi: holat o'zgardimi."""
+    ids = granted_ids()
+    if (tg_id in ids) == allowed:
+        return False
+    ids = ids | {tg_id} if allowed else ids - {tg_id}
+    db.set_setting("allowed_ids", ",".join(str(x) for x in sorted(ids)))
+    return True
+
+
 def is_free(tg_id: int) -> bool:
-    """Admin yoki Render'dagi FREE_IDS ro'yxatida — hammasi bepul va cheksiz."""
-    return tg_id in ADMIN_IDS or tg_id in FREE_IDS
+    """Admin, Render'dagi FREE_IDS yoki admin botda ruxsat bergan o'qituvchi — hammasi bepul va cheksiz."""
+    return tg_id in ADMIN_IDS or tg_id in FREE_IDS or tg_id in granted_ids()
 
 
 # ---------- Sozlamalar (admin botda o'zgartiradi) ----------
@@ -167,6 +183,8 @@ def ensure_active(tg_id: int) -> dict:
     """Test yaratishdan oldin: obunasi yo'q bo'lsa — sinov yoqilgan bo'lsa boshlanadi, aks holda active=False."""
     if is_free(tg_id):
         return status(tg_id)
+    if not SALES_ENABLED:  # obuna yopiq — faqat FREE_IDS / admin
+        return {**status(tg_id), "active": False, "closed": True}
     if not db.get_subscription(tg_id) and trial_days() > 0:
         db.set_subscription(tg_id, "trial", (now() + timedelta(days=trial_days())).isoformat(timespec="seconds"))
     return status(tg_id)
@@ -191,6 +209,8 @@ def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     if is_free(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
+    if not SALES_ENABLED:
+        return False
     sub = db.get_subscription(tg_id)
     if not sub or _expires(sub) <= now():
         return False

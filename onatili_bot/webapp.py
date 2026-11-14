@@ -11,6 +11,8 @@ bot.py dan HOOKS orqali beriladi — bu modul botni import qilmaydi.
 import asyncio
 import base64
 import csv
+import hashlib
+import hmac
 import html
 import io
 import json
@@ -31,7 +33,7 @@ import plans
 import results
 import sheet
 import sheet_styles
-from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN
+from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN, SALES_ENABLED
 from scoring import rasch_breakdown, rasch_results, total_points
 from structure import (
     ESSAY_MAX,
@@ -183,6 +185,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "classes": len(await run(db.list_classes, user["id"])),
         "registered": bool(await run(db.get_registration, user["id"])),
         "plan": await run(plans.status, user["id"]),
+        "sales": SALES_ENABLED,  # obuna sotish yoqilganmi (hozircha yo'q)
+        "can_create": SALES_ENABLED or plans.is_free(user["id"]),  # test yarata oladimi
         "plans": await run(plans.offers),
         "card": await run(plans.card),
         "payment": await run(db.open_payment, user["id"]),
@@ -459,6 +463,10 @@ def validate_key(items: list[dict], raw: dict) -> dict:
 async def require_plan(user: dict) -> None:
     """Yangi test faqat faol obuna (yoki bepul sinov) bilan. Birinchi marta — sinov o'zi boshlanadi."""
     status = await run(plans.ensure_active, user["id"])
+    if status.get("closed"):
+        raise ApiError(403, "Test yaratish hozircha faqat ruxsat berilgan o'qituvchilarga"
+                       + (f" — ruxsat uchun @{ADMIN_CONTACT} ga ID'ingizni yuboring" if ADMIN_CONTACT else ""),
+                       closed=True, user_id=user["id"])
     if not status["active"]:
         raise ApiError(402, "Test yaratish uchun obuna kerak — «💎 Obuna» tugmasidan sotib oling", plan=status)
 
@@ -467,6 +475,8 @@ async def plan_order(request: web.Request) -> web.Response:
     """«Sotib olish» bosildi (obuna muddati yoki «📦 Esse paketi»): to'lov so'rovi ochiladi,
     foydalanuvchiga karta va summa ko'rsatiladi."""
     user = await auth(request)
+    if not SALES_ENABLED:
+        raise ApiError(403, "Obuna hozircha yopiq")
     if await run(plans.is_free, user["id"]):
         raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
     period = str((await body(request)).get("period") or "")
@@ -569,9 +579,9 @@ async def create_test(request: web.Request) -> web.Response:
 async def send_created_pdfs(chat_id: int, test: dict) -> tuple[list[str], str | None]:
     """Yangi test: kalit PDF'i, oflayn testga yana bo'sh titul PDF'i — bot chatiga. Yuborib bo'lmasa ham test
     saqlanib qoladi (xato qaytarilsa, o'qituvchi qayta bosib, ikkinchi testni yaratib qo'yardi)."""
-    jobs = [("key", lambda: HOOKS["send_pdf"](chat_id, test, "key"))]
-    if test.get("mode") == "offline":
-        jobs.append(("sheets", lambda: HOOKS["send_sheets"](chat_id, test, [], 1)))
+    # Titul (javoblar varaqasi) — har qanday testga: o'qituvchi uni chop etib o'quvchilarga tarqatadi
+    jobs = [("key", lambda: HOOKS["send_pdf"](chat_id, test, "key")),
+            ("sheets", lambda: HOOKS["send_sheets"](chat_id, test, [], 1))]
     sent, error = [], None
     for kind, job in jobs:
         try:
@@ -707,6 +717,66 @@ async def send_pdf(request: web.Request) -> web.Response:
         logger.exception("Fayl (%s) yuborilmadi: test %s", kind, test["id"])
         raise ApiError(502, send_error_text(exc))
     return ok({"ok": True})
+
+
+# ---------- Fayllarni to'g'ridan-to'g'ri yuklab olish (bot chatiga yuborilmasa ham) ----------
+# Havola 10 daqiqa amal qiladi va imzolangan: kim, qaysi test, qaysi fayl. Telegram'da tashqi brauzer/yuklovchi
+# sarlavha (initData) yubora olmaydi — shuning uchun ruxsat havolaning o'zida
+
+DOWNLOAD_TTL = 600
+FILE_KINDS = ("key", "results", "excel", "sheets")
+
+
+def _sign(payload: str) -> str:
+    return hmac.new(f"dl:{BOT_TOKEN}".encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def download_token(test_id: int, kind: str) -> str:
+    payload = f"{test_id}.{kind}.{int(time.time()) + DOWNLOAD_TTL}"
+    return f"{payload}.{_sign(payload)}"
+
+
+def build_file(test: dict, kind: str) -> tuple[bytes, str, str]:
+    """(fayl, nomi, turi) — bot yuboradigan fayllarning o'zi."""
+    keys = db.get_keys(test["id"])
+    if kind == "key":
+        return pdfs.answer_key_pdf(test, keys), f"kalit_{test['code']}.pdf", "application/pdf"
+    if kind == "sheets":
+        students = db.list_students(test["id"])
+        return (sheet.sheets_pdf(test, list(keys), students, 0 if students else 1), f"titullar_{test['code']}.pdf",
+                "application/pdf")
+    attempts = db.list_attempts(test["id"])
+    if kind == "excel":
+        import excel
+        return (excel.results_xlsx(test, attempts), f"natijalar_{test['code']}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return pdfs.results_pdf(test, attempts), f"natijalar_{test['code']}.pdf", "application/pdf"
+
+
+async def download_link(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    kind = (await body(request)).get("kind")
+    if kind not in FILE_KINDS:
+        raise ApiError(400, "Noma'lum fayl")
+    return ok({"url": f"{site_url(request)}/dl/{download_token(test['id'], kind)}"})
+
+
+async def download_file(request: web.Request) -> web.StreamResponse:
+    parts = request.match_info["token"].split(".")
+    if len(parts) != 4 or not all(p.isalnum() for p in parts):
+        raise web.HTTPNotFound(text="Havola noto'g'ri")
+    test_id, kind, expires, sig = parts
+    if not hmac.compare_digest(sig, _sign(f"{test_id}.{kind}.{expires}")) or kind not in FILE_KINDS:
+        raise web.HTTPNotFound(text="Havola noto'g'ri")
+    if not expires.isdigit() or int(expires) < time.time():
+        raise web.HTTPGone(text="Havola eskirgan — ilovada «Yuklab olish»ni qayta bosing")
+    test = await run(db.get_test, int(test_id))
+    if not test:
+        raise web.HTTPNotFound(text="Test topilmadi")
+    content, name, mime = await run(build_file, test, kind)
+    return web.Response(body=content, headers={
+        "Content-Type": mime, "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 async def set_theme(request: web.Request) -> web.Response:
@@ -2030,6 +2100,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/channel", check_channel)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/live", live)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/send", send_pdf)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/download", download_link)
+    app.router.add_get("/dl/{token}", download_file)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)

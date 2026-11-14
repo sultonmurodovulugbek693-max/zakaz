@@ -25,3 +25,7 @@ ADMIN_IDS = {int(x) for x in (os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID") or
 # Bepul foydalanuvchilar: obuna ham, to'lov ham talab qilinmaydi (hammasi cheksiz).
 # Render → Environment → FREE_IDS=123,456  (Telegram ID'lar; o'qituvchi /myid bilan biladi)
 FREE_IDS = {int(x) for x in (os.getenv("FREE_IDS") or "").replace(" ", "").split(",") if x.isdigit()}
+
+# Obuna sotish (karta → chek → admin). Hozircha O'CHIQ: test yaratishni faqat FREE_IDS va ADMIN_IDS qila oladi,
+# qolgan o'qituvchilarga yopiq. Qayta yoqish: Render → Environment → PLANS_ENABLED=1
+SALES_ENABLED = os.getenv("PLANS_ENABLED", "0") == "1"

@@ -13,6 +13,7 @@ os.environ.update({
     "GEMINI_API_KEY": "test-key",
     "ADMIN_IDS": "",
     "KEEP_ALIVE": "0",
+    "PLANS_ENABLED": "1",  # obuna mantig'i testlanadi; yopiq holat — test_fixes.SalesClosed
 })
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
