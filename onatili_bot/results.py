@@ -141,8 +141,11 @@ def class_report(owner_id: int, cls: dict) -> dict:
                      "avg": avg, "suffix": "" if milliy or not other else "%",
                      "grade": grade_for(avg) if milliy else None})
     rows.sort(key=lambda r: (r["avg"] is None, -(r["avg"] or 0), r["number"]))
-    averages = [r["avg"] for r in rows if r["avg"] is not None and r["suffix"] == ""]
+    # Sinf o'rtachasi: Milliy testlar bo'lsa — umumiy ball (75), faqat oddiy testlar bo'lsa — foiz
+    milliy_avgs = [r["avg"] for r in rows if r["avg"] is not None and r["suffix"] == ""]
+    other_avgs = [r["avg"] for r in rows if r["avg"] is not None and r["suffix"] == "%"]
+    averages, suffix = (milliy_avgs, "") if milliy_avgs else (other_avgs, "%")
     return {"class": {"id": cls["id"], "name": cls["name"], "students": len(students)},
             "tests": tests, "students": rows,
-            "summary": {"tests": len(tests), "taken": sum(r["count"] for r in rows),
+            "summary": {"tests": len(tests), "taken": sum(r["count"] for r in rows), "suffix": suffix,
                         "avg": _mean(averages), "max": max(averages) if averages else None}}

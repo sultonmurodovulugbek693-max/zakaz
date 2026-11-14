@@ -433,6 +433,20 @@ class SalesClosed(ServerBase):
             bot.ADMIN_IDS.discard(admin)
 
 
+class ClassAverage(ServerBase):
+    async def test_percent_tests_have_class_average(self):
+        """Faqat oddiy (foizli) testlar bo'lgan sinfda o'rtacha 0 emas, foizda chiqadi."""
+        cls = db.create_class(OWNER, "7-B")
+        pupils = db.add_class_students(cls["id"], OWNER, ["Ali Valiyev", "Vali Karimov"])
+        _, r = await self.create("offline")
+        for pupil, right in zip(pupils, (4, 2)):
+            answers = {str(q): "A" if q <= right else "B" for q in range(1, 6)}
+            await self.post(f"/api/teacher/test/{r['id']}/scan/save",
+                            {"number": str(pupil["number"]), "variant": "A", "answers": answers})
+        report = await (await self.client.get(f"/api/teacher/class/{cls['id']}/results")).json()
+        self.assertEqual((report["summary"]["avg"], report["summary"]["max"], report["summary"]["suffix"]), (60.0, 80.0, "%"))
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))

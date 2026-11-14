@@ -164,6 +164,26 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
 .locked-card { display: grid; gap: 10px; border: 1.5px dashed color-mix(in srgb, var(--warn) 55%, transparent); }
 .locked-card .t-code { justify-self: start; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 800; padding: 7px 12px; border-radius: 10px; cursor: copy; }
+/* O'sish grafigi (bitta qator): chiziq rangi yorug' va tungi fonda tekshirilgan (#00a844 — OKLCH L, kontrast) */
+:root { --chart-line: #00a844; }
+.growth { position: relative; display: grid; gap: 6px; }
+.growth-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.growth-head b { font-size: 14.5px; }
+.growth-delta { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.growth-delta.up { color: var(--good); } .growth-delta.down { color: var(--bad); }
+.growth svg { width: 100%; height: auto; display: block; overflow: visible; }
+.growth .g-grid { stroke: var(--line); stroke-width: 1; }
+.growth .g-tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.growth .g-line { fill: none; stroke: var(--chart-line); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.growth .g-area { fill: var(--chart-line); opacity: .1; }
+.growth .g-dot { fill: var(--chart-line); stroke: var(--surface); stroke-width: 2; }
+.growth .g-last { fill: var(--ink); font-size: 11.5px; font-weight: 700; }
+.growth .g-hit { fill: transparent; cursor: pointer; outline: none; }
+.growth .g-hit:focus-visible + .g-dot, .growth .g-dot.on { r: 6; }
+.growth-tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 10px; padding: 6px 9px; font-size: 12px; display: grid; gap: 1px; transform: translate(-50%, calc(-100% - 10px)); white-space: nowrap; z-index: 2; }
+.growth-tip b { font-size: 14px; }
+.growth-tip span { color: var(--muted); }
+.test-strip { margin-top: 2px; }
 .tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
 .tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
 .tests-more { justify-self: center; }
@@ -605,6 +625,16 @@ async function render(soft = false) {
   }
 }
 const rerender = () => render(true);
+// Test sahifasi tepasidagi qisqa statistika: qatnashchilar, o'rtacha, eng yuqori, tekshirilishi kerak esselar
+function testStrip(d, milliy, essaysLeft) {
+  const vals = d.attempts.map(a => milliy ? a.rasch : a.percent).filter(v => v != null);
+  const avg = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null, top = vals.length ? Math.max(...vals) : null;
+  const suffix = milliy ? "" : "%";
+  const cells = [[d.attempts.length, "Qatnashdi"], [avg == null ? "—" : num(avg) + suffix, "O'rtacha"], [top == null ? "—" : num(top) + suffix, "Eng yuqori"],
+    milliy ? [essaysLeft, "Esse kutmoqda"] : [d.attempts.filter(a => (a.percent || 0) >= 80).length, "80%+ olgan"]];
+  return `<div class="strip test-strip">${cells.map(([v, l]) => `<div><b>${v}</b><span>${l}</span></div>`).join("")}</div>`;
+}
+
 // Bo'limlar qatori sig'masa: faol bo'lim ko'rinadigan joyga suriladi, chetida «yana bor» soyasi
 function bindTabStrip() {
   const bar = document.querySelector(".tabs.bar"); if (!bar) return;
@@ -1513,6 +1543,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)}${t.variants.length > 1 ? ` · ${t.variants.join(", ")}` : ""}</span></div></div>
     <div class="tabs bar">${tabsList.map(([k, label]) => `<button class="${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}</div>
     ${takeFlash()}
+    ${tab === "home" && n ? testStrip(d, milliy, suggested + pending) : ""}
     ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>
       ${wr && !writtenLeft ? `<button type="button" class="item" id="written-review-open"><span class="ico">✍️</span>
         <span><b>Yozma javoblar</b><small>${wr.done} / ${wr.total} katak belgilangan — ko'rish va o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
@@ -1952,8 +1983,8 @@ VIEWS.classResults = async ({ id }) => {
   const strip = tests.length ? `<div class="strip">
       <div><b data-count="${tests.length}">${tests.length}</b><span>Test</span></div>
       <div><b data-count="${s.taken}">${s.taken}</b><span>Qatnashuv</span></div>
-      <div><b data-count="${s.avg || 0}">${num(s.avg)}</b><span>O'rtacha</span></div>
-      <div><b data-count="${s.max || 0}">${num(s.max)}</b><span>Eng yuqori</span></div></div>` : "";
+      <div><b>${s.avg == null ? "—" : num(s.avg) + (s.suffix || "")}</b><span>O'rtacha</span></div>
+      <div><b>${s.max == null ? "—" : num(s.max) + (s.suffix || "")}</b><span>Eng yuqori</span></div></div>` : "";
   const testList = tests.slice().reverse().map(t => `<button type="button" class="item" data-tr="${t.id}"><span class="ico">📄</span>
       <span><b>${esc(t.title)}</b><small>${dmy(t.date)} · ${t.n} / ${c.students} qatnashdi</small></span>
       <span class="score-col"><b>${num(t.avg)}${t.suffix}</b><small class="muted">o'rtacha</small></span></button>`).join("");
@@ -1980,6 +2011,52 @@ VIEWS.classResults = async ({ id }) => {
   document.querySelectorAll("[data-st]").forEach(x => x.onclick = () => { haptic("light"); studentSheet(rows[+x.dataset.st], tests); });
 };
 
+// O'quvchining testdan testga o'sishi: bitta chiziq (afsona shart emas — sarlavha aytadi), oxirgi qiymat yonida,
+// har nuqtada sichqoncha/fokus bilan qiymat. Jadvali — ostidagi testlar ro'yxati
+function growthChart(p, tests) {
+  const pts = tests.filter(t => p.results[t.id] && p.results[t.id].suffix === p.suffix && p.results[t.id].score != null)
+    .map(t => ({ t, v: +p.results[t.id].score }));
+  if (pts.length < 2) return "";
+  const W = 320, H = 150, L = 28, R = 30, T = 12, B = 14;
+  const max = p.suffix === "%" ? 100 : 75, ticks = p.suffix === "%" ? [0, 50, 100] : [0, 25, 50, 75];
+  const x = i => L + (W - L - R) * (i / (pts.length - 1));
+  const y = v => T + (H - T - B) * (1 - Math.max(0, Math.min(max, v)) / max);
+  const line = pts.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.v).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(pts.length - 1).toFixed(1)},${y(0)} L${x(0).toFixed(1)},${y(0)} Z`;
+  const last = pts[pts.length - 1], delta = last.v - pts[0].v;
+  const dir = Math.abs(delta) < 0.05 ? "" : delta > 0 ? "up" : "down";
+  return `<div class="growth" id="growth">
+    <div class="growth-head"><b>O'sish · ${pts.length} ta test</b>
+      <span class="growth-delta ${dir}">${dir === "up" ? "↑ +" : dir === "down" ? "↓ " : "→ "}${num(delta)}${p.suffix} birinchi testdan</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ball o'zgarishi: ${num(pts[0].v)}${p.suffix} dan ${num(last.v)}${p.suffix} gacha">
+      ${ticks.map(v => `<line class="g-grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="g-tick" x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${v}</text>`).join("")}
+      <path class="g-area" d="${area}"/><path class="g-line" d="${line}"/>
+      ${pts.map((d, i) => `<circle class="g-hit" r="14" cx="${x(i)}" cy="${y(d.v)}" data-gi="${i}" tabindex="0"/><circle class="g-dot" r="4" cx="${x(i)}" cy="${y(d.v)}" data-gd="${i}"/>`).join("")}
+      <text class="g-last" x="${x(pts.length - 1) + 8}" y="${y(last.v) + 4}">${num(last.v)}</text>
+    </svg><div class="growth-tip" hidden></div></div>`;
+}
+function bindGrowth(root, p, tests) {
+  const box = root.querySelector("#growth"); if (!box) return;
+  const pts = tests.filter(t => p.results[t.id] && p.results[t.id].suffix === p.suffix && p.results[t.id].score != null);
+  const tip = box.querySelector(".growth-tip"), svg = box.querySelector("svg");
+  const show = el => {
+    const i = +el.dataset.gi, t = pts[i], r = p.results[t.id];
+    box.querySelectorAll(".g-dot").forEach(d => d.classList.toggle("on", d.dataset.gd === String(i)));
+    tip.textContent = "";
+    const v = document.createElement("b"); v.textContent = `${num(r.score)}${r.suffix}${r.grade ? ` · ${r.grade}` : ""}`;
+    const n = document.createElement("span"); n.textContent = t.title;
+    const dt = document.createElement("span"); dt.textContent = dmy(t.date);
+    tip.append(v, n, dt);
+    const sb = svg.getBoundingClientRect(), bb = box.getBoundingClientRect(), k = sb.width / 320;
+    tip.style.left = `${Math.min(Math.max(+el.getAttribute("cx") * k + sb.left - bb.left, 60), bb.width - 60)}px`;
+    tip.style.top = `${+el.getAttribute("cy") * k + sb.top - bb.top}px`;
+    tip.hidden = false;
+  };
+  const hide = () => { tip.hidden = true; box.querySelectorAll(".g-dot.on").forEach(d => d.classList.remove("on")); };
+  box.querySelectorAll(".g-hit").forEach(el => { el.addEventListener("pointerenter", () => show(el)); el.addEventListener("focus", () => show(el)); el.addEventListener("click", () => show(el)); el.addEventListener("blur", hide); });
+  svg.addEventListener("pointerleave", hide);
+}
+
 // Sinf o'quvchisi: barcha testlardagi ballari va har biri uchun mock sertifikat
 function studentSheet(p, tests) {
   const items = tests.slice().reverse().filter(t => p.results[t.id]).map(t => {
@@ -1989,8 +2066,10 @@ function studentSheet(p, tests) {
       ${t.fmt === "milliy" ? `<button type="button" class="btn ghost sm" data-cert="${t.id}:${x.attempt_id}" aria-label="Sertifikat">🎓</button>` : ""}</div>`;
   }).join("");
   const modal = openModal(esc(p.name), `<span class="muted small">ID ${pad3(p.number)} · ${p.count} ta test${p.avg != null ? ` · o'rtacha ${num(p.avg)}${p.suffix}` : ""}</span>
+    ${growthChart(p, tests)}
     <div class="list">${items || `<div class="card empty">Hali titulli testda qatnashmagan</div>`}</div>
     ${items ? `<span class="muted small">🎓 — shu test bo'yicha mock sertifikat (PDF) chatga yuboriladi.</span>` : ""}`);
+  bindGrowth(modal, p, tests);
   modal.querySelectorAll("[data-cert]").forEach(b => b.onclick = () => { const [tid, aid] = b.dataset.cert.split(":"); sendCerts(tid, { attempt_ids: [+aid] }, b); });
 }
 
