@@ -184,6 +184,14 @@ html.dark .quick-action i { background: #20302a; }
 .growth-tip b { font-size: 14px; }
 .growth-tip span { color: var(--muted); }
 .test-strip { margin-top: 2px; }
+.essay-wait { display: grid; gap: 4px; }
+.essay-wait .spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.essay-self { display: grid; gap: 10px; }
+.essay-score { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.essay-score b { font-family: var(--font-display); font-size: 40px; line-height: 1; }
+.essay-score span { font-size: 16px; color: var(--muted); font-weight: 700; }
+.essay-score small { flex-basis: 100%; }
 .tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
 .tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
 .tests-more { justify-self: center; }
@@ -975,7 +983,12 @@ function bindHomeActions() {
     start.onclick = () => go("answer", { code: code.value });
     code.onkeydown = e => { if (e.key === "Enter" && code.value.length === 5) go("answer", { code: code.value }); };
   }
-  document.querySelectorAll("[data-attempt]").forEach(x => x.onclick = () => x.dataset.announced === "1" ? go("result", { id: x.dataset.attempt }) : toast("⏳ Natijalar hali e'lon qilinmagan"));
+  document.querySelectorAll("[data-attempt]").forEach(x => x.onclick = () => {
+    if (x.dataset.announced === "1") return go("result", { id: x.dataset.attempt });
+    const a = (S.boot && S.boot.attempts || []).find(y => String(y.id) === x.dataset.attempt);
+    if (a && a.fmt === "milliy") return done({ title: a.title, already: true, attemptId: a.id });  // esse natijasi
+    toast("⏳ Natijalar hali e'lon qilinmagan");
+  });
   document.querySelectorAll("[data-test]").forEach(x => x.onclick = e => { if (!e.target.closest(".del-test")) go("teacher", { id: x.dataset.test }); });
   document.querySelectorAll("[data-del-test]").forEach(x => x.onclick = async e => {
     e.stopPropagation();
@@ -1085,7 +1098,7 @@ VIEWS.answer = async ({ code }) => {
   loading();
   let t; try { t = await api(`/api/test/${code}`); } catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : fail(e); }
   if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
-  if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true }); }
+  if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "milliy" ? t.submitted : null }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
   const choices = t.items.filter(i => i.kind === "choice"), texts = t.items.filter(i => i.kind === "text");
   const draftKey = "draft-" + t.code;
@@ -1146,10 +1159,10 @@ VIEWS.answer = async ({ code }) => {
     if (!(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay });
+      const res = await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay });
       sent = true; clearInterval(S.pingTimer); clearTimeout(pingWait);
       store(draftKey, "{}"); S.boot = null; haptic("success");
-      done({ title: t.title });
+      done({ title: t.title, attemptId: res.essay ? res.attempt_id : null });
     } catch (e) {
       if (e.data && e.data.channels) { toast(e.message); haptic("error"); return testGate(t.code, e.data.channels); }  // javoblar qoralamada saqlangan
       toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish";
@@ -1216,15 +1229,42 @@ function offlineEssay(t) {
   };
 }
 
-function done({ title, already }) {
+function done({ title, already, attemptId }) {
   S.stack = []; S.current = { view: "home", params: {} };
   showBack(false);
   $app.innerHTML = `<div class="view"><div class="card success">
     <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
     <h1>${already ? "Javobingiz qabul qilingan" : "Javoblaringiz qabul qilindi!"}</h1>
     <p class="muted">${esc(title)}<br>Natijalar o'qituvchi e'lon qilganda bot sizga xabar beradi va bu yerda natija kartasi ochiladi.</p>
-    <button class="btn ghost" id="home">Bosh sahifa</button></div></div>`;
+    <button class="btn ghost" id="home">Bosh sahifa</button></div>
+    ${attemptId ? `<div id="my-essay"></div>` : ""}</div>`;
   document.getElementById("home").onclick = () => render();
+  if (attemptId) watchMyEssay(attemptId);
+}
+
+// O'quvchi o'z essesini tekshiradi: AI bahosi kelguncha kutadi (har 4 soniya, 4 daqiqagacha), keyin ball va mezonlar.
+// Ball o'qituvchiga ham boradi va test bilan Rasch umumiy baliga qo'shiladi
+async function watchMyEssay(attemptId) {
+  const box = document.getElementById("my-essay"); if (!box) return;
+  const seq = S.seq;
+  for (let i = 0; i < 60 && seq === S.seq && document.body.contains(box); i++) {
+    let e; try { e = await api(`/api/my-essay/${attemptId}`); } catch (err) { e = null; }
+    if (!document.body.contains(box)) return;
+    if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e); haptic("success"); return; }
+    box.innerHTML = e && e.status === "manual" ? `<div class="card essay-wait"><b>✍️ Essengizni o'qituvchi tekshiradi</b><span class="muted small">Natija e'lon qilinganda ko'rasiz.</span></div>`
+      : e && e.status === "failed" ? `<div class="card essay-wait"><b>✍️ Esse AI'da tekshirilmadi</b><span class="muted small">O'qituvchingiz o'zi baholaydi.</span></div>`
+      : `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">AI 24 ballik mezon bo'yicha baholamoqda — odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi.</span></div>`;
+    if (e && (e.status === "manual" || e.status === "failed")) return;
+    await new Promise(r => setTimeout(r, 4000));
+  }
+}
+function myEssayHTML(e) {
+  return `<div class="card essay-self">
+    <div class="row between"><b>📝 Esse natijangiz</b><span class="pill-tag done">AI tekshirdi</span></div>
+    <div class="essay-score"><b>${num(e.score_75)}</b><span>/ ${e.scale}</span><small class="muted">mezon bo'yicha ${num(e.score)} / ${e.max}</small></div>
+    ${(e.criteria || []).map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
+    ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}
+    <span class="muted small">Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.${e.teacher_changed ? " O'qituvchi bahoni o'zgartirgan." : ""}</span></div>`;
 }
 
 VIEWS.result = async ({ id }) => {

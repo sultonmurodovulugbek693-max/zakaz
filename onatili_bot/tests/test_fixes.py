@@ -447,6 +447,65 @@ class ClassAverage(ServerBase):
         self.assertEqual((report["summary"]["avg"], report["summary"]["max"], report["summary"]["suffix"]), (60.0, 80.0, "%"))
 
 
+class EssaySelfCheck(ServerBase):
+    """O'quvchi onlayn esseni o'zi tekshiradi: AI bahosi darhol natijaga va Rasch'ga, o'qituvchiga xabar."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        import essay_ai
+        self.essay_ai = essay_ai
+        self._grade, self._enabled = essay_ai.grade, essay_ai.essay_enabled
+
+        async def fake_grade(topic, text, images=()):
+            criteria = [{"key": k, "score": 2 if i < 9 else 0, "comment": "Yaxshi"} for i, k in enumerate(essay_ai.RUBRIC_KEYS)]
+            return {"score": sum(c["score"] for c in criteria), "criteria": criteria, "comment": "Umumiy izoh",
+                    "outline": False, "transcription": "", "cost": 0.01, "provider": "test"}
+        essay_ai.grade = fake_grade
+        essay_ai.essay_enabled = lambda: True
+        self.woke = []
+        webapp.HOOKS["wake_ai"] = lambda: self.woke.append(1)
+
+    async def asyncTearDown(self):
+        self.essay_ai.grade, self.essay_ai.essay_enabled = self._grade, self._enabled
+        await super().asyncTearDown()
+
+    async def test_student_sees_score_and_it_goes_to_teacher_and_rasch(self):
+        _, r = await self.create(fmt="milliy")
+        test = db.get_test(r["id"])
+        self.user = {"id": STUDENT, "name": "Ali", "username": None}
+        status, sub = await self.post(f"/api/test/{test['code']}/submit",
+                                      {"variant": "A", "name": "Ali Valiyev", "answers": {"1": "A"}, "essay": "So'z " * 80})
+        self.assertEqual((status, sub["essay"]), (200, True))
+        self.assertEqual(self.woke, [1])  # navbat darhol uyg'ondi
+        mine = await (await self.client.get(f"/api/my-essay/{sub['attempt_id']}")).json()
+        self.assertEqual(mine["status"], "pending")
+        self.bot.messages.clear()
+        for essay in db.pending_essays(5):
+            await bot.grade_one(self.bot, essay)
+        mine = await (await self.client.get(f"/api/my-essay/{sub['attempt_id']}")).json()
+        expected = len(self.essay_ai.RUBRIC_KEYS[:9]) * 2
+        self.assertEqual((mine["status"], mine["score"], len(mine["criteria"])), ("graded", expected, len(self.essay_ai.RUBRIC_KEYS)))
+        self.assertEqual(db.get_attempt(sub["attempt_id"])["essay"], expected)  # natijaga qo'shildi
+        self.assertTrue(any(c == OWNER and "Esse AI bilan tekshirildi" in t for c, t in self.bot.messages))
+        # Rasch umumiy bali — test + esse o'rtachasi
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        page = await (await self.client.get(f"/api/teacher/test/{test['id']}")).json()
+        row = page["attempts"][0]
+        self.assertEqual(row["essay"], expected)
+        # Boshqa o'quvchi birovning essesini ko'ra olmaydi
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertEqual((await self.client.get(f"/api/my-essay/{sub['attempt_id']}")).status, 404)
+
+    async def test_paper_essay_still_needs_teacher(self):
+        _, r = await self.create(fmt="milliy")
+        test = db.get_test(r["id"])
+        attempt = await bot.record_attempt(self.bot, test, db.offline_tg_id(test["id"], 7), "Qog'oz", "A", {}, None, ["file-1"], 0.0)
+        db.set_essay_text(attempt["id"], "Qo'lda yozilgan " * 20, "pending")
+        for essay in db.pending_essays(5):
+            await bot.grade_one(self.bot, essay)
+        self.assertIsNone(db.get_attempt(attempt["id"])["essay"])  # o'qituvchi tasdiqlaydi
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))

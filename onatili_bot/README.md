@@ -85,7 +85,11 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - **Esse — alohida** (`ESSAY_PROVIDER`): sifatli baholash uchun `ESSAY_PROVIDER=claude` +
   `ANTHROPIC_API_KEY` (console.anthropic.com, balans). Model — `claude-sonnet-5-5` (≈ 250–500 so'm/esse),
   chuqur tahlil bilan. Yozma javoblar esa `AI_PROVIDER` (bepul Gemini) da qoladi.
-- AI bahosi — taklif: esseni o'qituvchi tasdiqlaydi (24 ballik mezon, 75 ballikka o'zi o'tadi), yozma
+- **O'quvchi esseni o'zi tekshiradi (onlayn test)**: esse yuborilishi bilan AI darhol baholaydi, o'quvchi
+  «Javoblaringiz qabul qilindi» ekranida ballni (75 ballik va 24 ballik mezon), har mezon izohini ko'radi.
+  Shu ball avtomatik natijaga qo'shiladi (test bilan Rasch umumiy bali va daraja), o'qituvchiga bot xabar beradi;
+  o'qituvchi «📝 Esselar»da xohlasa o'zgartiradi. AI o'chiq yoki limit tugagan bo'lsa — o'qituvchi baholaydi.
+- Qog'ozdagi esse (rasm) va titulli testning essesi: AI bahosi — taklif, o'qituvchi tasdiqlaydi; yozma
   javoblarni «✍️ Yozmalarni tekshirish»da tuzatsa bo'ladi.
 
 ## Natijalar bo'limi, sinf jadvali va mock sertifikat

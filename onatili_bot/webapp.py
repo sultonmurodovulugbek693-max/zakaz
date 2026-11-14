@@ -326,7 +326,30 @@ async def submit(request: web.Request) -> web.Response:
     attempt = await HOOKS["record_attempt"](test, user["id"], name, variant, answers, essay[:12000] or None, [], 0.0)
     if attempt is None:
         raise ApiError(409, "Siz bu testga javob yuborgansiz")
-    return ok({"ok": True, "attempt_id": attempt["id"]})
+    if essay and "wake_ai" in HOOKS:
+        HOOKS["wake_ai"]()  # o'quvchi essesi — navbat kutmasdan tekshiriladi
+    return ok({"ok": True, "attempt_id": attempt["id"], "essay": bool(essay)})
+
+
+async def my_essay(request: web.Request) -> web.Response:
+    """O'quvchi o'z essesini tekshiradi: holat (tekshirilmoqda / tayyor), ball, mezonlar va izoh — e'londan oldin ham."""
+    user = await auth(request)
+    attempt = await run(db.get_attempt, int(request.match_info["attempt_id"]))
+    if not attempt or attempt["tg_id"] != user["id"]:
+        raise ApiError(404, "Topilmadi")
+    essay = await run(db.get_essay, attempt["id"])
+    if not essay or essay["status"] == "none":
+        return ok({"status": "none"})
+    ai = essay["ai_result"] or {}
+    score = attempt["essay"] if attempt["essay"] is not None else essay["ai_score"]
+    return ok({
+        "status": essay["status"],  # pending — AI tekshirmoqda, graded — tayyor, manual — o'qituvchi, failed — AI o'qiy olmadi
+        "score": score, "score_75": essay_to_75(score), "max": ESSAY_MAX, "scale": ESSAY_SCALE,
+        "teacher_changed": attempt["essay"] is not None and essay["ai_score"] is not None and attempt["essay"] != essay["ai_score"],
+        "criteria": ai.get("criteria") if essay["status"] == "graded" else None,
+        "comment": ai.get("comment") if essay["status"] == "graded" else None,
+        "titles": essay_ai.RUBRIC_TITLES,
+    })
 
 
 async def ping(request: web.Request) -> web.Response:
@@ -2090,6 +2113,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/test/{code:\\d{5}}/essay", offline_essay_submit)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/offline-essays/{number:\\d{1,4}}/delete", offline_essay_delete)
     app.router.add_get("/api/result/{attempt_id:\\d+}", result)
+    app.router.add_get("/api/my-essay/{attempt_id:\\d+}", my_essay)
     app.router.add_post("/api/teacher/tests", create_test)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/announce", announce)

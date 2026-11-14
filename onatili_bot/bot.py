@@ -1055,6 +1055,7 @@ async def registration_notice(bot: Bot, reg: dict, username: str | None, again: 
 # ---------- AI esse navbati (fon jarayoni) ----------
 
 ESSAY_MAX_TRIES = 4
+AI_WAKE = asyncio.Event()  # yangi esse keldi — navbat kutmasdan darhol ishlaydi (o'quvchi natijani kutib turibdi)
 
 
 async def download_photos(bot: Bot, file_ids: list[str]) -> list[tuple[bytes, str]]:
@@ -1108,7 +1109,11 @@ async def essay_worker(bot: Bot) -> None:
         except Exception:
             logger.exception("Esse navbatida xato")
             delay = min(delay * 2, 600)
-        await asyncio.sleep(delay)
+        try:
+            await asyncio.wait_for(AI_WAKE.wait(), delay)
+        except asyncio.TimeoutError:
+            pass
+        AI_WAKE.clear()
 
 
 WRITTEN_MAX_TRIES = 5
@@ -1219,6 +1224,24 @@ async def scan_batch_notice(bot: Bot, chat_id: int, test: dict, saved: int, writ
     await bot.send_message(chat_id, "\n".join(lines), reply_markup=app_markup("◈ Testni ochish", t=test["id"]))
 
 
+async def self_check_notice(bot: Bot, attempt: dict, score: float) -> None:
+    """O'quvchi o'zi tekshirgan esse bahosi — o'qituvchiga (e'londan keyin bo'lsa o'quvchiga ham yangi ball)."""
+    test = await asyncio.to_thread(db.get_test, attempt["test_id"])
+    if not test:
+        return
+    try:
+        await bot.send_message(
+            test["owner_id"],
+            f"📝 <b>{esc(test['title'])}</b> · {esc(attempt['student_name'])}\n"
+            f"Esse AI bilan tekshirildi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b> ({fmt_num(score)}/{ESSAY_MAX} mezon) — "
+            "natijaga va Rasch'ga qo'shildi. O'zgartirish: «📝 Esselar».",
+            reply_markup=app_markup("◈ Testni ochish", t=test["id"]))
+    except Exception:
+        logger.warning("Esse bahosi o'qituvchiga yuborilmadi")
+    if test["closed"]:
+        await essay_notice(bot, test, attempt, score)
+
+
 async def grade_one(bot: Bot, essay: dict) -> None:
     try:
         images = [] if essay["text"] else await download_photos(bot, essay["photos"])
@@ -1230,8 +1253,14 @@ async def grade_one(bot: Bot, essay: dict) -> None:
             raise  # limit/tarmoq — butun navbat biroz kutadi
         return
     await asyncio.to_thread(db.save_essay_result, essay["attempt_id"], result)
-    if AUTO_CONFIRM_ESSAYS:
+    attempt = await asyncio.to_thread(db.get_attempt, essay["attempt_id"])
+    # O'quvchi onlayn yozgan esse — o'zi tekshiradi: AI bahosi darhol natijaga qo'shiladi (Rasch ham shundan),
+    # o'qituvchi ko'radi va xohlasa o'zgartiradi. Qog'ozdagi esse (rasm) — o'qituvchi tasdiqlaydi
+    self_check = bool(attempt and attempt["tg_id"] > 0 and essay["text"])
+    if (AUTO_CONFIRM_ESSAYS or self_check) and attempt and attempt["essay"] is None:
         await asyncio.to_thread(db.set_essay, essay["attempt_id"], result["score"])
+        if self_check:
+            await self_check_notice(bot, attempt, result["score"])
     logger.info("Esse baholandi: attempt=%s ball=%s ($%.4f)", essay["attempt_id"], result["score"], result["cost"])
 
 
@@ -1297,6 +1326,7 @@ async def main() -> None:
         scan_batch_notice=lambda chat_id, *args: scan_batch_notice(bot, chat_id, *args),
         send_text=lambda chat_id, text: bot.send_message(chat_id, text),
         bot_username=lambda: bot_username(bot),
+        wake_ai=AI_WAKE.set,
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         send_file=lambda chat_id, content, name, caption: bot.send_document(
