@@ -506,6 +506,21 @@ class EssaySelfCheck(ServerBase):
         self.assertIsNone(db.get_attempt(attempt["id"])["essay"])  # o'qituvchi tasdiqlaydi
 
 
+class EssayScore75(ServerBase):
+    async def test_teacher_enters_75_scale(self):
+        _, r = await self.create("offline", fmt="milliy")
+        test = db.get_test(r["id"])
+        attempt = await bot.record_attempt(self.bot, test, db.offline_tg_id(test["id"], 3), "Qog'oz", "A", {}, None, [], 0.0)
+        path = f"/api/teacher/essay/{attempt['id']}"
+        status, res = await self.post(path, {"score75": "51"})
+        self.assertEqual((status, res["score"], res["score_75"]), (200, 12.0, 51.0))
+        self.assertEqual(db.get_attempt(attempt["id"])["essay"], 12.0)  # Rasch shundan
+        self.assertEqual((await self.post(path, {"score75": 0}))[1]["score"], 0.0)
+        for bad in ("27", "76", "50,5", "abc"):
+            self.assertEqual((await self.post(path, {"score75": bad}))[0], 400, bad)
+        self.assertEqual((await self.post(path, {"score": "18,5"}))[1]["score_75"], 64.0)  # 24 ballik ham ishlaydi
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))

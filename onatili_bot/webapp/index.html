@@ -192,6 +192,10 @@ html.dark .quick-action i { background: #20302a; }
 .essay-score b { font-family: var(--font-display); font-size: 40px; line-height: 1; }
 .essay-score span { font-size: 16px; color: var(--muted); font-weight: 700; }
 .essay-score small { flex-basis: 100%; }
+.item.bulk-row { grid-template-columns: auto minmax(0, 1fr) 72px; gap: 12px; padding: 10px 12px; }
+.item.bulk-row .rank { font-size: 13px; }
+.bulk-in.input { width: 72px; text-align: center; font-weight: 800; font-size: 18px; padding: 10px 4px; }
+.bulk-in.bad { box-shadow: inset 0 0 0 2px var(--bad); }
 .tcard .t-scan { border: 0; border-radius: 12px; padding: 9px 10px; font: inherit; font-size: 13px; font-weight: 700; background: var(--grad); color: var(--btn-fg); cursor: pointer; }
 .tcard .del-test { position: static; width: 32px; height: 32px; font-size: 15px; margin: -6px -6px -6px 0; }
 .tests-more { justify-self: center; }
@@ -1424,6 +1428,12 @@ VIEWS.create = async () => {
 };
 
 // ---------- Testning majburiy kanallari: qo'shish / olib tashlash ----------
+// 75 ballik esse bahosi → 24 ballik mezon (DTM jadvali: 0 yoki 28–75; 28 → 0,5, 51 → 12, 75 → 24). Noto'g'ri — null
+function essay24(v) {
+  if (v === 0) return 0;
+  return Number.isInteger(v) && v >= 28 && v <= 75 ? (v - 27) / 2 : null;
+}
+
 // Faylni to'g'ridan-to'g'ri yuklab olish (bot chatiga kelmasa ham): imzolangan 10 daqiqalik havola
 async function downloadFile(testId, kind, btn) {
   if (btn) btn.disabled = true;
@@ -1536,7 +1546,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;
   const pending = d.attempts.filter(a => a.essay_status === "pending").length;
   const essayIcon = a => a.essay != null ? `✅ ${num(essay75(a.essay))}` : a.essay_status === "graded" ? `🤖 ${num(essay75(a.ai_score))}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
-  const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay_status === "none" ? "esse yuborilmagan" : a.essay != null ? "tasdiqlangan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
+  const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay != null ? (a.essay_status === "none" || !a.essay_status ? "baholangan" : "tasdiqlangan") : a.essay_status === "none" ? "baho kiritilmagan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
   // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
   const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0);
   const wPending = d.attempts.filter(a => a.written_status === "pending").length, wFailed = d.attempts.filter(a => a.written_status === "failed").length;
@@ -1593,7 +1603,8 @@ VIEWS.teacher = async ({ id, tab }) => {
     ${tab === "people" ? `${toResults}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
     ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
     ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
-      ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
+      ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
+      ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
@@ -1654,6 +1665,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     try { await api(`/api/teacher/test/${t.id}/offline-essays/${num}/delete`, {}); toast("🗑 Esse bekor qilindi"); haptic("success"); rerender(); }
     catch (e) { toast(e.message); x.disabled = false; }
   });
+  const be = document.getElementById("bulk-essays"); if (be) be.onclick = () => bulkEssays(d);
   const ca = document.getElementById("confirm-all");
   if (ca) ca.onclick = async () => { try { const res = await api(`/api/teacher/test/${t.id}/essays/confirm-all`, {}); toast(`✅ ${res.count} ta tasdiqlandi`); haptic("success"); rerender(); } catch (e) { toast(e.message); } };
 };
@@ -3234,29 +3246,75 @@ async function essaySheet(attemptId, testId) {
       <span class="muted small">24 ballik mezon bo'yicha ${num(e.ai_score)} → DTM jadvali bo'yicha ${num(essay75(e.ai_score))} / 75</span>${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
     ${e.status === "pending" ? `<p class="muted">⏳ AI hali tekshirmoqda — birozdan keyin qayta oching.</p>` : ""}
     ${e.status === "failed" ? `<p class="muted">❗️ AI baholay olmadi: ${esc(e.error || "")}</p>` : ""}
-    ${e.status === "none" ? `<p class="muted">➖ O'quvchi esse yubormagan.</p>` : ""}
+    ${e.status === "none" && e.essay == null ? `<p class="muted small">➖ Esse ilovada yuborilmagan. Qog'ozda yozgan bo'lsa — bahoni quyida 75 ballik shkalada kiriting.</p>` : ""}
     ${e.text ? `<details><summary class="small"><b>Esse matni</b></summary><p style="white-space:pre-wrap;font-size:14px">${esc(e.text)}</p></details>` : e.photos ? `<p class="muted small">📷 Esse ${e.photos} ta rasm ko'rinishida yuborilgan.</p>` : ""}
     ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(essay75(e.ai_score))} / 75)</button>` : ""}
     ${e.status === "failed" ? `<button class="btn ghost block" data-act="retry">🔁 AI'da qayta tekshirish</button>` : ""}
-    <div class="field"><label for="manual">O'z bahoyingiz — 24 ballik mezon bo'yicha (0–24, 0,5 qadam)</label>
-      <div class="row"><input class="input" id="manual" inputmode="decimal" placeholder="Masalan 18,5"><button class="btn ghost" data-act="score">Saqlash</button></div>
-      <span class="muted small" id="manual-75">DTM jadvali bo'yicha 75 ballik shkalaga o'tkaziladi.</span></div>
+    <div class="field"><label for="manual">O'z bahoyingiz</label>
+      <div class="chips" id="scale"><button type="button" class="chip on" data-scale="75">75 ballik</button><button type="button" class="chip" data-scale="24">24 ballik mezon</button></div>
+      <div class="row"><input class="input" id="manual" inputmode="numeric" placeholder="0 yoki 28–75" value="${e.essay != null ? num(essay75(e.essay)) : ""}"><button class="btn ghost" data-act="score">Saqlash</button></div>
+      <span class="muted small" id="manual-75">75 ballik: 0 yoki 28–75 (DTM jadvali). 24 ballik mezonga o'zi o'tadi.</span></div>
   </div>`;
   document.body.appendChild(modal);
   const close = () => modal.remove();
   modal.onclick = ev => { if (ev.target === modal || ev.target.closest("[data-close]")) close(); };
   const manual = modal.querySelector("#manual"), hint = modal.querySelector("#manual-75");
-  manual.oninput = () => {
+  let scale = 75;
+  const hintText = () => {
     const v = parseFloat(manual.value.replace(",", "."));
-    hint.textContent = isNaN(v) || v < 0 || v > 24 ? "DTM jadvali bo'yicha 75 ballik shkalaga o'tkaziladi."
-      : `= ${num(essay75(v))} / 75 ball (DTM jadvali)`;
+    if (scale === 75) return isNaN(v) ? "75 ballik: 0 yoki 28–75 (DTM jadvali). 24 ballik mezonga o'zi o'tadi."
+      : essay24(v) == null ? "⚠️ 75 ballik baho 0 yoki 28–75 oralig'idagi butun son bo'ladi" : `= ${num(essay24(v))} / 24 mezon`;
+    return isNaN(v) || v < 0 || v > 24 ? "24 ballik mezon: 0–24, 0,5 qadam" : `= ${num(essay75(v))} / 75 ball (DTM jadvali)`;
   };
+  manual.oninput = () => { hint.textContent = hintText(); };
+  modal.querySelectorAll("[data-scale]").forEach(x => x.onclick = () => {
+    const was = scale, v = parseFloat(manual.value.replace(",", "."));
+    scale = +x.dataset.scale;
+    modal.querySelectorAll("[data-scale]").forEach(y => y.classList.toggle("on", y === x));
+    if (!isNaN(v) && was !== scale) { const c = scale === 24 ? essay24(v) : essay75(v); manual.value = c == null ? "" : num(c); }
+    manual.placeholder = scale === 75 ? "0 yoki 28–75" : "Masalan 18,5"; manual.inputMode = scale === 75 ? "numeric" : "decimal";
+    hint.textContent = hintText(); haptic("select");
+  });
   modal.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const action = b.dataset.act, payload = { action };
-    if (action === "score") payload.score = document.getElementById("manual").value;
+    if (action === "score") { if (scale === 75) payload.score75 = manual.value; else payload.score = manual.value; }
     try { await api(`/api/teacher/essay/${attemptId}`, payload); haptic("success"); toast(action === "retry" ? "🔁 Navbatga qo'yildi" : "✅ Saqlandi"); close(); rerender(); }
     catch (err) { toast(err.message); haptic("error"); }
   });
+}
+
+// Qog'ozdagi esselar: hamma o'quvchi bir ro'yxatda, har birining yonida 75 ballik maydon — yozilgach o'zi saqlanadi
+// (Enter yoki keyingi maydonga o'tganda). Ro'yxat tartibi — titul ID'si, keyin ism
+function bulkEssays(d) {
+  const numbers = Object.fromEntries((d.students || []).filter(s => s.attempt_id).map(s => [s.attempt_id, s.number]));
+  const rows = d.attempts.slice().sort((a, b) => (numbers[a.id] || 1e6) - (numbers[b.id] || 1e6) || a.name.localeCompare(b.name));
+  const modal = openModal("✏️ Esse ballari · 75 ballik", `<span class="muted small">0 yoki 28–75 (DTM jadvali). Yozib Enter bosing — saqlanadi va keyingisiga o'tadi. Bo'sh qoldirsangiz — o'zgarmaydi.</span>
+    <div class="list bulk-list">${rows.map((a, i) => `<label class="item bulk-row" style="cursor:default">
+      <span class="rank">${numbers[a.id] ? pad3(numbers[a.id]) : i + 1}</span>
+      <span><b>${esc(a.name)}</b><small data-state="${a.id}">${a.essay != null ? `✅ ${num(essay75(a.essay))} / 75` : a.essay_status === "graded" ? `AI taklifi: ${num(essay75(a.ai_score))}` : "baho yo'q"}</small></span>
+      <input class="input bulk-in" data-att="${a.id}" inputmode="numeric" maxlength="2" placeholder="—" value="${a.essay != null ? num(essay75(a.essay)) : ""}" aria-label="${esc(a.name)} — esse bali (75)"></label>`).join("")}</div>
+    <button class="btn block" data-close>Tayyor</button>`);
+  const inputs = [...modal.querySelectorAll(".bulk-in")];
+  const save = async el => {
+    const raw = el.value.trim(), state = modal.querySelector(`[data-state="${el.dataset.att}"]`);
+    if (!raw || raw === el.dataset.saved) return true;
+    const v = Number(raw);
+    if (essay24(v) == null) { state.textContent = "⚠️ 0 yoki 28–75"; el.classList.add("bad"); haptic("error"); return false; }
+    try {
+      await api(`/api/teacher/essay/${el.dataset.att}`, { score75: v });
+      el.dataset.saved = raw; el.classList.remove("bad"); state.textContent = `✅ ${v} / 75 · ${num(essay24(v))} / 24`;
+      S.teacherCache = null; return true;
+    } catch (e) { state.textContent = "⚠️ " + e.message; el.classList.add("bad"); return false; }
+  };
+  inputs.forEach((el, i) => {
+    el.dataset.saved = el.value;
+    el.oninput = () => { el.value = el.value.replace(/\D/g, "").slice(0, 2); };
+    el.onblur = () => save(el);
+    el.onkeydown = async ev => { if (ev.key === "Enter") { ev.preventDefault(); if (await save(el) && inputs[i + 1]) inputs[i + 1].focus(); } };
+  });
+  const observer = new MutationObserver(() => { if (!document.body.contains(modal)) { observer.disconnect(); if (!S.teacherCache) rerender(); } });
+  observer.observe(document.body, { childList: true });
+  if (inputs[0]) setTimeout(() => (inputs.find(x => !x.value) || inputs[0]).focus(), 250);
 }
 
 // ---------- APK ilova: Telegram orqali kirish va skaner ----------

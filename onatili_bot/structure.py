@@ -62,6 +62,16 @@ def essay_to_75(score: float | None) -> float | None:
     return 0.0 if half <= 0 else 27 + 2 * half
 
 
+def essay_from_75(value: float) -> float:
+    """75 ballik baho → 24 ballik mezon (essay_to_75 ning teskarisi). DTM jadvalida faqat 0 yoki 28–75 butun son bor:
+    28 → 0,5, 51 → 12, 75 → 24. Boshqa qiymat — ValueError."""
+    if value == 0:
+        return 0.0
+    if value != int(value) or not 28 <= value <= ESSAY_SCALE:
+        raise ValueError("75 ballik baho 0 yoki 28–75 oralig'idagi butun son bo'ladi")
+    return (value - 27) / 2
+
+
 def item_points(item: dict) -> float:
     return item.get("points", 1.0)
 

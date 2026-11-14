@@ -48,6 +48,7 @@ from structure import (
     max_points,
     percent,
     split_options,
+    essay_from_75,
     text_is_correct,
     text_items,
 )
@@ -993,6 +994,11 @@ async def essay_score(request: web.Request) -> web.Response:
     elif payload.get("action") == "retry":
         await run(db.retry_essay, attempt["id"])
         return ok({"ok": True})
+    elif payload.get("score75") not in (None, ""):  # o'qituvchi 75 ballik shkalada kiritdi (oflayn — qog'ozdagi esse)
+        try:
+            score = essay_from_75(float(str(payload.get("score75")).replace(",", ".")))
+        except ValueError:
+            raise ApiError(400, "75 ballik baho: 0 yoki 28–75 oralig'idagi butun son")
     else:
         try:
             score = float(str(payload.get("score")).replace(",", "."))
@@ -1003,7 +1009,7 @@ async def essay_score(request: web.Request) -> web.Response:
     await run(db.set_essay, attempt["id"], score)
     if HOOKS.get("essay_notice"):
         await HOOKS["essay_notice"](test, attempt, score)
-    return ok({"ok": True, "score": score, "score_75": essay_to_75(score)})
+    return ok({"ok": True, "score": score, "score_75": essay_to_75(score), "attempt_id": attempt["id"]})
 
 
 async def essays_confirm_all(request: web.Request) -> web.Response:
