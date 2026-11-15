@@ -190,6 +190,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "can_create": SALES_ENABLED or plans.is_free(user["id"]),  # test yarata oladimi
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
         "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
+        # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
+        "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
         "plans": await run(plans.offers),
         "card": await run(plans.card),
         "payment": await run(db.open_payment, user["id"]),
@@ -502,19 +504,31 @@ async def plan_order(request: web.Request) -> web.Response:
     """«Sotib olish» bosildi (obuna muddati yoki «📦 Esse paketi»): to'lov so'rovi ochiladi,
     foydalanuvchiga karta va summa ko'rsatiladi."""
     user = await auth(request)
-    if not SALES_ENABLED:
-        raise ApiError(403, "Obuna hozircha yopiq")
-    if await run(plans.is_free, user["id"]):
-        raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
-    period = str((await body(request)).get("period") or "")
-    if period != plans.PACK and period not in plans.PERIODS:
-        raise ApiError(400, "Muddat noto'g'ri")
+    payload = await body(request)
+    period = str(payload.get("period") or "")
+    count = max(1, min(20, to_int(payload.get("count"), 1, "Paketlar soni")))
     essays = None
-    if period == plans.PACK:
+    if not SALES_ENABLED:
+        # Obuna yopiq: ruxsat berilgan o'qituvchi AI esse kreditini o'zi sotib oladi (karta → chek → admin)
+        if period != plans.PACK:
+            raise ApiError(403, "Obuna hozircha yopiq")
+        if not await run(plans.is_free, user["id"]):
+            raise ApiError(403, "Kredit test yaratishga ruxsati bor o'qituvchilar uchun")
+        if plans.ai_unlimited(user["id"]):
+            raise ApiError(400, "Sizda AI cheksiz — kredit kerak emas")
+        offer = await run(plans.pack)
+        if not offer["price"]:
+            raise ApiError(400, "Kredit narxi hali belgilanmagan — admin bilan bog'laning")
+        amount, essays = offer["price"] * count, offer["essays"] * count
+    elif await run(plans.is_free, user["id"]):
+        raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
+    elif period != plans.PACK and period not in plans.PERIODS:
+        raise ApiError(400, "Muddat noto'g'ri")
+    elif period == plans.PACK:
         if not (await run(plans.status, user["id"]))["active"]:
             raise ApiError(400, "Esse paketi faol obunaga qo'shiladi — avval obunani yangilang")
         offer = await run(plans.pack)
-        amount, essays = offer["price"], offer["essays"]
+        amount, essays = offer["price"] * count, offer["essays"] * count
     else:
         amount = await run(plans.price_of, period)
     card = await run(plans.card)
@@ -546,9 +560,20 @@ async def written_ai(owner_id: int) -> bool:
     return plans.ai_unlimited(owner_id) and essay_ai.enabled() and await ai_allowed(owner_id, "written")
 
 
+CREDIT_WARN = 5  # shuncha kredit qolganda o'qituvchiga ogohlantirish
+
+
 async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatish (oylik limit bo'yicha). Limit/obuna tugagan bo'lsa — o'qituvchiga oyiga bir marta xabar."""
     if await run(plans.use_ai, owner_id, kind, amount):
+        if kind == "essays" and not SALES_ENABLED and not plans.ai_unlimited(owner_id) and "send_text" in HOOKS:
+            left = await run(db.get_credits, owner_id)
+            if left == CREDIT_WARN:  # kredit oz qoldi — bir marta ogohlantirish
+                try:
+                    await HOOKS["send_text"](owner_id, f"🤖 <b>AI esse krediti oz qoldi: {left} ta</b>\nYana {left} ta o'quvchi "
+                                             "essesini tekshirtira olasiz. To'ldirish: ilovada «🤖 AI esse» → «Kredit sotib olish».")
+                except Exception:
+                    logger.warning("Kredit ogohlantirishi yuborilmadi", exc_info=True)
         return True
     if kind == "essays" and not SALES_ENABLED:
         # Obuna yopiq — kredit tugadi: o'qituvchiga bir marta (kredit to'ldirilgach yana) xabar
@@ -712,6 +737,7 @@ async def teacher_test(request: web.Request) -> web.Response:
         "waiting_essays": await run(db.waiting_offline_essays, test["id"]) if offline_milliy and not essay_on_paper(test) else 0,
         "essay_on_paper": essay_on_paper(test),
         "essays_missing": sum(1 for a in attempts if essay_pending(test, a)),
+        "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
         "offline_essays": [offline_essay_view(e) for e in await run(db.list_offline_essays, test["id"])]
         if offline_milliy else [],
     })
@@ -766,6 +792,156 @@ async def send_pdf(request: web.Request) -> web.Response:
         logger.exception("Fayl (%s) yuborilmadi: test %s", kind, test["id"])
         raise ApiError(502, send_error_text(exc))
     return ok({"ok": True})
+
+
+# ---------- Ustoz — o'quvchi: ulash va «✍️ Esse tekshirish» (ustoz kreditidan) ----------
+# O'quvchi ustozga ikki yo'l bilan ulanadi: ustoz uning @username / Telegram ID'sini qo'shadi yoki o'quvchi ustozning
+# taklif havolasini bosadi (t.me/<bot>?start=t_<ustoz>_<imzo>). Ulangan o'quvchi test bo'lmasa ham esse yozib,
+# AI'da (75 ballik, imtihondagidek) tekshirtiradi — har esse ustozning 1 krediti. Ustoz har o'quvchiga oylik chegara qo'yadi.
+
+STUDENT_LIMIT_DEFAULT = 10
+PRACTICE_MIN_WORDS, PRACTICE_MAX_CHARS = 60, 20000
+
+
+def invite_code(teacher_id: int) -> str:
+    sig = hmac.new(f"invite:{BOT_TOKEN}".encode(), str(teacher_id).encode(), hashlib.sha256).hexdigest()[:10]
+    return f"t_{teacher_id}_{sig}"
+
+
+def teacher_from_invite(code: str) -> int | None:
+    parts = code.split("_")
+    if len(parts) != 3 or parts[0] != "t" or not parts[1].isdigit():
+        return None
+    return int(parts[1]) if hmac.compare_digest(invite_code(int(parts[1])), code) else None
+
+
+def student_limit(teacher_id: int) -> int:
+    try:
+        return max(1, min(200, int(db.get_settings().get(f"student_limit:{teacher_id}", STUDENT_LIMIT_DEFAULT))))
+    except (TypeError, ValueError):
+        return STUDENT_LIMIT_DEFAULT
+
+
+async def link_by_teacher(teacher: dict, student_id: int) -> bool:
+    """Ulash va ikkala tomonga xabar. Qaytaradi: yangi ulandimi."""
+    fresh = await run(db.link_student, teacher["id"], student_id)
+    if fresh and "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](
+                student_id, f"✅ <b>Siz {html.escape(teacher.get('name') or 'ustoz')} ustozga ulandingiz</b>\n"
+                "Endi ilovada «✍️ Esse tekshirish»: esse yozasiz — AI imtihondagidek 75 ballik shkalada tekshiradi "
+                "(ustozingiz hisobidan).")
+        except Exception:
+            logger.warning("O'quvchiga ulanish xabari yuborilmadi", exc_info=True)
+    return fresh
+
+
+async def link_view(request: web.Request) -> web.Response:
+    user = await auth(request)
+    if not await run(plans.is_free, user["id"]) and not SALES_ENABLED:
+        raise ApiError(403, "Bu bo'lim test yaratishga ruxsati bor o'qituvchilar uchun")
+    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
+    students = await run(db.linked_students, user["id"], plans.month_key())
+    offer = await run(plans.pack)
+    card = await run(plans.card)
+    unlimited = plans.ai_unlimited(user["id"])
+    return ok({
+        "invite_url": f"https://t.me/{username}?start={invite_code(user['id'])}" if username else None,
+        "students": [{"id": s["student_id"], "name": s["full_name"] or "O'quvchi", "username": s["username"],
+                      "used": s["used"]} for s in students],
+        "limit": await run(student_limit, user["id"]),
+        "credits": None if unlimited else await run(db.get_credits, user["id"]),
+        "unlimited": unlimited, "ai": essay_ai.essay_enabled(),
+        "pack": offer, "card_ready": bool(card["number"]) and bool(offer["price"]),
+        "payment": await run(db.open_payment, user["id"]),
+    })
+
+
+async def link_add(request: web.Request) -> web.Response:
+    user = await auth(request)
+    if not await run(plans.is_free, user["id"]) and not SALES_ENABLED:
+        raise ApiError(403, "Ruxsat yo'q")
+    ref = str((await body(request)).get("ref") or "").strip()
+    if not ref:
+        raise ApiError(400, "O'quvchining @username'ini yoki Telegram ID'sini yozing")
+    found = await run(db.find_user, ref.split()[0])
+    if not found or (not ref.lstrip("@").isdigit() and not found.get("full_name")):
+        raise ApiError(404, "Topilmadi — o'quvchi avval botga /start bosgan bo'lishi kerak (yoki taklif havolasini yuboring)")
+    if found["tg_id"] == user["id"]:
+        raise ApiError(400, "O'zingizni qo'sha olmaysiz")
+    await link_by_teacher(user, found["tg_id"])
+    return await link_view(request)
+
+
+async def link_remove(request: web.Request) -> web.Response:
+    user = await auth(request)
+    await run(db.unlink_student, user["id"], to_int((await body(request)).get("student_id"), 0, "O'quvchi"))
+    return await link_view(request)
+
+
+async def link_limit(request: web.Request) -> web.Response:
+    user = await auth(request)
+    limit = to_int((await body(request)).get("limit"), STUDENT_LIMIT_DEFAULT, "Chegara")
+    if not 1 <= limit <= 200:
+        raise ApiError(400, "Oylik chegara 1–200 ta esse")
+    await run(db.set_setting, f"student_limit:{user['id']}", limit)
+    return await link_view(request)
+
+
+def _practice_view(item: dict) -> dict:
+    ai = item["ai_result"] or {}
+    return {"id": item["id"], "status": item["status"], "topic": item["topic"], "created_at": item["created_at"],
+            "score": item["ai_score"], "score_75": essay_to_75(item["ai_score"]), "max": ESSAY_MAX, "scale": ESSAY_SCALE,
+            "criteria": ai.get("criteria") if item["status"] == "graded" else None,
+            "comment": ai.get("comment") if item["status"] == "graded" else None,
+            "titles": essay_ai.RUBRIC_TITLES, "words": len(item["text"].split())}
+
+
+async def practice_home(request: web.Request) -> web.Response:
+    """O'quvchi: ustozlari (oylik qoldiq bilan) va oldingi esselari."""
+    user = await auth(request)
+    month = plans.month_key()
+    teachers = []
+    for t in await run(db.teachers_of, user["id"]):
+        limit = await run(student_limit, t["teacher_id"])
+        used = await run(db.practice_used, t["teacher_id"], user["id"], month)
+        teachers.append({"id": t["teacher_id"], "name": t["full_name"] or "Ustoz", "left": max(0, limit - used), "limit": limit})
+    history = [_practice_view(p) for p in await run(db.practice_of_student, user["id"], 20)]
+    return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
+
+
+async def practice_submit(request: web.Request) -> web.Response:
+    user = await auth(request)
+    payload = await body(request)
+    teacher_id = to_int(payload.get("teacher_id"), 0, "Ustoz")
+    if not await run(db.is_linked, teacher_id, user["id"]):
+        raise ApiError(403, "Siz bu ustozga ulanmagansiz")
+    if not essay_ai.essay_enabled():
+        raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
+    text = str(payload.get("essay") or "").strip()
+    if len(text.split()) < PRACTICE_MIN_WORDS:
+        raise ApiError(400, f"Esse juda qisqa — kamida {PRACTICE_MIN_WORDS} so'z yozing")
+    if len(text) > PRACTICE_MAX_CHARS:
+        raise ApiError(400, "Esse juda uzun")
+    limit = await run(student_limit, teacher_id)
+    if await run(db.practice_used, teacher_id, user["id"], plans.month_key()) >= limit:
+        raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
+    if not await ai_allowed(teacher_id, "essays"):  # ustozning 1 krediti
+        raise ApiError(402, "Ustozingizning AI krediti tugagan — ustozingizga ayting")
+    topic = str(payload.get("topic") or "").strip()[:1500] or None
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text)
+    if "wake_ai" in HOOKS:
+        HOOKS["wake_ai"]()
+    return ok({"ok": True, "id": practice_id})
+
+
+async def practice_get(request: web.Request) -> web.Response:
+    user = await auth(request)
+    item = await run(db.get_practice, int(request.match_info["practice_id"]))
+    if not item or item["student_id"] != user["id"]:
+        raise ApiError(404, "Topilmadi")
+    return ok(_practice_view(item))
 
 
 # ---------- Fayllarni to'g'ridan-to'g'ri yuklab olish (bot chatiga yuborilmasa ham) ----------
@@ -2245,6 +2421,13 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/send", send_pdf)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/download", download_link)
     app.router.add_get("/dl/{token}", download_file)
+    app.router.add_get("/api/teacher/link", link_view)
+    app.router.add_post("/api/teacher/link", link_add)
+    app.router.add_post("/api/teacher/link/remove", link_remove)
+    app.router.add_post("/api/teacher/link/limit", link_limit)
+    app.router.add_get("/api/practice", practice_home)
+    app.router.add_post("/api/practice", practice_submit)
+    app.router.add_get("/api/practice/{practice_id:\\d+}", practice_get)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)

@@ -33,6 +33,13 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   yechiladi (1 esse = 1 kredit). O'qituvchi to'lov qiladi → admin botda `/kredit <ID> <son>` (qoldiq: `/kredit <ID>`).
   Kredit tugasa — esse o'qituvchiga qo'lda baholashga qoladi va unga bir marta xabar boradi. Admin va `FREE_IDS` — cheksiz.
   O'qituvchi qoldiqni ilovaning bosh sahifasida va botda `/kredit` bilan ko'radi.
+- **Kreditni o'qituvchi o'zi sotib oladi**: ilovada «🤖 AI esse» → paket soni (1 paket = `pack_essays` ta esse,
+  narxi `price_pack` — `/sozlama`) → karta raqami va summa → chek botga → admin «✅ Tasdiqlash» → kredit o'zi qo'shiladi.
+  Kredit 5 ta qolganda o'qituvchiga ogohlantirish. Bosh sahifada «Yana N ta o'quvchi essesini tekshirtira olasiz».
+- **Ustozga ulangan o'quvchi** test bo'lmasa ham «✍️ Esse tekshirish»da esse yozadi — AI 75 ballik shkalada tekshiradi,
+  ustoz kreditidan (1 esse = 1 kredit; AI tekshira olmasa — kredit qaytadi). Ulash: ustoz «🤖 AI esse»da o'quvchining
+  @username / Telegram ID'sini qo'shadi yoki taklif havolasini yuboradi (`t.me/<bot>?start=t_<ID>_<imzo>`).
+  Ustoz har o'quvchiga oylik chegara qo'yadi (boshlang'ich 10 ta).
 - **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
   to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.

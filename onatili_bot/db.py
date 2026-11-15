@@ -109,6 +109,29 @@ SCHEMA = [
         attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
         UNIQUE (test_id, number)
     )""",
+    # Ustozga ulangan o'quvchilar: ustoz kreditidan esse tekshirtiradi (test bo'lmasa ham — «✍️ Esse tekshirish»)
+    f"""CREATE TABLE IF NOT EXISTS teacher_students (
+        teacher_id {BIG} NOT NULL,
+        student_id {BIG} NOT NULL,
+        created_at TEXT,
+        PRIMARY KEY (teacher_id, student_id)
+    )""",
+    # O'quvchining mustaqil essesi (mashq): AI 75 ballik shkalada tekshiradi, ustoz kreditidan
+    f"""CREATE TABLE IF NOT EXISTS practice_essays (
+        id         {ID},
+        teacher_id {BIG} NOT NULL,
+        student_id {BIG} NOT NULL,
+        topic      TEXT,
+        text       TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        ai_score   {FLOAT},
+        ai_result  TEXT,
+        cost       {FLOAT} NOT NULL DEFAULT 0,
+        tries      INTEGER NOT NULL DEFAULT 0,
+        error      TEXT,
+        created_at TEXT,
+        graded_at  TEXT
+    )""",
     # Ikki varaqli titul: 2-varaq (yozma javoblar) 1-varaqdan oldin skanerlansa — rasm o'quvchi ID'si bo'yicha
     # shu yerda kutadi; 1-varaq saqlanganda natijaga biriktiriladi
     f"""CREATE TABLE IF NOT EXISTS written_pending (
@@ -761,6 +784,100 @@ def create_written_job(attempt_id: int, test_id: int, image_b64: str, mime: str,
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (attempt_id, test_id, image_b64, mime, status, 1 if status == "manual" else 0, _now()),
         )
+
+
+# ---------- Ustoz — o'quvchi ulanishi va mustaqil esse ----------
+
+def link_student(teacher_id: int, student_id: int) -> bool:
+    """Ulash. Qaytaradi: yangi ulandimi (avval ulangan bo'lsa — False)."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "INSERT INTO teacher_students (teacher_id, student_id, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(teacher_id, student_id) DO NOTHING", (teacher_id, student_id, _now())).rowcount)
+
+
+def unlink_student(teacher_id: int, student_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM teacher_students WHERE teacher_id = ? AND student_id = ?", (teacher_id, student_id))
+
+
+def is_linked(teacher_id: int, student_id: int) -> bool:
+    with connect() as conn:
+        return bool(conn.execute("SELECT 1 FROM teacher_students WHERE teacher_id = ? AND student_id = ?",
+                                 (teacher_id, student_id)).fetchone())
+
+
+def linked_students(teacher_id: int, month: str) -> list[dict]:
+    """Ustozning o'quvchilari: ism, username va shu oyda nechta esse tekshirtirgani."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT l.student_id, l.created_at, u.full_name, u.username, "
+            "(SELECT COUNT(*) FROM practice_essays p WHERE p.teacher_id = l.teacher_id AND p.student_id = l.student_id "
+            " AND p.created_at LIKE ? AND p.status <> 'failed') AS used "
+            "FROM teacher_students l LEFT JOIN users u ON u.tg_id = l.student_id WHERE l.teacher_id = ? "
+            "ORDER BY l.created_at DESC", (f"{month}%", teacher_id)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def teachers_of(student_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT l.teacher_id, u.full_name, u.username FROM teacher_students l LEFT JOIN users u ON u.tg_id = l.teacher_id "
+            "WHERE l.student_id = ? ORDER BY l.created_at", (student_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def practice_used(teacher_id: int, student_id: int, month: str) -> int:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM practice_essays WHERE teacher_id = ? AND student_id = ? AND created_at LIKE ? "
+            "AND status <> 'failed'", (teacher_id, student_id, f"{month}%")).fetchone()["n"]
+
+
+def create_practice(teacher_id: int, student_id: int, topic: str | None, text: str) -> int:
+    with connect() as conn:
+        return conn.execute(
+            "INSERT INTO practice_essays (teacher_id, student_id, topic, text, status, created_at) "
+            "VALUES (?, ?, ?, ?, 'pending', ?) RETURNING id", (teacher_id, student_id, topic, text, _now())).fetchone()["id"]
+
+
+def _practice(row) -> dict | None:
+    if row is None:
+        return None
+    item = dict(row)
+    item["ai_result"] = json.loads(item["ai_result"]) if item["ai_result"] else None
+    return item
+
+
+def get_practice(practice_id: int) -> dict | None:
+    with connect() as conn:
+        return _practice(conn.execute("SELECT * FROM practice_essays WHERE id = ?", (practice_id,)).fetchone())
+
+
+def practice_of_student(student_id: int, limit: int = 20) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM practice_essays WHERE student_id = ? ORDER BY id DESC LIMIT ?",
+                            (student_id, limit)).fetchall()
+    return [_practice(row) for row in rows]
+
+
+def pending_practice(limit: int = 5) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM practice_essays WHERE status = 'pending' ORDER BY id LIMIT ?", (limit,)).fetchall()
+    return [_practice(row) for row in rows]
+
+
+def save_practice_result(practice_id: int, result: dict) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE practice_essays SET status = 'graded', ai_score = ?, ai_result = ?, cost = cost + ?, "
+                     "graded_at = ?, error = NULL WHERE id = ?",
+                     (result["score"], json.dumps(result, ensure_ascii=False), result.get("cost", 0), _now(), practice_id))
+
+
+def practice_failed(practice_id: int, error: str, give_up: bool) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE practice_essays SET tries = tries + 1, error = ?, status = ? WHERE id = ?",
+                     (error[:300], "failed" if give_up else "pending", practice_id))
 
 
 def save_written_pending(test_id: int, number: int, image_b64: str, mime: str) -> None:

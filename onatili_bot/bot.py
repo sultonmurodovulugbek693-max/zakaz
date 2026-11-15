@@ -110,10 +110,36 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("app_"):
         await confirm_app_login(message, args[1][4:])
         return
+    if len(args) == 2 and args[1].startswith("t_"):  # ustozning taklif havolasi — o'quvchi ulanadi
+        await join_teacher(message, args[1])
+        return
     if len(args) == 2 and args[1] == "register":
         await send_register_prompt(message)
         return
     await send_welcome(message, user)
+
+
+async def join_teacher(message: Message, code: str) -> None:
+    teacher_id = webapp.teacher_from_invite(code)
+    if not teacher_id:
+        await message.answer("⌛️ Taklif havolasi noto'g'ri. Ustozingizdan yangisini so'rang.")
+        return
+    if teacher_id == message.from_user.id:
+        await message.answer("Bu sizning taklif havolangiz — uni o'quvchilaringizga yuboring.")
+        return
+    teacher = await asyncio.to_thread(db.find_user, str(teacher_id))
+    name = (teacher or {}).get("full_name") or "ustoz"
+    fresh = await asyncio.to_thread(db.link_student, teacher_id, message.from_user.id)
+    await message.answer(
+        (f"✅ <b>Siz {esc(name)} ustozga ulandingiz</b>\n" if fresh else f"Siz {esc(name)} ustozga allaqachon ulangansiz.\n")
+        + "Ilovada «✍️ Esse tekshirish»: esse yozasiz — AI imtihondagidek 75 ballik shkalada tekshiradi "
+          "(ustozingiz hisobidan).", reply_markup=app_markup("✍️ Esse tekshirish", v="practice"))
+    if fresh:
+        try:
+            await message.bot.send_message(teacher_id, f"👤 <b>{esc(message.from_user.full_name)}</b> taklif havolangiz orqali "
+                                                       "ulandi — endi esse tekshirtira oladi (kreditingizdan).")
+        except Exception:
+            logger.warning("Ustozga ulanish xabari yuborilmadi")
 
 
 async def send_register_prompt(message: Message) -> None:
@@ -371,10 +397,12 @@ async def notify_granted(bot: Bot, tg_id: int, status: dict) -> None:
 
 async def notify_pack(bot: Bot, tg_id: int, essays: int, balance: int) -> None:
     try:
-        await bot.send_message(
-            tg_id, f"📦 <b>Esse paketi qo'shildi</b>: +{essays} ta\n"
-                   f"Jami qo'shimcha: {balance} ta esse. Oylik limit tugaganda AI shulardan foydalanadi — "
-                   "muddati yo'q, keyingi oyga ham o'tadi.", reply_markup=app_markup())
+        text = (f"🤖 <b>AI esse krediti qo'shildi: +{essays}</b>\nJami: <b>{balance}</b> ta — yana {balance} ta o'quvchi "
+                "essesini tekshirtira olasiz (1 esse = 1 kredit)." if not config.SALES_ENABLED else
+                f"📦 <b>Esse paketi qo'shildi</b>: +{essays} ta\n"
+                f"Jami qo'shimcha: {balance} ta esse. Oylik limit tugaganda AI shulardan foydalanadi — "
+                "muddati yo'q, keyingi oyga ham o'tadi.")
+        await bot.send_message(tg_id, text, reply_markup=app_markup())
     except Exception:
         logger.warning("O'qituvchiga paket xabari yuborilmadi")
 
@@ -1135,6 +1163,9 @@ async def essay_worker(bot: Bot) -> None:
             for essay in (await asyncio.to_thread(db.pending_essays, 5) if essay_ai.essay_enabled() else []):
                 await grade_one(bot, essay)
                 await asyncio.sleep(2)
+            for practice in (await asyncio.to_thread(db.pending_practice, 5) if essay_ai.essay_enabled() else []):
+                await grade_practice(bot, practice)
+                await asyncio.sleep(1)
             delay, down_since, alerted = 10, None, False
         except essay_ai.AIError as error:  # limit yoki tarmoq — kutib turamiz
             logger.warning("AI vaqtincha ishlamayapti: %s", error)
@@ -1277,6 +1308,28 @@ async def self_check_notice(bot: Bot, attempt: dict, score: float) -> None:
         logger.warning("Esse bahosi o'qituvchiga yuborilmadi")
     if test["closed"]:
         await essay_notice(bot, test, attempt, score)
+
+
+async def grade_practice(bot: Bot, practice: dict) -> None:
+    """O'quvchining mustaqil essesi: AI baholaydi va o'quvchiga xabar. Bajarilmasa — ustoz krediti qaytariladi."""
+    try:
+        result = await essay_ai.grade(practice["topic"] or "", practice["text"], [])
+    except essay_ai.AIError as error:
+        give_up = not error.retry or practice["tries"] + 1 >= ESSAY_MAX_TRIES
+        await asyncio.to_thread(db.practice_failed, practice["id"], str(error), give_up)
+        if give_up and not plans.ai_unlimited(practice["teacher_id"]):
+            await asyncio.to_thread(db.add_credits, practice["teacher_id"], 1)  # tekshirilmadi — kredit qaytadi
+        if error.retry and not give_up:
+            raise
+        return
+    await asyncio.to_thread(db.save_practice_result, practice["id"], result)
+    try:
+        await bot.send_message(practice["student_id"],
+                               f"📝 <b>Essengiz tekshirildi: {fmt_num(essay_to_75(result['score']))}/{ESSAY_SCALE}</b>\n"
+                               "Har mezon bo'yicha tahlil — ilovada.",
+                               reply_markup=app_markup("✍️ Natijani ko'rish", v="practice"))
+    except Exception:
+        logger.warning("Esse natijasi o'quvchiga yuborilmadi")
 
 
 async def grade_one(bot: Bot, essay: dict) -> None:

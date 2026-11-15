@@ -671,6 +671,92 @@ class TeacherCredits(EssaySelfCheck):
         self.assertTrue(plans.is_free(OWNER))
 
 
+class LinkedPractice(TeacherCredits):
+    """Ustozga ulangan o'quvchi test bo'lmasa ham esse tekshirtiradi — ustoz kreditidan, oylik chegara bilan."""
+
+    test_essays_spend_teacher_credits = None
+    test_admin_and_free_ids_unlimited = None
+
+    async def practice(self, uid, words=80):
+        self.user = {"id": uid, "name": "O'quvchi", "username": None}
+        status, res = await self.post("/api/practice", {"teacher_id": OWNER, "topic": "Kitob", "essay": "So'z " * words})
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        return status, res
+
+    async def test_invite_and_add_link_students(self):
+        import bot as botmod
+        code = webapp.invite_code(OWNER)
+        self.assertEqual(webapp.teacher_from_invite(code), OWNER)
+        self.assertIsNone(webapp.teacher_from_invite(code[:-1] + ("0" if code[-1] != "0" else "1")))  # soxta imzo
+        replies = []
+
+        class Msg:
+            from_user = types.SimpleNamespace(id=STUDENT, full_name="Ali Valiyev")
+            bot = types.SimpleNamespace(send_message=lambda chat, text, **k: asyncio.sleep(0))
+
+            async def answer(self, text, **_):
+                replies.append(text)
+        await botmod.join_teacher(Msg(), code)
+        self.assertTrue(db.is_linked(OWNER, STUDENT))
+        # Ustoz @username bilan qo'shadi (o'quvchi botga /start bosgan)
+        db.remember_user(OTHER, "Vali Karimov", "vali_k")
+        status, view = await self.post("/api/teacher/link", {"ref": "@vali_k"})
+        self.assertEqual(status, 200)
+        self.assertEqual({s["id"] for s in view["students"]}, {STUDENT, OTHER})
+        self.assertEqual((await self.post("/api/teacher/link", {"ref": "@yoq_odam"}))[0], 404)
+        _, view = await self.post("/api/teacher/link/remove", {"student_id": OTHER})
+        self.assertEqual([s["id"] for s in view["students"]], [STUDENT])
+
+    async def test_practice_spends_credit_with_monthly_limit(self):
+        db.link_student(OWNER, STUDENT)
+        self.assertEqual((await self.practice(STUDENT))[0], 402)  # kredit yo'q
+        plans.add_pack(OWNER, 5)
+        await self.post("/api/teacher/link/limit", {"limit": 2})
+        self.assertEqual((await self.practice(STUDENT, words=10))[0], 400)  # juda qisqa
+        status, res = await self.practice(STUDENT)
+        self.assertEqual(status, 200)
+        self.assertEqual(db.get_credits(OWNER), 4)
+        for item in db.pending_practice(5):
+            await bot.grade_practice(self.bot, item)
+        self.user = {"id": STUDENT, "name": "Ali", "username": None}
+        result = await (await self.client.get(f"/api/practice/{res['id']}")).json()
+        self.assertEqual(result["status"], "graded")
+        self.assertIsNotNone(result["score_75"])
+        self.assertTrue(any(c == STUDENT and "tekshirildi" in t for c, t in self.bot.messages))
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        self.assertEqual((await self.practice(STUDENT))[0], 200)
+        self.assertEqual((await self.practice(STUDENT))[0], 429)  # oylik chegara 2
+        self.assertEqual(db.get_credits(OWNER), 3)
+        self.assertEqual((await self.practice(OTHER))[0], 403)  # ulanmagan
+
+    async def test_failed_practice_refunds_credit(self):
+        db.link_student(OWNER, STUDENT)
+        plans.add_pack(OWNER, 1)
+        await self.practice(STUDENT)
+        self.assertEqual(db.get_credits(OWNER), 0)
+
+        async def broken(*_a, **_k):
+            raise self.essay_ai.AIError("Buzilgan javob", retry=False)
+        self.essay_ai.grade = broken
+        for item in db.pending_practice(5):
+            await bot.grade_practice(self.bot, item)
+        self.assertEqual(db.get_credits(OWNER), 1)  # tekshirilmadi — kredit qaytdi
+
+    async def test_teacher_buys_credits_himself(self):
+        db.set_setting("card_number", "8600 1234 5678 9012")
+        db.set_setting("price_pack", 50000)
+        db.set_setting("pack_essays", 100)
+        status, order = await self.post("/api/plan/order", {"period": "pack", "count": 2})
+        self.assertEqual(status, 200)
+        self.assertEqual((order["payment"]["amount"], order["payment"]["essays"]), (100000, 200))
+        payment = db.get_payment(order["payment"]["id"])
+        db.attach_receipt(payment["id"], "file-1")
+        self.assertTrue(db.decide_payment(payment["id"], "paid", 999))
+        plans.add_pack(OWNER, payment["essays"])
+        self.assertEqual(db.get_credits(OWNER), 200)
+        self.assertEqual((await self.post("/api/plan/order", {"period": "month"}))[0], 403)  # obuna yopiq
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))
