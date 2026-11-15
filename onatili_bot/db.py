@@ -109,6 +109,21 @@ SCHEMA = [
         attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
         UNIQUE (test_id, number)
     )""",
+    # «O'quvchisiman» arizasi: o'quvchi tumanidagi kursni topib, ustozga ariza (ism, ixtiyoriy rasm) yuboradi;
+    # ustoz tasdiqlasa — o'quvchisi bo'ladi (teacher_students)
+    f"""CREATE TABLE IF NOT EXISTS join_requests (
+        id         {ID},
+        teacher_id {BIG} NOT NULL,
+        student_id {BIG} NOT NULL,
+        first_name TEXT NOT NULL,
+        last_name  TEXT NOT NULL,
+        photo      TEXT,
+        mime       TEXT,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT,
+        decided_at TEXT,
+        UNIQUE (teacher_id, student_id)
+    )""",
     # Pullik mockga ariza: o'quvchi (ustozning o'quvchisi emas) chek rasmini yuboradi, ustoz tasdiqlasa — shu mock bepul
     f"""CREATE TABLE IF NOT EXISTS mock_requests (
         id         {ID},
@@ -893,6 +908,49 @@ def practice_failed(practice_id: int, error: str, give_up: bool) -> None:
     with connect() as conn:
         conn.execute("UPDATE practice_essays SET tries = tries + 1, error = ?, status = ? WHERE id = ?",
                      (error[:300], "failed" if give_up else "pending", practice_id))
+
+
+# ---------- «O'quvchisiman» arizalari va login-parollar ----------
+
+def save_join_request(teacher_id: int, student_id: int, first_name: str, last_name: str,
+                      photo: str | None, mime: str | None) -> int | None:
+    """Ariza (qayta yuborilsa — yangilanadi va yana «kutilmoqda» bo'ladi; ulanganlik webapp'da tekshiriladi)."""
+    with connect() as conn:
+        row = conn.execute(
+            "INSERT INTO join_requests (teacher_id, student_id, first_name, last_name, photo, mime, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(teacher_id, student_id) DO UPDATE SET "
+            "first_name = excluded.first_name, last_name = excluded.last_name, photo = excluded.photo, mime = excluded.mime, "
+            "status = 'pending', created_at = excluded.created_at, decided_at = NULL "
+            "RETURNING id",
+            (teacher_id, student_id, first_name, last_name, photo, mime, _now())).fetchone()
+    return row["id"] if row else None
+
+
+def get_join_request(request_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM join_requests WHERE id = ?", (request_id,)).fetchone())
+
+
+def join_status(teacher_id: int, student_id: int) -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT status FROM join_requests WHERE teacher_id = ? AND student_id = ?",
+                           (teacher_id, student_id)).fetchone()
+    return row["status"] if row else None
+
+
+def join_requests_for(teacher_id: int, limit: int = 100) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT j.id, j.student_id, j.first_name, j.last_name, j.status, j.created_at, j.photo IS NOT NULL AS has_photo, "
+            "u.username FROM join_requests j LEFT JOIN users u ON u.tg_id = j.student_id WHERE j.teacher_id = ? "
+            "ORDER BY CASE j.status WHEN 'pending' THEN 0 ELSE 1 END, j.id DESC LIMIT ?", (teacher_id, limit)).fetchall()
+    return [{**dict(row), "has_photo": bool(row["has_photo"])} for row in rows]
+
+
+def decide_join_request(request_id: int, status: str) -> bool:
+    with connect() as conn:
+        return bool(conn.execute("UPDATE join_requests SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+                                 (status, _now(), request_id)).rowcount)
 
 
 # ---------- Pullik mock: arizalar ----------

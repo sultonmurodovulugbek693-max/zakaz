@@ -344,6 +344,37 @@ async def mock_request_notice(bot: Bot, test: dict, request_id: int, name: str, 
     await bot.send_photo(test["owner_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
 
 
+async def join_notice(bot: Bot, teacher_id: int, request_id: int, name: str, username: str | None,
+                      photo: bytes | None) -> None:
+    """«O'quvchisiman» arizasi ustozga: ism (va rasm), «Tasdiqlash / Rad etish»."""
+    text = (f"🙋 <b>O'quvchingiz bo'lmoqchi</b>\n👤 {esc(name)}" + (f" (@{esc(username)})" if username else "")
+            + "\nTasdiqlasangiz — onlayn mocklaringizni bepul topshiradi (kreditingizdan).")
+    markup = inline([[("✅ Tasdiqlash", f"jr:ok:{request_id}"), ("❌ Rad etish", f"jr:no:{request_id}")]])
+    if photo:
+        await bot.send_photo(teacher_id, BufferedInputFile(photo, filename="rasm.jpg"), caption=text, reply_markup=markup)
+    else:
+        await bot.send_message(teacher_id, text, reply_markup=markup)
+
+
+@dp.callback_query(F.data.startswith("jr:"))
+async def decide_join_button(callback: CallbackQuery) -> None:
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    try:
+        result = await webapp.decide_join(callback.from_user.id, int(raw), action == "ok")
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("✅ O'quvchingiz bo'ldi" if action == "ok" else "❌ Rad etildi")
+    note = f"✅ Tasdiqlandi — {esc(result['name'])} o'quvchingiz" if action == "ok" else "❌ Rad etildi"
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}")
+        else:
+            await callback.message.edit_text(f"{callback.message.html_text}\n{LINE}\n{note}")
+    except TelegramBadRequest:
+        pass
+
+
 @dp.callback_query(F.data.startswith("req:"))
 async def decide_mock_request(callback: CallbackQuery) -> None:
     _, action, raw = (callback.data.split(":") + ["", ""])[:3]
@@ -1445,6 +1476,7 @@ async def main() -> None:
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,
         mock_request_notice=lambda *a: mock_request_notice(bot, *a),
+        join_notice=lambda *a: join_notice(bot, *a),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         send_file=lambda chat_id, content, name, caption: bot.send_document(

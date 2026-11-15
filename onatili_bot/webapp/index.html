@@ -163,6 +163,7 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps li::before { content: counter(st); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
 .credit-card { display: grid; gap: 8px; }
+.course-card { display: grid; gap: 10px; }
 .switch { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 600; cursor: pointer; }
 .switch input { width: 20px; height: 20px; accent-color: var(--accent); }
 .credit-card .credit-n { font-family: var(--font-display); font-size: 26px; font-weight: 800; }
@@ -854,7 +855,11 @@ function rolePicker() {
     <button class="card item" data-pick="student" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">🎓</span><span><b style="font-size:20px">O'quvchi</b><small>Test kodini kiritib yechaman, natijamni olaman</small></span></button>
     <button class="card item" data-pick="teacher" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">👩‍🏫</span><span><b style="font-size:20px">O'qituvchi</b><small>Test yarataman (Rasch mock yoki oddiy), titul yoki onlayn o'tkazaman</small></span></button>
   </div>`;
-  document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => { setRole(el.dataset.pick); render(); });
+  document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => {
+    setRole(el.dataset.pick);
+    if (el.dataset.pick === "student") { S.stack = []; return go("courses", { first: true }, true); }  // avval kursini topadi
+    render();
+  });
 }
 
 // Ro'yxat qatorlari — bosh sahifada ham, «Testlar»/«Natijalar» bo'limlarida ham shu ko'rinish
@@ -963,6 +968,8 @@ VIEWS.home = async () => {
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
         <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
         <button class="btn block" id="start" disabled>Boshlash →</button></div>
+      ${(b.my_teachers || []).length ? `<button type="button" class="item" data-go-courses><span class="ico">👩‍🏫</span><span><b>Ustozim: ${esc(b.my_teachers.join(", "))}</b><small>Onlayn mocklari siz uchun bepul</small></span><span class="muted">›</span></button>`
+        : `<button type="button" class="big-act" data-go-courses style="width:100%"><i>🏫</i><b>Kursingizni toping</b><small>Ustozingizni tanlang — uning mocklari siz uchun bepul</small></button>`}
       ${b.practice ? `<button type="button" class="big-act" data-go-practice style="width:100%"><i>✍️</i><b>Esse tekshirish</b><small>Esse yozing — AI imtihondagidek 75 ballik shkalada tekshiradi</small></button>` : ""}
       ${recent.length ? `<div class="section-title"><h2>So'nggi testlarim</h2>
         <button type="button" class="btn plain sm" data-go="myresults">Hammasi ›</button></div>
@@ -976,6 +983,7 @@ VIEWS.home = async () => {
       ${b.sales ? planCard(b.plan) : creditCard(b)}`}
   </div>`;
   bindHomeActions(); bindMyTests();
+  document.querySelectorAll("[data-go-courses]").forEach(x => x.onclick = () => { haptic("light"); go("courses"); });
   document.querySelectorAll("[data-go-practice]").forEach(x => x.onclick = () => { haptic("light"); go("practice"); });
   document.querySelectorAll("[data-go-ai]").forEach(x => x.onclick = () => { haptic("light"); go("ai"); });
   document.querySelectorAll("[data-copy-id]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.copyId).then(() => { toast("ID nusxalandi"); haptic("success"); }, () => toast(x.dataset.copyId)));
@@ -1706,9 +1714,11 @@ VIEWS.students = () => aiView("students");
 // mode: "ai" — kredit va sotib olish; "students" — o'quvchilarim (ulash, oylik chegara) va pullik mock arizalari
 async function aiView(mode) {
   loading();
-  let r, q = { requests: [] };
-  try { [r, q] = await Promise.all([api("/api/teacher/link"), mode === "students" ? api("/api/teacher/requests") : Promise.resolve(q)]); }
-  catch (e) { return fail(e); }
+  let r, q = { requests: [] }, j = { joins: [] };
+  try {
+    [r, q, j] = await Promise.all([api("/api/teacher/link"), mode === "students" ? api("/api/teacher/requests") : Promise.resolve(q),
+      mode === "students" ? api("/api/teacher/joins") : Promise.resolve(j)]);
+  } catch (e) { return fail(e); }
   const isAi = mode === "ai";
   const n = r.credits, buy = !r.unlimited && r.card_ready;
   const students = r.students.map(s => `<div class="item" style="cursor:default"><span class="ico">👤</span>
@@ -1719,7 +1729,7 @@ async function aiView(mode) {
       <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
       : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
       <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar ariza va chek yuboradi.</span></div>
-      ${requestsHTML(q.requests, q.card)}${mockPriceHTML(q.card || {})}`}
+      ${joinsHTML(j)}${requestsHTML(q.requests, q.card)}${mockPriceHTML(q.card || {})}`}
     ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
       <div class="row between"><b>🤖 Kreditingiz</b><span class="credit-n">${r.unlimited ? "♾" : n}</span></div>
       <span class="muted small">${r.unlimited ? "Sizda AI cheksiz." : n ? `Yana <b>${n} ta</b> o'quvchi essesini tekshirtira olasiz.` : "Kredit yo'q — esselar AI'da tekshirilmaydi, o'zingiz baholaysiz."}</span>
@@ -1743,7 +1753,7 @@ async function aiView(mode) {
     <div class="list">${students || `<div class="card empty"><div class="big">👥</div>Hali o'quvchi ulanmagan — taklif havolasini yuboring.</div>`}</div>`}
   </div>`;
   document.querySelectorAll("[data-goto-students]").forEach(x => x.onclick = () => { haptic("light"); go("students"); });
-  bindRequests(); bindMockPrice();
+  bindRequests(); bindMockPrice(); bindJoins();
   let packs = 1;
   document.querySelectorAll("[data-packs]").forEach(x => x.onclick = () => { packs = +x.dataset.packs; haptic("select");
     document.querySelectorAll("[data-packs]").forEach(y => y.classList.toggle("on", y === x)); });
@@ -1873,6 +1883,81 @@ function paywall(code, p) {
       paywall(code, { ...p, status: "pending" });
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Ariza yuborish"; }
   };
+}
+
+
+// ---------- O'quvchi: kursni topish (viloyat → tuman → ustozlar), «O'quvchisiman» ----------
+VIEWS.courses = async ({ first } = {}) => {
+  loading();
+  let saved = {}; try { saved = JSON.parse(store("course-place") || "{}"); } catch (e) {}
+  let meta; try { meta = await api("/api/register"); } catch (e) { return fail(e); }
+  let found = null;
+  if (saved.region && saved.district) { try { found = await api(`/api/courses?region=${encodeURIComponent(saved.region)}&district=${encodeURIComponent(saved.district)}`); } catch (e) {} }
+  const teachers = found ? found.teachers : [];
+  const chip = st => st === "approved" ? `<span class="pill-tag done">✅ O'quvchisiz</span>` : st === "pending" ? `<span class="pill-tag wait">⏳ Ariza yuborilgan</span>` : st === "rejected" ? `<span class="pill-tag bad">❌ Rad etilgan</span>` : "";
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kurslar</span><h1>🏫 Kursingizni toping</h1>
+      <span class="muted small">Yashaydigan yoki o'qiydigan joyingizni tanlang — u yerda kurs ochgan ustozlar chiqadi. Ustozingizning o'quvchisi bo'lsangiz, uning mocklarini bepul topshirasiz.</span></div>
+    <button type="button" class="item" id="pick-place"><span class="ico">📍</span><span><b>${saved.district ? esc(saved.district) : "Viloyat va tumanni tanlang"}</b><small>${saved.region ? esc(saved.region) : "bosing"}</small></span><span class="muted">›</span></button>
+    ${found ? (teachers.length ? `<div class="section-title"><h2>Shu yerdagi kurslar</h2><span class="muted small">${teachers.length} ta ustoz</span></div>
+      <div class="list">${teachers.map(t => `<div class="card course-card"><div class="row between"><span><b>👩‍🏫 ${esc(t.name)}</b><br><small class="muted">${t.username ? `@${esc(t.username)}` : ""}${t.phone ? ` · ${esc(t.phone)}` : ""}</small></span>${chip(t.status)}</div>
+        ${t.status === "approved" ? "" : `<button type="button" class="btn ${t.status === "pending" ? "ghost " : ""}block" data-join="${t.id}" data-tname="${esc(t.name)}">${t.status === "pending" ? "Arizani yangilash" : "🙋 O'quvchisiman"}</button>`}</div>`).join("")}</div>`
+      : `<div class="card empty"><div class="big">🔍</div><b>Bu tumanda hali kurs yo'q</b><span>Boshqa tumanni tanlang yoki ustozingizdan taklif havolasini so'rang.</span></div>`) : ""}
+    <button type="button" class="btn ${first ? "" : "plain "}block" id="just-enter">${first ? "Shunchaki kirayapman →" : "Bosh sahifa"}</button>
+  </div>`;
+  document.getElementById("pick-place").onclick = () => placePicker(meta.regions, meta.with_courses, (region, district) => {
+    store("course-place", JSON.stringify({ region, district })); rerender();
+  });
+  document.getElementById("just-enter").onclick = () => { haptic("light"); S.stack = []; S.boot = null; go("home", {}, true); };
+  document.querySelectorAll("[data-join]").forEach(x => x.onclick = () => joinForm(+x.dataset.join, x.dataset.tname));
+  if (!saved.region) setTimeout(() => { if (document.getElementById("pick-place")) document.getElementById("pick-place").click(); }, 300);
+};
+
+function joinForm(teacherId, teacherName) {
+  const modal = openModal("🙋 O'quvchisiman", `<span class="muted small">${esc(teacherName)} ustozga ariza. Ustoz tasdiqlasa — uning o'quvchisi bo'lasiz.</span>
+    <div class="field"><label for="jf-first">Ism</label><input class="input" id="jf-first" autocomplete="given-name"></div>
+    <div class="field"><label for="jf-last">Familiya</label><input class="input" id="jf-last" autocomplete="family-name"></div>
+    <div class="field"><label>Rasm <span class="muted">— ixtiyoriy (ustoz sizni tanishi uchun)</span></label>
+      <label class="btn ghost block" for="jf-photo" id="jf-photo-label">📷 Rasm tanlash</label><input type="file" id="jf-photo" accept="image/*" hidden></div>
+    <button type="button" class="btn block" id="jf-send">Ariza yuborish</button>`);
+  const photo = modal.querySelector("#jf-photo");
+  photo.onchange = () => { if (photo.files[0]) modal.querySelector("#jf-photo-label").textContent = "✅ " + photo.files[0].name.slice(0, 30); };
+  modal.querySelector("#jf-send").onclick = async () => {
+    const first = modal.querySelector("#jf-first").value.trim(), last = modal.querySelector("#jf-last").value.trim();
+    if (first.length < 2 || last.length < 2) { toast("Ism va familiyangizni yozing"); return; }
+    const btn = modal.querySelector("#jf-send"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    try {
+      const form = new FormData();
+      form.append("teacher_id", teacherId); form.append("first_name", first); form.append("last_name", last);
+      if (photo.files[0]) form.append("photo", await compressImage(photo.files[0], 1200), "rasm.jpg");
+      await apiForm("/api/courses/join", form);
+      haptic("success"); toast("✅ Ariza yuborildi — ustoz tasdiqlashini kuting"); modal.remove(); rerender();
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Ariza yuborish"; }
+  };
+}
+
+// O'qituvchi: «O'quvchisiman» arizalari («👥 O'quvchilarim» ichida)
+function joinsHTML(j) {
+  const pending = j.joins.filter(x => x.status === "pending").length;
+  const joins = j.joins.slice(0, 40).map(x => `<div class="item" style="cursor:default"><span class="ico">${x.status === "pending" ? "🙋" : x.status === "approved" ? "✅" : "❌"}</span>
+    <span><b>${esc(x.first_name)} ${esc(x.last_name)}</b><small>${x.username ? `@${esc(x.username)} · ` : ""}${esc(x.created_at || "")}</small></span>
+    <span class="row" style="gap:6px">${x.has_photo ? `<button type="button" class="btn plain sm" data-jphoto="${x.id}">🖼</button>` : ""}
+    ${x.status === "pending" ? `<button type="button" class="btn sm" data-jok="${x.id}">✅</button><button type="button" class="btn ghost sm" data-jno="${x.id}">✕</button>` : ""}</span></div>`).join("");
+  return `<div class="section-title"><h2>🙋 Ro'yxatdan o'tganlar</h2><span class="muted small">${pending ? `${pending} ta kutilmoqda` : "yangi yo'q"}</span></div>
+    <div class="list">${joins || `<div class="card empty small">O'quvchilar «🏫 Kursingizni toping»da sizni tanlab, «O'quvchisiman» arizasini yuboradi — shu yerda ko'rinadi. Buning uchun «Ro'yxatdan o'tish»da dars beradigan tumaningizni belgilang.</div>`}</div>`;
+}
+function bindJoins() {
+  document.querySelectorAll("[data-jphoto]").forEach(x => x.onclick = async () => {
+    try { const r = await api(`/api/teacher/join/${x.dataset.jphoto}/photo`); openModal("🖼 O'quvchi rasmi", `<img src="${r.image}" alt="" style="width:100%;border-radius:12px">`); }
+    catch (e) { toast(e.message); }
+  });
+  const decide = (id, action) => async () => {
+    try { const r = await api(`/api/teacher/join/${id}`, { action }); haptic("success");
+      toast(action === "approve" ? `✅ ${r.name} — o'quvchingiz` : "❌ Rad etildi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); }
+  };
+  document.querySelectorAll("[data-jok]").forEach(x => x.onclick = decide(x.dataset.jok, "approve"));
+  document.querySelectorAll("[data-jno]").forEach(x => x.onclick = decide(x.dataset.jno, "reject"));
 }
 
 // ---------- O'quvchi: «✍️ Esse tekshirish» (ustoz kreditidan) ----------

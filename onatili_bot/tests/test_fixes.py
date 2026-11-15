@@ -838,5 +838,84 @@ class Names(unittest.TestCase):
         self.assertIsNone(webapp.names_match("Ali", None))
 
 
+
+class CourseJoin(ServerBase):
+    """Kursni topish: tuman → ustozlar → «O'quvchisiman» (ism-familiya, rasm ixtiyoriy) → ustoz tasdiqlaydi → ulanadi."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        import places
+        self.region = next(iter(places.REGIONS)); self.district = places.REGIONS[self.region][0]
+        db.remember_user(OWNER, "Nodira Karimova", "nodira")
+        db.save_registration(OWNER, "teacher", "Nodira", "Karimova", "+998901112233", None, self.region, self.district)
+        db.set_teacher_places(OWNER, [(self.region, self.district)])
+        self.notices = []
+
+        async def join_notice(*args):
+            self.notices.append(args)
+        webapp.HOOKS["join_notice"] = join_notice
+
+    async def as_student(self, uid):
+        self.user = {"id": uid, "name": f"O'quvchi {uid}", "username": f"u{uid}"}
+
+    async def join(self, first="Ali", last="Valiyev", photo=None):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("teacher_id", str(OWNER)); form.add_field("first_name", first); form.add_field("last_name", last)
+        if photo:
+            form.add_field("photo", photo, filename="rasm.jpg", content_type="image/jpeg")
+        response = await self.client.post("/api/courses/join", data=form)
+        return response.status, await response.json()
+
+    async def courses(self):
+        from urllib.parse import quote
+        return await (await self.client.get(f"/api/courses?region={quote(self.region)}&district={quote(self.district)}")).json()
+
+    async def test_join_approve_links_student(self):
+        _, r = await self.create()
+        code = db.get_test(r["id"])["code"]
+        await self.as_student(STUDENT)
+        teachers = (await self.courses())["teachers"]
+        self.assertEqual([(t["id"], t["status"]) for t in teachers], [(OWNER, None)])
+        self.assertEqual((await self.join(last=""))[0], 400)  # familiya majburiy
+        self.assertEqual((await self.join(photo=bytes([255, 216]) + b" rasm"))[1]["status"], "pending")
+        self.assertEqual(self.notices[0][2], "Ali Valiyev")
+        self.assertEqual((await self.courses())["teachers"][0]["status"], "pending")
+        self.assertEqual((await self.client.get(f"/api/test/{code}")).status, 402)  # hali o'quvchi emas
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        joins = (await (await self.client.get("/api/teacher/joins")).json())["joins"]
+        self.assertEqual((joins[0]["first_name"], joins[0]["has_photo"]), ("Ali", True))
+        self.assertEqual((await self.client.get(f"/api/teacher/join/{joins[0]['id']}/photo")).status, 200)
+        status, data = await self.post(f"/api/teacher/join/{joins[0]['id']}", {"action": "approve"})
+        self.assertEqual((status, data["name"]), (200, "Ali Valiyev"))
+        self.assertTrue(db.is_linked(OWNER, STUDENT))
+        self.assertIn("qabul qildi", str(self.bot.messages[-1]))
+        self.assertEqual((await self.post(f"/api/teacher/join/{joins[0]['id']}", {"action": "approve"}))[0], 409)
+        await self.as_student(STUDENT)
+        self.assertEqual((await self.client.get(f"/api/test/{code}")).status, 200)  # endi mock bepul
+        self.assertEqual((await self.courses())["teachers"][0]["status"], "approved")
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual(boot["my_teachers"], ["Nodira Karimova"])
+
+    async def test_reject_and_others_cannot_decide(self):
+        await self.as_student(OTHER)
+        await self.join("Vali", "Aliyev")
+        request_id = db.join_requests_for(OWNER)[0]["id"]
+        await self.as_student(STUDENT)  # begona ustoz emas — boshqaning arizasini ko'ra olmaydi
+        self.assertEqual((await self.post(f"/api/teacher/join/{request_id}", {"action": "approve"}))[0], 404)
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        self.assertEqual((await self.post(f"/api/teacher/join/{request_id}", {"action": "reject"}))[1]["status"], "rejected")
+        self.assertFalse(db.is_linked(OWNER, OTHER))
+        await self.as_student(OTHER)
+        self.assertEqual((await self.courses())["teachers"][0]["status"], "rejected")
+        self.assertEqual((await self.join("Vali", "Aliyev"))[1]["status"], "pending")  # qayta yuborsa bo'ladi
+        await webapp.decide_join(OWNER, request_id, True)
+        db.unlink_student(OWNER, OTHER)  # ustoz keyin o'chirdi — qayta ariza yuborsa bo'ladi
+        self.assertIsNone((await self.courses())["teachers"][0]["status"])
+
+    async def test_bad_place(self):
+        self.assertEqual((await self.client.get("/api/courses?region=Yo'q&district=Yo'q")).status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

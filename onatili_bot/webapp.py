@@ -194,6 +194,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
         "my_card": await run(teacher_card, user["id"]),
         "requests_pending": sum(1 for r in await run(db.mock_requests_for_owner, user["id"]) if r["status"] == "pending"),
+        "joins_pending": sum(1 for r in await run(db.join_requests_for, user["id"]) if r["status"] == "pending"),
+        "my_teachers": [t["full_name"] or "Ustoz" for t in await run(db.teachers_of, user["id"])],
         "plans": await run(plans.offers),
         "card": await run(plans.card),
         "payment": await run(db.open_payment, user["id"]),
@@ -1075,6 +1077,104 @@ async def practice_get(request: web.Request) -> web.Response:
     if not item or item["student_id"] != user["id"]:
         raise ApiError(404, "Topilmadi")
     return ok(_practice_view(item))
+
+
+# ---------- Kursni topish: viloyat → tuman → ustozlar; «O'quvchisiman» arizasi ----------
+
+def _not_approved(status: str | None) -> str | None:
+    return None if status == "approved" else status  # ustoz keyin o'chirgan bo'lsa — qayta ariza yuborsa bo'ladi
+
+
+async def courses(request: web.Request) -> web.Response:
+    """O'quvchi tumanini tanladi: shu tumanda kurs ochgan ustozlar (ismi, telefoni) va ularga holati."""
+    user = await auth(request)
+    region, district = str(request.query.get("region") or ""), str(request.query.get("district") or "")
+    if region not in places_data.REGIONS or district not in places_data.REGIONS[region]:
+        raise ApiError(400, "Viloyat va tumanni tanlang")
+    out = []
+    for t in await run(db.teachers_in, region, district):
+        if t["tg_id"] == user["id"]:
+            continue
+        linked = await run(db.is_linked, t["tg_id"], user["id"])
+        out.append({"id": t["tg_id"], "name": t["full_name"] or "Ustoz", "username": t["username"], "phone": t["phone"],
+                    "status": "approved" if linked else _not_approved(await run(db.join_status, t["tg_id"], user["id"]))})
+    return ok({"teachers": out, "region": region, "district": district})
+
+
+async def course_join(request: web.Request) -> web.Response:
+    """«O'quvchisiman»: ism-familiya (majburiy) va rasm (ixtiyoriy) — ustozga ariza, u tasdiqlasa o'quvchisi bo'ladi."""
+    user = await auth(request)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Ariza yuborilmadi")
+    teacher_id = to_int(form.get("teacher_id"), 0, "Ustoz")
+    first, last = clean_text(form.get("first_name"), 40), clean_text(form.get("last_name"), 40)
+    if len(first) < 2 or len(last) < 2:
+        raise ApiError(400, "Ism va familiyangizni yozing")
+    if not teacher_id or teacher_id == user["id"] or not await run(db.find_user, str(teacher_id)):
+        raise ApiError(404, "Ustoz topilmadi")
+    if await run(db.is_linked, teacher_id, user["id"]):
+        return ok({"ok": True, "status": "approved"})
+    photo, mime, raw = None, None, None
+    field = form.get("photo")
+    if field is not None and hasattr(field, "file"):
+        raw = field.file.read()
+        if len(raw) > 6 * 1024 * 1024:
+            raise ApiError(400, "Rasm 6 MB dan kichik bo'lsin")
+        if raw:
+            photo, mime = base64.b64encode(raw).decode(), (getattr(field, "content_type", None) or "image/jpeg")[:20]
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    request_id = await run(db.save_join_request, teacher_id, user["id"], first, last, photo, mime)
+    if request_id and "join_notice" in HOOKS:
+        try:
+            await HOOKS["join_notice"](teacher_id, request_id, f"{first} {last}", user.get("username"), raw or None)
+        except Exception:
+            logger.warning("Ariza haqida ustozga xabar yuborilmadi", exc_info=True)
+    return ok({"ok": True, "status": "pending"})
+
+
+async def joins_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    return ok({"joins": await run(db.join_requests_for, user["id"])})
+
+
+async def join_photo(request: web.Request) -> web.Response:
+    user = await auth(request)
+    item = await run(db.get_join_request, int(request.match_info["request_id"]))
+    if not item or item["teacher_id"] != user["id"] or not item["photo"]:
+        raise ApiError(404, "Rasm yo'q")
+    return ok({"image": _image_data_url(item["photo"], item["mime"])})
+
+
+async def decide_join(teacher_id: int, request_id: int, approve: bool) -> dict:
+    """Ustoz «O'quvchisiman» arizasini tasdiqlaydi — o'quvchisi bo'ladi (mocklar ustoz hisobidan). Bot tugmasi ham shu."""
+    item = await run(db.get_join_request, request_id)
+    if not item or item["teacher_id"] != teacher_id:
+        raise ApiError(404, "Ariza topilmadi")
+    if not await run(db.decide_join_request, request_id, "approved" if approve else "rejected"):
+        raise ApiError(409, "Bu ariza allaqachon ko'rib chiqilgan")
+    name = f"{item['first_name']} {item['last_name']}"
+    if approve:
+        await run(db.link_student, teacher_id, item["student_id"])
+    if "send_text" in HOOKS:
+        teacher = await run(db.find_user, str(teacher_id)) or {}
+        text = (f"✅ <b>{html.escape(teacher.get('full_name') or 'Ustoz')} sizni o'quvchi sifatida qabul qildi</b>\n"
+                "Endi ustozingizning onlayn mocklarini bepul topshirasiz va «✍️ Esse tekshirish»dan foydalanasiz." if approve else
+                "❌ Ustoz «o'quvchisiman» arizangizni tasdiqlamadi. Ism-familiyani tekshirib, qayta yuborishingiz mumkin.")
+        try:
+            await HOOKS["send_text"](item["student_id"], text)
+        except Exception:
+            logger.warning("Ariza natijasi o'quvchiga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "approved" if approve else "rejected", "name": name}
+
+
+async def join_decide(request: web.Request) -> web.Response:
+    user = await auth(request)
+    action = (await body(request)).get("action")
+    if action not in ("approve", "reject"):
+        raise ApiError(400, "Amal noto'g'ri")
+    return ok(await decide_join(user["id"], int(request.match_info["request_id"]), action == "approve"))
 
 
 # ---------- Fayllarni to'g'ridan-to'g'ri yuklab olish (bot chatiga yuborilmasa ham) ----------
@@ -2555,6 +2655,11 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/download", download_link)
     app.router.add_get("/dl/{token}", download_file)
     app.router.add_get("/api/teacher/link", link_view)
+    app.router.add_get("/api/courses", courses)
+    app.router.add_post("/api/courses/join", course_join)
+    app.router.add_get("/api/teacher/joins", joins_list)
+    app.router.add_get("/api/teacher/join/{request_id:\\d+}/photo", join_photo)
+    app.router.add_post("/api/teacher/join/{request_id:\\d+}", join_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/request", mock_request_submit)
     app.router.add_post("/api/teacher/mock-price", set_mock_price)
     app.router.add_get("/api/teacher/requests", requests_list)
