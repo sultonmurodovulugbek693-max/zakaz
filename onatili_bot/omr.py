@@ -606,13 +606,14 @@ def scan_answer_sheet(data: bytes, bubbles: list[dict], page: int = 1,
                 y + sum(w * shift[3] for w, shift in zip(weights, shifts)))
 
     code_bits: dict[int, float] = {}
+    page_marks: dict[str, float] = {}
     questions: dict = {}
     id_rows: dict[str, dict[str, float]] = {}
     variant_ratios: dict[str, float] = {}
     # Har savol qatori (va raqam/variant qatori) chop etilgan halqalari bo'yicha tekislanadi
     rows: dict = {}
     for bubble in page_bubbles:
-        if bubble["kind"] not in ("mark", "code", "anchor"):
+        if bubble["kind"] not in ("mark", "code", "anchor", "pagemark"):
             rows.setdefault(bubble["ref"], []).append(bubble)
     # Qatorlar ustun bo'yicha tepadan pastga: har biri eng yaqin tekislangan qatorning
     # siljishidan boshlab qidiriladi — qog'oz silliq egiladi, kuchli bo'rtish ham "kuzatiladi"
@@ -637,6 +638,9 @@ def scan_answer_sheet(data: bytes, bubbles: list[dict], page: int = 1,
         if bubble["kind"] == "code":
             # Imtihon kodi kataklari orasi keng (~40 pt) — bukilib siljigan katak ham topilsin (telefondagidek)
             code_bits[int(bubble["letter"])] = _fill_ratio(binary, x, y, bubble["r"], square=True, reach=0.8)
+            continue
+        if bubble["kind"] == "pagemark":  # ko'p varaqli titul: qaysi varaq ekanini aytuvchi kvadrat
+            page_marks[bubble["letter"]] = _fill_ratio(binary, x, y, bubble["r"], square=True, reach=0.8)
             continue
         dx, dy = row_shift[bubble["ref"]]
         ratio = _inner_fill(maps, x + dx, y + dy, bubble["r"])
@@ -704,4 +708,12 @@ def scan_answer_sheet(data: bytes, bubbles: list[dict], page: int = 1,
 
     return {"answers": answers, "questions": result, "name_image": name_image,
             "sheet_number": sheet_number, "sheet_number_status": number_status, "variant": variant,
-            "sheet_code": sheet_code}
+            "sheet_code": sheet_code, "page_marks": page_marks}
+
+
+def page_of(page_marks: dict[str, float]) -> int | None:
+    """Ko'p varaqli titul: qaysi sahifa belgisi aniq bo'yalgan, qolgani aniq bo'sh — o'sha varaq. Aks holda None."""
+    filled = [mark for mark, ratio in page_marks.items() if ratio >= FILLED_RATIO]
+    if len(filled) != 1 or any(UNSURE_RATIO <= ratio < FILLED_RATIO for ratio in page_marks.values()):
+        return None
+    return int(filled[0])

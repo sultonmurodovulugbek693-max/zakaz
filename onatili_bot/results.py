@@ -133,8 +133,8 @@ def class_report(owner_id: int, cls: dict) -> dict:
     rows = []
     for pupil in students:
         own = cells[pupil["id"]]
-        milliy = [own[t]["score"] for t in order if t in own and own[t]["suffix"] == ""]
-        other = [own[t]["score"] for t in order if t in own and own[t]["suffix"] == "%"]
+        milliy = [own[t]["score"] for t in order if t in own and own[t]["suffix"] == "" and own[t]["score"] is not None]
+        other = [own[t]["score"] for t in order if t in own and own[t]["suffix"] == "%" and own[t]["score"] is not None]
         avg = _mean(milliy) if milliy else _mean(other)
         rows.append({"student_id": pupil["id"], "number": pupil["number"], "name": pupil["name"],
                      "results": {str(t): own[t] for t in order if t in own}, "count": len(own),

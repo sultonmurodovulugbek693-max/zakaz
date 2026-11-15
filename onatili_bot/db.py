@@ -109,6 +109,16 @@ SCHEMA = [
         attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
         UNIQUE (test_id, number)
     )""",
+    # Ikki varaqli titul: 2-varaq (yozma javoblar) 1-varaqdan oldin skanerlansa — rasm o'quvchi ID'si bo'yicha
+    # shu yerda kutadi; 1-varaq saqlanganda natijaga biriktiriladi
+    f"""CREATE TABLE IF NOT EXISTS written_pending (
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        number     INTEGER NOT NULL,
+        image      TEXT NOT NULL,
+        mime       TEXT NOT NULL DEFAULT 'image/jpeg',
+        created_at TEXT,
+        PRIMARY KEY (test_id, number)
+    )""",
     # Telefondan yuborilgan titullar: uid bo'yicha — tarmoq uzilib qayta yuborilsa ikkinchi natija ochilmaydi
     f"""CREATE TABLE IF NOT EXISTS scan_uploads (
         uid        TEXT PRIMARY KEY,
@@ -751,6 +761,23 @@ def create_written_job(attempt_id: int, test_id: int, image_b64: str, mime: str,
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (attempt_id, test_id, image_b64, mime, status, 1 if status == "manual" else 0, _now()),
         )
+
+
+def save_written_pending(test_id: int, number: int, image_b64: str, mime: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO written_pending (test_id, number, image, mime, created_at) VALUES (?, ?, ?, ?, ?) "
+                     "ON CONFLICT(test_id, number) DO UPDATE SET image = excluded.image, mime = excluded.mime, "
+                     "created_at = excluded.created_at", (test_id, number, image_b64, mime, _now()))
+
+
+def take_written_pending(test_id: int, number: int) -> dict | None:
+    """Kutayotgan 2-varaq rasmi (olinadi va o'chiriladi)."""
+    with connect() as conn:
+        row = conn.execute("SELECT image, mime FROM written_pending WHERE test_id = ? AND number = ?",
+                           (test_id, number)).fetchone()
+        if row:
+            conn.execute("DELETE FROM written_pending WHERE test_id = ? AND number = ?", (test_id, number))
+    return _row(row)
 
 
 def written_images_for_test(test_id: int) -> set[int]:

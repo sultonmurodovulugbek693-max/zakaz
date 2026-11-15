@@ -34,7 +34,7 @@ import results
 import sheet
 import sheet_styles
 from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN, SALES_ENABLED
-from scoring import rasch_breakdown, rasch_results, total_points
+from scoring import essay_on_paper, essay_pending, rasch_breakdown, rasch_results, total_points
 from structure import (
     ESSAY_MAX,
     ESSAY_SCALE,
@@ -259,8 +259,9 @@ async def test_info(request: web.Request) -> web.Response:
     if not test:
         raise ApiError(404, "Bunday kodli test topilmadi")
     if (test.get("mode") or "online") == "offline":
-        if test["fmt"] != "milliy":
-            raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javobni o'qituvchingizga topshiring")
+        if test["fmt"] != "milliy" or essay_on_paper(test):
+            raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javoblarni ham, esseni ham varaqqa yozib "
+                                "o'qituvchingizga topshiring")
         # Titulli milliy test: test qog'ozda, 45-esse esa shu yerda yoziladi (ID bilan)
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
         mine = await run(db.offline_essay_of_user, test["id"], user["id"])
@@ -595,6 +596,8 @@ async def create_test(request: web.Request) -> web.Response:
     if channels:
         await run(db.set_test_channels, test["id"], channels)
     await run(db.set_mode, test["id"], mode)
+    if fmt == "milliy" and mode == "offline":  # imtihon varaqasi: 2 varaq + qog'ozdagi esse
+        await run(db.set_sheet_style, test["id"], "official")
     test = await run(db.get_test, test["id"])
     sent, pdf_error = await send_created_pdfs(user["id"], test)
     return ok({"ok": True, "id": test["id"], "code": test["code"], "mode": mode, "sent": sent, "pdf_error": pdf_error})
@@ -661,6 +664,7 @@ async def teacher_test(request: web.Request) -> web.Response:
             "total": total_points(a),
             "percent": percent(a["test_correct"] + a["written_correct"], a["auto_total"]),
             "rasch": score, "grade": grade_name, "wrong": a["wrong"], "created_at": a["created_at"],
+            "essay_pending": essay_pending(test, a),  # qog'ozdagi esse bahosi kiritilmagan — natija yopiq
             "essay_status": essay["status"] if essay else None,
             "ai_score": essay["ai_score"] if essay else None,
             "written_status": written_jobs.get(a["id"]),  # skanerlangan titul: pending | done | failed
@@ -690,7 +694,9 @@ async def teacher_test(request: web.Request) -> web.Response:
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
         "ai": essay_ai.essay_enabled(), "ai_provider": essay_ai.essay_provider_name(),
-        "waiting_essays": await run(db.waiting_offline_essays, test["id"]) if offline_milliy else 0,
+        "waiting_essays": await run(db.waiting_offline_essays, test["id"]) if offline_milliy and not essay_on_paper(test) else 0,
+        "essay_on_paper": essay_on_paper(test),
+        "essays_missing": sum(1 for a in attempts if essay_pending(test, a)),
         "offline_essays": [offline_essay_view(e) for e in await run(db.list_offline_essays, test["id"])]
         if offline_milliy else [],
     })
@@ -704,6 +710,10 @@ async def announce(request: web.Request) -> web.Response:
     attempts = await run(db.list_attempts, test["id"])
     if not attempts:
         raise ApiError(400, "Hali hech kim javob yubormagan")
+    missing = sum(1 for a in attempts if essay_pending(test, a))
+    if missing:
+        raise ApiError(409, f"{missing} ta o'quvchining esse bahosi kiritilmagan — natijalar esse bahosi bilan chiqadi. "
+                            "«📝 Esselar»da 75 ballik shkalada kiriting.", essays_missing=missing)
     # Test darhol yopiladi, xabarlar fonda ketadi: 300 o'quvchida ham so'rov kutib qolmaydi (tugagach bot xabar beradi)
     await run(db.set_closed, test["id"], True)
     await run(db.set_announcing, test["id"], True)
@@ -899,7 +909,8 @@ def written_boxes(test: dict, variants: list[str]) -> dict[str, list[float]]:
     width, height = x2 - x1, y2 - y1
     return {box["label"]: [round((box["x"] - x1) / width, 4), round((box["top"] - y1) / height, 4),
                            round(box["w"] / width, 4), round(box["h"] / height, 4),
-                           round(sheet.WRITTEN_LABEL_W / width, 4), round(sheet.WRITTEN_CELL_W / width, 4), box["cells"]]
+                           round(box.get("label_w", sheet.WRITTEN_LABEL_W) / width, 4),  # imtihon varaqasida kataklar boshqa
+                           round(box.get("cell_w", sheet.WRITTEN_CELL_W) / width, 4), box["cells"]]
             for box in spec["written"]}
 
 
@@ -1362,9 +1373,9 @@ async def send_certificates(request: web.Request) -> web.Response:
     cls = await _class_of(user, payload.get("class"))
     chosen = {int(x) for x in payload.get("attempt_ids") or [] if str(x).isdigit()}
     data = await run(results.test_results, test, cls["id"] if cls else None)
-    rows = [r for r in data["rows"] if not chosen or r["attempt_id"] in chosen]
+    rows = [r for r in data["rows"] if (not chosen or r["attempt_id"] in chosen) and r["score"] is not None]
     if not rows:
-        raise ApiError(400, "Sertifikat uchun natija topilmadi")
+        raise ApiError(400, "Sertifikat uchun natija topilmadi (esse bahosi kiritilmagan bo'lishi mumkin)")
     content = await run(pdfs.certificates_pdf, test, rows, user.get("name") or "")
     single = len(rows) == 1
     name = f"sertifikat_{_file_slug(rows[0]['name']) if single else test['code']}.pdf"
@@ -1508,8 +1519,10 @@ async def sheets(request: web.Request) -> web.Response:
     if style is not None:
         if style not in sheet_styles.STYLES:
             raise ApiError(400, "Titul ko'rinishi noto'g'ri")
-        if test["fmt"] == "milliy" and style != "standard":  # yozma javob kataklari faqat standart titulda
-            raise ApiError(400, "Milliy sertifikat testi uchun faqat standart titul")
+        if test["fmt"] == "milliy" and style not in sheet_styles.MILLIY_STYLES:  # yozma kataklar shu ikkisida
+            raise ApiError(400, "Milliy sertifikat testi uchun imtihon varaqasi yoki standart titul")
+        if test["fmt"] != "milliy" and style == "official":
+            raise ApiError(400, "Imtihon varaqasi faqat Milliy sertifikat testi uchun")
         try:  # savollar shu ko'rinishga sig'adimi
             sheet.layout({**test, "sheet_style": style}, list(await run(db.get_keys, test["id"])))
         except ValueError as error:
@@ -1560,7 +1573,7 @@ async def scan_layout(request: web.Request) -> web.Response:
     return ok({"bubbles": spec["bubbles"], "variants": variants, "sheet_page": spec["page"],
                "style": sheet_styles.style_of(test), "written_area": spec.get("written_area"),
                "name_area": spec.get("name_area"), "written_labels": [i["label"] for i in text_items(test["items"])],
-               "ai": essay_ai.enabled()})
+               "pages": spec.get("pages", 1), "ai": essay_ai.enabled()})
 
 
 async def scan(request: web.Request) -> web.Response:
@@ -1583,8 +1596,14 @@ async def scan(request: web.Request) -> web.Response:
         page = omr.SheetPage(**spec["page"]) if spec["page"] else omr.SheetPage(name_area=spec["name_area"])
         prepared = omr.PreparedSheet(data, spec["bubbles"], 1, page)
         result = omr.scan_answer_sheet(data, spec["bubbles"], 1, prepared, page)
+        result["page"] = 1
+        if spec.get("pages", 1) > 1:  # ikki varaqli titul: qaysi varaq ekani sahifa belgisidan
+            result["page"] = omr.page_of(result["page_marks"]) or 1
+            if result["page"] != 1:
+                result = {**omr.scan_answer_sheet(data, spec["bubbles"], result["page"], prepared, page), "page": result["page"]}
         written_png = None
-        if spec["written_area"]:
+        # Yozma kataklar — faqat ular turgan varaqda (ikki varaqli titulda 2-varaq)
+        if spec["written_area"] and (spec.get("pages", 1) == 1 or result["page"] == 2):
             x1, y1, x2, y2 = (round(v * omr.SCALE) for v in spec["written_area"])
             crop = prepared.warped[max(0, y1): y2, max(0, x1): x2]
             ok_, png = cv2.imencode(".png", crop)
@@ -1632,7 +1651,8 @@ async def scan(request: web.Request) -> web.Response:
         "variant": variant, "variant_read": result["variant"],
         "questions": [{"label": q["label"], "chosen": q["chosen"], "status": q["status"]} for q in result["questions"]],
         "written": written, "written_image": _png_data_url(written_png), "name_image": result["name_image"],
-        "ai_note": ai_note, "found": True, "corners": corners,
+        "ai_note": ai_note, "found": True, "corners": corners, "page": result.get("page", 1),
+        "pages": spec.get("pages", 1),
     })
 
 
@@ -1648,6 +1668,7 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
         if not student:
             raise ApiError(404, "O'quvchi topilmadi")
         if student["attempt_id"]:
+            await keep_written_page(test, student)
             await run(db.delete_attempt, student["attempt_id"])  # qayta skanerlash — eski natija almashtiriladi
         if student["variant"] != variant:
             await run(db.update_student, test["id"], student["id"], None, variant)
@@ -1660,6 +1681,7 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
             student = None  # boshqa bola shu ID'ni xato bo'yagan — natijasi ustiga yozilmasin, alohida qo'shiladi
         if student:  # bu ID test ro'yxatida bor — o'sha o'quvchi (ikkinchi nusxa ochilmaydi)
             if student["attempt_id"]:
+                await keep_written_page(test, student)
                 await run(db.delete_attempt, student["attempt_id"])
             if student["variant"] != variant:
                 await run(db.update_student, test["id"], student["id"], None, variant)
@@ -1681,7 +1703,64 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
     await run(db.link_student_attempt, student["id"], attempt["id"])
     if test["fmt"] == "milliy":
         await link_offline_essay(test, student["number"], attempt["id"])
+    if two_pages(test):  # 2-varaq avval skanerlangan bo'lsa — yozma kataklar rasmi shu natijaga
+        waiting = await run(db.take_written_pending, test["id"], student["number"])
+        if waiting:
+            await attach_written(test, attempt, waiting["image"], waiting["mime"])
     return attempt, student
+
+
+def two_pages(test: dict) -> bool:
+    """Imtihon varaqasi (rasmiy titul): 1-varaq — 1–35, 2-varaq — 36–44 alohida skanerlanadi."""
+    return sheet_styles.style_of(test) == "official"
+
+
+def essay_on_paper(test: dict) -> bool:
+    """Esse qog'ozda (rasmiy titulning 3–4-varag'i): o'qituvchi 75 ballik shkalada kiritadi, botda yozilmaydi.
+    Esse bahosi kiritilmaguncha o'quvchi natijasi chiqmaydi."""
+    return test["fmt"] == "milliy" and two_pages(test)
+
+
+async def attach_written(test: dict, attempt: dict, image_b64: str, mime: str) -> bool:
+    """Yozma kataklar rasmi natijaga: AI o'qiydi (ruxsat bo'lsa) yoki o'qituvchi «✍️ Yozmalarni tekshirish»da belgilaydi."""
+    labels = [i["label"] for i in text_items(test["items"])]
+    need_ai = [label for label in labels if not attempt["answers"].get(label)]
+    queued = bool(need_ai) and await written_ai(test["owner_id"])
+    await run(db.create_written_job, attempt["id"], test["id"], image_b64, mime[:20], "pending" if queued else "manual")
+    if queued and "wake_ai" in HOOKS:
+        HOOKS["wake_ai"]()
+    return queued
+
+
+async def keep_written_page(test: dict, student: dict) -> None:
+    """1-varaq qayta skanerlanadi (eski natija o'chadi): 2-varaq rasmi yo'qolmasin — kutishga qaytadi."""
+    if not two_pages(test) or not student.get("attempt_id"):
+        return
+    job = await run(db.get_written_job, student["attempt_id"])
+    if job and job["image"]:
+        await run(db.save_written_pending, test["id"], student["number"], job["image"], job["mime"])
+
+
+async def save_written_page(test: dict, payload: dict, image_b64: str, mime: str) -> dict:
+    """2-varaq (yozma javoblar): o'quvchi ID'si (yoki ro'yxatdagi o'quvchi) bo'yicha. 1-varaq saqlangan bo'lsa —
+    darhol natijaga, aks holda 1-varaq kelguncha kutadi."""
+    student = None
+    if payload.get("student_id"):
+        student = await run(db.get_student, test["id"], to_int(payload["student_id"], 0, "O'quvchi"))
+    raw = str(payload.get("number") or "")
+    number = student["number"] if student else (int(raw) if raw.isdigit() and 0 < int(raw) <= 9999 else None)
+    if number is None:
+        raise ApiError(400, "2-varaqda o'quvchi ID'si o'qilmadi — ID'ni bo'yab, qayta skanerlang")
+    student = student or await run(db.get_student, test["id"], None, number)
+    pupil = (await pupils_of(test["owner_id"])).get(number)
+    name = (student or {}).get("name") or (pupil or {}).get("name") or f"ID {number:04d}"
+    attempt = await run(db.get_attempt, student["attempt_id"]) if student and student["attempt_id"] else None
+    if attempt:
+        queued = await attach_written(test, attempt, image_b64, mime)
+        return {"ok": True, "page": 2, "attached": True, "written_queued": queued, "name": name, "number": number,
+                "attempt_id": attempt["id"]}
+    await run(db.save_written_pending, test["id"], number, image_b64, mime[:20])
+    return {"ok": True, "page": 2, "attached": False, "written_queued": False, "name": name, "number": number}
 
 
 async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
@@ -1707,6 +1786,8 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test or (test.get("mode") or "online") != "offline" or test["fmt"] != "milliy":
         raise ApiError(404, "Bunday kodli titulli test topilmadi")
+    if essay_on_paper(test):
+        raise ApiError(409, "Bu testda esse qog'ozga (javoblar varaqasining 3–4-varag'iga) yoziladi")
     if test["closed"]:
         raise ApiError(409, "Natijalar e'lon qilingan — esse qabul qilinmaydi")
     await test_gate(test, user)
@@ -1825,16 +1906,24 @@ async def scan_save(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     payload = await body(request)
+    if str(payload.get("page") or "1") == "2":  # ikki varaqli titulning 2-varag'i
+        image = str(payload.get("written_image") or "")
+        if not image.startswith("data:image/") or ";base64," not in image:
+            raise ApiError(400, "2-varaq rasmi yuborilmadi")
+        head, data = image.split(",", 1)
+        return ok(await save_written_page(test, payload, data, head[5:head.index(";")][:20]))
     attempt, student = await save_scanned(test, payload)
     await store_written_image(test, attempt, payload.get("written_image"))
     if from_app(request) and "scan_notice" in HOOKS:
         try:  # APK'dan skanerlandi — natija bot chatiga ham boradi
-            await HOOKS["scan_notice"](user["id"], test, student["name"], total_points(attempt),
+            await HOOKS["scan_notice"](user["id"], test, student["name"],
+                                       None if essay_pending(test, attempt) else total_points(attempt),
                                        max_points(test["items"], test["fmt"]))
         except Exception:
             logger.warning("Skaner xabarini botga yuborib bo'lmadi", exc_info=True)
-    return ok({"ok": True, "attempt_id": attempt["id"], "name": student["name"],
-               "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
+    hidden = essay_pending(test, attempt)  # qog'ozdagi esse bahosi kiritilmaguncha natija chiqmaydi
+    return ok({"ok": True, "attempt_id": attempt["id"], "name": student["name"], "essay_pending": hidden,
+               "points": None if hidden else total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
                "correct": attempt["test_correct"] + attempt["written_correct"], "auto_total": attempt["auto_total"]})
 
 
@@ -1903,6 +1992,14 @@ async def scan_upload(request: web.Request) -> web.Response:
 
     written = part(form.get("written"))
     essays = [data for data in (part(f) for f in form.getall("essay", [])) if data]
+    if str(payload.get("page") or "1") == "2":  # ikki varaqli titulning 2-varag'i — faqat yozma kataklar rasmi
+        if not written:
+            raise ApiError(400, "2-varaq rasmi yuborilmadi")
+        response = await save_written_page(test, payload, base64.b64encode(written).decode(),
+                                           str(payload.get("written_mime") or "image/jpeg"))
+        if uid:
+            _UPLOADED[uid] = response
+        return ok(response)
     attempt, student = await save_scanned(test, payload)
     if uid:
         _STUDENT_OF[uid] = student["id"]
@@ -1917,8 +2014,9 @@ async def scan_upload(request: web.Request) -> web.Response:
                   str(payload.get("written_mime") or "image/jpeg")[:20], "pending" if queued else "manual")
     essay_status = await attach_essay(user, test, attempt, essays) if essays else None
     response = {"ok": True, "attempt_id": attempt["id"], "student_id": student["id"], "name": student["name"],
-                "written_queued": queued, "essay_status": essay_status,
-                "points": total_points(attempt), "max_points": max_points(test["items"], test["fmt"])}
+                "written_queued": queued, "essay_status": essay_status, "essay_pending": essay_pending(test, attempt),
+                "points": None if essay_pending(test, attempt) else total_points(attempt),
+                "max_points": max_points(test["items"], test["fmt"])}
     if uid:
         if len(_UPLOADED) > 5000:
             _UPLOADED.clear()

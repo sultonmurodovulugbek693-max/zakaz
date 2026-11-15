@@ -34,6 +34,14 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.
 
 ## Titul va skaner
+- **Imtihon varaqasi** (yangi oflayn Milliy test — avtomatik): imtihondagidek 4 varaq — 1-varaq «JAVOBLAR VARAQASI
+  [1 - 35]» (ikki ustun doirachalar, «Yozilmasin», ism / otasining ismi / familiya), 2-varaq «[36 - 44]» (bosh harflar
+  uchun kataklar, «DIQQAT! YOZILMASIN»), 3–4-varaq — ESSE (qog'ozda). 1- va 2-varaq alohida skanerlanadi: skaner
+  tepadagi sahifa belgisidan qaysi varaq ekanini, ID'dan (yoki titul kodidan) kimniki ekanini taniydi va 2-varaqdagi
+  yozma kataklarni o'sha o'quvchining natijasiga qo'shadi (2-varaq oldin skanerlansa — 1-varaqni kutib turadi).
+  Esse botda yozilmaydi: o'qituvchi «📝 Esselar»da 75 ballik shkalada kiritadi. **Esse bahosi kiritilmaguncha o'quvchi
+  natijasi chiqmaydi** (ro'yxat, PDF, Excel, sertifikat, e'lon). Eski testlar o'z titulida qoladi
+  (titul oynasida «Standart»ni tanlasa ham bo'ladi).
 - **Sinflar** («👥 Sinflarim»): o'qituvchi sinf yaratadi, o'quvchilarni yozib yoki Excel'dan qo'shadi —
   har biriga **doimiy 4 xonali ID** beriladi (o'qituvchining barcha sinflari bo'yicha takrorlanmaydi,
   o'chirilgan ID qayta berilmaydi). «📨 ID ro'yxatini chatga yuborish» — o'quvchilarga tarqatish uchun.

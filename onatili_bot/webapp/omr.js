@@ -705,6 +705,14 @@ function interpolateOffset(points, y) {
 }
 
 // Tayyorlangan varaqdan javoblarni o'qish (doirachalar joyi — serverdan olingan titul tuzilishi)
+// Sahifa belgilaridan bittasi aniq bo'yalgan, qolgani aniq bo'sh — o'sha varaq; aks holda null
+function pageOfMarks(marks) {
+  const values = Object.entries(marks || {});
+  const filled = values.filter(([, ratio]) => ratio >= FILLED_RATIO);
+  if (filled.length !== 1 || values.some(([, ratio]) => ratio >= UNSURE_RATIO && ratio < FILLED_RATIO)) return null;
+  return Number(filled[0][0]);
+}
+
 function readSheetAnswers(sheet, bubbles, page = 1) {
   const pageBubbles = bubbles.filter((bubble) => bubble.page === page);
   const offsets = edgeMarkOffsets(sheet, pageBubbles.filter((bubble) => bubble.kind === "mark"));
@@ -750,7 +758,7 @@ function readSheetAnswers(sheet, bubbles, page = 1) {
   // Har savol qatori chop etilgan halqalari ustiga moslanadi (ustun bo'yicha tepadan pastga)
   const rows = new Map();
   for (const bubble of pageBubbles) {
-    if (bubble.kind === "mark" || bubble.kind === "code" || bubble.kind === "anchor") continue;
+    if (bubble.kind === "mark" || bubble.kind === "code" || bubble.kind === "anchor" || bubble.kind === "pagemark") continue;
     if (!rows.has(bubble.ref)) rows.set(bubble.ref, []);
     rows.get(bubble.ref).push(bubble);
   }
@@ -787,6 +795,7 @@ function readSheetAnswers(sheet, bubbles, page = 1) {
   }
 
   const codeBits = new Map();
+  const pageMarks = {}; // ko'p varaqli titul: {"1": ulush, "2": ulush} — qaysi varaq ekani
   const questions = new Map();
   const positions = {}; // {savol: {harf: [x, y, r]}} — qatorga moslangan joyi (punktlarda)
   const highlights = []; // bo'yalgan ID va variant doirachalari — natija rasmida sariq halqa
@@ -795,7 +804,7 @@ function readSheetAnswers(sheet, bubbles, page = 1) {
   for (const bubble of pageBubbles) {
     if (bubble.kind === "mark" || bubble.kind === "anchor") continue;
     const [x, y] = placed(bubble);
-    if (bubble.kind === "code") {
+    if (bubble.kind === "code" || bubble.kind === "pagemark") {
       // Kod katagi: atrofidagi bir necha joydan eng qorasi (serverdagi _fill_ratio square). Kataklar
       // orasi keng (≈40 pt) — qog'oz bukilib siljigan katak ham topilsin
       const inner = Math.max(2, Math.round(bubble.r * READ_SCALE * 0.55));
@@ -804,7 +813,8 @@ function readSheetAnswers(sheet, bubbles, page = 1) {
       for (const dx of [-shift, -shift / 2, 0, shift / 2, shift]) {
         for (const dy of [-shift, -shift / 2, 0, shift / 2, shift]) ratio = Math.max(ratio, boxFill(sheet, x + dx, y + dy, inner));
       }
-      codeBits.set(Number(bubble.letter), ratio);
+      if (bubble.kind === "pagemark") pageMarks[bubble.letter] = ratio;
+      else codeBits.set(Number(bubble.letter), ratio);
       continue;
     }
     const [dx, dy] = rowShift.get(bubble.ref);
@@ -879,6 +889,7 @@ function readSheetAnswers(sheet, bubbles, page = 1) {
     sheet_number_status: numberStatus,
     variant,
     sheet_code: sheetCode,
+    page_marks: pageMarks,
     positions,
     highlights,
   };
@@ -932,6 +943,12 @@ function analyzeFrame(source, sourceWidth, sourceHeight, options) {
   const sheet = prepareSheetFrame(gray, fullWidth, fullHeight, full);
   if (!sheet) return answer;
   let result = readSheetAnswers(sheet, options.layout.bubbles, options.page);
+  // Ko'p varaqli titul (Milliy: 1-varaq 1–35, 2-varaq 36–44): qaysi varaq ekani sahifa belgisidan
+  if ((options.layout.pages || 1) > 1) {
+    const page = pageOfMarks(result.page_marks);
+    if (page && page !== options.page) result = readSheetAnswers(sheet, options.layout.bubbles, page);
+    result.page = page;
+  }
   if (options.page === 1 && options.layout.old_bubbles && result.sheet_number_status !== "ok") {
     // Oldin chop etilgan 3 xonali ID'li titul
     const old = readSheetAnswers(sheet, options.layout.old_bubbles, 1);
@@ -977,6 +994,7 @@ function createScanWorker() {
       edgeMarkOffsets,
       locateMark,
       interpolateOffset,
+      pageOfMarks,
       readSheetAnswers,
       analyzeFrame,
     ].map(String),

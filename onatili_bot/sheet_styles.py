@@ -23,7 +23,9 @@ from reportlab.pdfbase import pdfmetrics
 
 from structure import LETTERS, choice_items
 
-STYLES = {"standard": "Standart", "compact": "Ixcham", "large": "Yirik doirachalar", "columns": "Fan ustunli"}
+STYLES = {"standard": "Standart", "compact": "Ixcham", "large": "Yirik doirachalar", "columns": "Fan ustunli",
+          "official": "Imtihon varaqasi"}  # official — faqat Milliy (Ona tili): 2 varaq + esse varaqlari (sheet_official.py)
+MILLIY_STYLES = ("official", "standard")
 # Oldingi versiyalarda saqlangan nomlar → hozirgilari (eski testlar o'z titulini yo'qotmasin)
 LEGACY_STYLES = {"evalbee": "large", "dtm": "columns"}
 

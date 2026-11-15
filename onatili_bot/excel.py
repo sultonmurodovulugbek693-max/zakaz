@@ -12,7 +12,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from pdfs import ranked
-from scoring import rasch_results, total_points
+from scoring import essay_pending, rasch_results, total_points
 from structure import essay_to_75, max_points, percent
 
 HEAD = PatternFill("solid", fgColor="1D7A48")
@@ -41,8 +41,9 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
         wrong = set(a["wrong"])
         if milliy:
             score, grade = rasch.get(a["id"], (None, None))
+            pending = essay_pending(test, a)  # esse bahosi kiritilmagan — natija chiqmaydi
             row = [place, a["student_name"], a["variant"], a["test_correct"], a["written_correct"],
-                   essay_to_75(a["essay"]), total_points(a), score, grade]
+                   "kutilmoqda" if pending else essay_to_75(a["essay"]), None if pending else total_points(a), score, grade]
         else:
             right = a["test_correct"] + a["written_correct"]
             row = [place, a["student_name"], a["variant"], right, percent(right, a["auto_total"])]

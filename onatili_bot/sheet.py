@@ -93,7 +93,11 @@ def layout(test: dict, variant_names: list[str]) -> dict:
     Ixcham / yirik doirachali / fan ustunli ko'rinishlar — sheet_styles.py da.
     """
     import sheet_styles
-    if sheet_styles.style_of(test) != "standard":
+    style = sheet_styles.style_of(test)
+    if style == "official":
+        import sheet_official
+        return sheet_official.layout(test)
+    if style != "standard":
         return sheet_styles.layout(test, variant_names)
     bubbles: list[dict] = []
 
@@ -353,6 +357,11 @@ def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blank
     c.setTitle(f"Titullar — {test['title']}")
     pages = [*students, *([None] * blanks)] or [None]
     import sheet_styles
+    if sheet_styles.style_of(test) == "official":
+        import sheet_official
+        sheet_official.draw_sheets(c, test, pages)
+        c.save()
+        return buffer.getvalue()
     if sheet_styles.style_of(test) != "standard":
         sheet_styles.draw_sheets(c, test, variant_names, pages)
         c.save()

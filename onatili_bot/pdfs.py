@@ -14,7 +14,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from config import FONTS_DIR
-from scoring import rasch_results, total_points
+from scoring import essay_pending, rasch_results, total_points
 from structure import (ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, format_title, max_points, percent, split_options,
                        text_items)
 
@@ -179,7 +179,7 @@ def ranked(attempts: list[dict], rasch: dict | None = None) -> list[dict]:
     rasch = rasch or {}
     return sorted(
         attempts,
-        key=lambda a: (-rasch.get(a["id"], (0, ""))[0], -total_points(a), a["created_at"] or ""),
+        key=lambda a: (-(rasch.get(a["id"], (None, ""))[0] or -1), -total_points(a), a["created_at"] or ""),
     )
 
 
@@ -234,7 +234,7 @@ def _summary_cards(test: dict, attempts: list[dict], rasch: dict, width: float) 
     count = len(attempts)
     if test["fmt"] == "milliy":
         top = max_points(test["items"], test["fmt"])
-        totals = [total_points(a) for a in attempts] or [0]
+        totals = [total_points(a) for a in attempts if not essay_pending(test, a)] or [0]
         certified = sum(1 for _, grade in rasch.values() if grade != "NC")
         cards = [
             ("Qatnashchilar", str(count)),
@@ -289,11 +289,12 @@ def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float) -
     style = _table_style()
     for place, attempt in enumerate(ranked(attempts, rasch), start=1):
         score, grade = rasch.get(attempt["id"], (0.0, "—"))
+        pending = essay_pending(test, attempt)  # qog'ozdagi esse bahosi kiritilmagan — natija chiqmaydi
         rows.append([
             str(place), Paragraph(_esc(attempt["student_name"]), STYLES["cell"]), attempt["variant"],
             f"{attempt['test_correct']}/{len(choices)}", f"{attempt['written_correct']}/{len(texts)}",
-            "—" if attempt["essay"] is None else fmt_num(essay_to_75(attempt["essay"])),
-            fmt_num(total_points(attempt)), fmt_num(score), grade,
+            "kutilmoqda" if pending else ("—" if attempt["essay"] is None else fmt_num(essay_to_75(attempt["essay"]))),
+            "—" if pending else fmt_num(total_points(attempt)), "—" if pending else fmt_num(score), "—" if pending else grade,
             Paragraph(", ".join(attempt["wrong"]) or "—", STYLES["cell_small"]),
         ])
         if grade in GRADE_COLORS:

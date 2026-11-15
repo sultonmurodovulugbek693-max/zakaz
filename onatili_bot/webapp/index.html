@@ -1540,7 +1540,8 @@ VIEWS.teacher = async ({ id, tab }) => {
   const people = d.attempts.map((a, i) => `<button class="item" data-res="${a.id}"><span class="rank">${i + 1}</span>
       <span><b>${esc(a.name)}</b><small>${t.variants.length > 1 ? `${a.variant} variant · ` : ""}${milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}${a.written_status === "pending" ? " · ⏳ AI yozmani o'qimoqda" : a.written_status === "failed" ? " · ❗ yozmani AI o'qiy olmadi" : ""}</small></span>
       <span class="score-col">${milliy
-        ? `<span class="row" style="gap:8px"><b title="Umumiy ball (75): test qismi va esse o'rtachasi">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
+        ? a.essay_pending ? `<span class="pill-tag wait">⏳ esse kutilmoqda</span><small class="muted">natija esse bahosi bilan chiqadi</small>`
+        : `<span class="row" style="gap:8px"><b title="Umumiy ball (75): test qismi va esse o'rtachasi">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
         : `<b>${num(a.percent)}%</b><small class="muted">${a.test_correct + a.written_correct} / ${a.auto_total}</small>`}</span></button>`).join("");
   const heat = d.analysis.map((q, i) => `<div class="${q.share >= 70 ? "h-good" : q.share >= 40 ? "h-mid" : "h-bad"}" style="animation-delay:${i * .012}s"><b>${q.label}</b>${q.share}%</div>`).join("");
   const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;
@@ -1548,7 +1549,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const essayIcon = a => a.essay != null ? `✅ ${num(essay75(a.essay))}` : a.essay_status === "graded" ? `🤖 ${num(essay75(a.ai_score))}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
   const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay != null ? (a.essay_status === "none" || !a.essay_status ? "baholangan" : "tasdiqlangan") : a.essay_status === "none" ? "baho kiritilmagan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
   // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
-  const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0);
+  const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0 || (d.essays_missing || 0) > 0);
   const wPending = d.attempts.filter(a => a.written_status === "pending").length, wFailed = d.attempts.filter(a => a.written_status === "failed").length;
   const waitingEssays = d.waiting_essays || 0;
   const aiNotice = (waitingEssays ? `<p class="muted small" style="margin:0">📝 ${waitingEssays} ta o'quvchi esse yubordi, lekin titul hali skanerlanmagan — skanerlanganda natijaga o'zi qo'shiladi.</p>` : "") + (wPending || wFailed ? `<p class="muted small" style="margin:0">${wPending ? `⏳ ${wPending} ta titulda yozma javoblarni AI o'qimoqda — tugagach bot xabar beradi.` : ""}
@@ -1571,6 +1572,8 @@ VIEWS.teacher = async ({ id, tab }) => {
       <div class="bigcode">${t.code}</div><button class="btn block" id="copy-code">Kodni nusxalash</button><button class="btn ghost block" data-goto="live">📡 Jonli kuzatish</button>`;
   else if (writtenLeft) next = `<h2>✍️ Yozma javoblarni tekshiring</h2><p class="muted small">${wr.students} ta titul · ${wr.done} / ${wr.total} katak belgilangan. Har savol bo'yicha: o'quvchi yozgani rasmi va kalit yonma-yon — ✅ yoki ❌.</p>
       <button class="btn block" id="written-review">✍️ Yozmalarni tekshirish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : ""}`;
+  else if (essaysLeft && d.essay_on_paper) next = `<h2>📝 Esse ballarini kiriting</h2><p class="muted small">${d.essays_missing} ta o'quvchining esse bahosi kiritilmagan. Esselar qog'ozda (3–4-varaq): o'qib, 75 ballik shkalada kiriting — natija shundan keyin chiqadi.</p>
+      <button class="btn block" id="bulk-essays-home">✏️ Ballarni ketma-ket kiritish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : ""}`;
   else if (essaysLeft) next = `<h2>📝 Esselarni tekshiring</h2><p class="muted small">${suggested ? `${suggested} ta esseni AI baholadi — tasdiqlang.` : ""} ${pending ? `${pending} ta esse AI navbatida.` : ""}</p>
       <button class="btn block" data-goto="essays">Esselarga o'tish</button>${offline ? `<button class="btn ghost block" id="scan">${scanLabel(true)}</button>` : ""}`;
   else next = `<h2>Natijalar tayyor</h2><p class="muted small">${n} ta o'quvchi javob berdi${offline && d.students.length ? `, ${scanned} / ${d.students.length} titul skanerlangan` : ""}. E'lon qilsangiz, har biriga natijasi yuboriladi.</p>
@@ -1593,7 +1596,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)}${t.variants.length > 1 ? ` · ${t.variants.join(", ")}` : ""}</span></div></div>
     <div class="tabs bar">${tabsList.map(([k, label]) => `<button class="${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}</div>
     ${takeFlash()}
-    ${tab === "home" && n ? testStrip(d, milliy, suggested + pending) : ""}
+    ${tab === "home" && n ? testStrip(d, milliy, suggested + pending + (d.essays_missing || 0)) : ""}
     ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>
       ${wr && !writtenLeft ? `<button type="button" class="item" id="written-review-open"><span class="ico">✍️</span>
         <span><b>Yozma javoblar</b><small>${wr.done} / ${wr.total} katak belgilangan — ko'rish va o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
@@ -1602,7 +1605,8 @@ VIEWS.teacher = async ({ id, tab }) => {
     ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
     ${tab === "people" ? `${toResults}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
     ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
-    ${tab === "essays" ? `<div class="card small">${d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
+    ${tab === "essays" ? `<div class="card small">${d.essay_on_paper ? `📄 Esselar qog'ozda (3–4-varaq). ${d.essays_missing ? `<b>${d.essays_missing} ta</b> o'quvchining bahosi kiritilmagan — natijasi chiqmaydi.` : "Hamma esse baholangan ✅"}`
+      : d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
       ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
@@ -1665,7 +1669,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     try { await api(`/api/teacher/test/${t.id}/offline-essays/${num}/delete`, {}); toast("🗑 Esse bekor qilindi"); haptic("success"); rerender(); }
     catch (e) { toast(e.message); x.disabled = false; }
   });
-  const be = document.getElementById("bulk-essays"); if (be) be.onclick = () => bulkEssays(d);
+  document.querySelectorAll("#bulk-essays, #bulk-essays-home").forEach(be => be.onclick = () => bulkEssays(d));
   const ca = document.getElementById("confirm-all");
   if (ca) ca.onclick = async () => { try { const res = await api(`/api/teacher/test/${t.id}/essays/confirm-all`, {}); toast(`✅ ${res.count} ta tasdiqlandi`); haptic("success"); rerender(); } catch (e) { toast(e.message); } };
 };
@@ -2426,21 +2430,24 @@ const scanLabel = (again = false) => tg && tg.initData ? (again ? "📲 Yana ska
 // Titul ko'rinishlari: skaner chop etilgan ko'rinishni testdan biladi.
 // Milliy sertifikat testida faqat standart titul — yozma javoblar (36–44) harf kataklari faqat unda
 const SHEET_STYLES = [
+  ["official", "Imtihon varaqasi", "Imtihondagidek 4 varaq: 1-varaq 1–35, 2-varaq 36–44 (har biri alohida skanerlanadi), 3–4-varaq esse — qog'ozda yoziladi, ballni o'zingiz kiritasiz."],
   ["standard", "Standart", "A4: ism, ID, test doirachalari va yozma javoblar uchun harf kataklari (yozmani AI o'qiydi)."],
   ["compact", "Ixcham", "Faqat doirachalar — bitta A4 ga 2–3 ta titul, qirqib tarqatiladi. Qog'oz tejaladi."],
   ["large", "Yirik doirachalar", "Bitta varaqda bitta titul: ism/imtihon/sana qutisi, 5 savollik bloklar, yirik doirachalar."],
   ["columns", "Fan ustunli", "Yirik doirachalar, har ustun tepasida fan nomi va savollar oralig'i."],
 ];
 function sheetsModal(t, students) {
-  const milliy = t.fmt === "milliy", styles = milliy ? SHEET_STYLES.slice(0, 1) : SHEET_STYLES;
-  let style = milliy ? "standard" : (t.sheet_style || "standard");
+  const milliy = t.fmt === "milliy";
+  const styles = SHEET_STYLES.filter(([key]) => milliy ? ["official", "standard"].includes(key) : key !== "official");
+  let style = milliy ? (t.sheet_style === "standard" ? "standard" : "official") : (t.sheet_style || "standard");
+  if (!styles.some(([key]) => key === style)) style = styles[0][0];
   const modal = document.createElement("div"); modal.className = "sheet-modal";
   modal.innerHTML = `<div role="dialog" aria-label="Titullar">
     <div class="row between"><h2>📄 Titullarni chiqarish</h2><button class="btn plain" data-close>Yopish</button></div>
     <p class="muted small" style="margin:0">${students.length
       ? `${students.length} ta o'quvchiga ismi, ID'si va varianti bosilgan shaxsiy titul (har biriga bittadan).`
       : "1 ta bo'sh titul — printerda kerakli sonda nusxa qilib chiqaring. O'quvchi ID'sini o'zi to'ldiradi, skaner kimniki ekanini taniydi."}
-      ${milliy ? `<br>📝 Esse qog'ozda emas: o'quvchilar botga kod <b>${t.code}</b> ni kiritib, tituldagi ID'si bilan yozadi.` : ""}</p>
+      <span id="essay-note"></span></p>
     ${styles.length > 1 ? `<div class="field"><label>Titul ko'rinishi</label>
       <div class="chips" id="styles">${styles.map(([key, name, hint]) => `<button type="button" class="chip ${key === style ? "on" : ""}" data-style="${key}" title="${esc(hint)}">${name}</button>`).join("")}</div>
       <span class="muted small" id="style-hint"></span></div>` : `<span class="muted small">${esc(SHEET_STYLES[0][2])}</span>`}
@@ -2450,6 +2457,10 @@ function sheetsModal(t, students) {
   const hint = () => {
     const el = modal.querySelector("#style-hint"); if (!el) return;
     el.textContent = SHEET_STYLES.find(([key]) => key === style)[2];
+    const note = modal.querySelector("#essay-note");
+    if (note) note.innerHTML = milliy ? (style === "official"
+      ? "<br>📝 Esse 3–4-varaqda, qog'ozda yoziladi — ballni «📝 Esselar»da 75 ballik shkalada kiritasiz."
+      : `<br>📝 Esse qog'ozda emas: o'quvchilar botga kod <b>${t.code}</b> ni kiritib, tituldagi ID'si bilan yozadi.`) : "";
   };
   hint();
   modal.querySelectorAll("[data-style]").forEach(b => b.onclick = () => {
@@ -2558,7 +2569,16 @@ function grayJpeg(img, quality = 0.85) {
 }
 
 // Yuboriladigan natija: o'qituvchi tuzatgan bo'lsa — o'sha, aks holda skaner o'qigani
+// Ikki varaqli titulning 2-varag'i (yozma javoblar) — faqat rasm va o'quvchi ID'si
+const isPage2 = rec => rec.page === 2;
+function recNumber(rec, students = []) {
+  if (isPage2(rec)) return rec.number;
+  const p = recPayload(rec);
+  const st = p.student_id ? students.find(s => s.id === p.student_id) || rec.r.student : null;
+  return (st && st.number) || p.number || (rec.r.pupil && rec.r.pupil.number) || rec.r.id_read || null;
+}
 function recPayload(rec) {
+  if (isPage2(rec)) return { page: 2, number: rec.number, ...(rec.student ? { student_id: rec.student.id } : {}) };
   if (rec.payload) return rec.payload;
   const answers = {};
   rec.r.questions.forEach(q => { if (q.chosen) answers[q.label] = q.chosen; });
@@ -2567,10 +2587,12 @@ function recPayload(rec) {
     : pupil ? { number: pupil.number, name: pupil.name } : rec.r.id_read ? { number: rec.r.id_read } : {}) };
 }
 function recReady(rec) {
+  if (isPage2(rec)) return !!rec.number;
   const p = recPayload(rec);
   return !!p.variant && (!!p.student_id || (p.name || "").trim().length >= 3);
 }
 function recWarnings(rec) {
+  if (isPage2(rec)) return 0;
   return rec.payload ? 0 : rec.r.questions.filter(q => q.status === "multiple" || q.status === "unsure").length;
 }
 
@@ -2634,7 +2656,8 @@ VIEWS.scan = async ({ id }) => {
       if (!document.body.contains(review)) return;  // kutayotganda boshqa sahifaga o'tildi
       setStatus("✅ Titul o'qildi — pastda tekshiring", "ok");
     }
-    showReview(r, d, items, review, resume);
+    if (r.page === 2) showPage2Review(r, d, review, resume);
+    else showReview(r, d, items, review, resume);
     review.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -2737,8 +2760,11 @@ VIEWS.scan = async ({ id }) => {
   }
 
   // Ushlangan titul → telefon xotirasi. O'quvchi titul kodidan yoki bo'yalgan ID'dan aniqlanadi
+  const twoPages = !!(layout && (layout.pages || 1) > 1);
   async function keep(a) {
     const res = a.read.result;
+    const page = twoPages ? res.page : 1;
+    if (!page) { setStatus("Varaq aniqlanmadi — tepadagi va burchakdagi qora kvadratlar to'liq ko'rinsin", "bad"); return; }
     const code = decodeSheetNumber(res.sheet_code);
     let number = code || null, idSource = code ? "code" : null;
     if (!number && res.sheet_number_status === "ok") { number = res.sheet_number; idSource = "bubbles"; }
@@ -2747,8 +2773,9 @@ VIEWS.scan = async ({ id }) => {
     const pupil = number && !student ? (d.pupils || []).find(p => p.number === number) || null : null;
     if (number && !student && !pupil) idSource = "unknown";
     const variant = res.variant || (student && student.variant) || (t.variants.length === 1 ? t.variants[0] : null);
-    const needWritten = (layout.written_labels || []).length > 0;
     const crops = a.crops || {};
+    if (page === 2) return keepPage2(a, number, student, pupil, crops);
+    const needWritten = !twoPages && (layout.written_labels || []).length > 0;  // ikki varaqli titulda — 2-varaqda
     const [written, name] = await Promise.all([
       needWritten ? (crops.written ? grayJpeg(crops.written) : cropSheet(a.read.sheet, layout.written_area, READ_SCALE)) : null,
       student ? null : (crops.name ? grayJpeg(crops.name, 0.8) : cropSheet(a.read.sheet, layout.name_area, READ_SCALE, 0.8)),
@@ -2761,15 +2788,43 @@ VIEWS.scan = async ({ id }) => {
         questions: res.questions.map(q => ({ label: q.label, chosen: q.chosen, status: q.status })),
       },
     };
+    // Ikki varaqli titul: shu o'quvchining 2-varag'i (yoki eski 1-varag'idagi yozma rasm) — shu yozuvga
+    if (twoPages && number) {
+      for (const old of queue) {
+        if (recNumber(old, d.students) !== number) continue;
+        if (isPage2(old) || (!rec.written && old.written)) rec.written = rec.written || old.written;
+        if (isPage2(old)) await scanDB.del(old.uid);
+      }
+    }
     // Shu o'quvchi avval ham skanerlangan bo'lsa — eskisi o'rniga yangisi
     let replaced = false;
-    if (student) for (const old of queue) if (recPayload(old).student_id === student.id) { await scanDB.del(old.uid); replaced = true; }
+    if (student) for (const old of queue) if (!isPage2(old) && recPayload(old).student_id === student.id) { await scanDB.del(old.uid); replaced = true; }
     await scanDB.put(rec);
     haptic("success");
     cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 500);
     const warn = recWarnings(rec);
     const who = student || pupil;
-    savedText = `✅ ${who ? `№ ${pad3(who.number)} ${who.name}${(who.class_name) ? ` · ${who.class_name}` : ""}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}`;
+    savedText = `✅ ${twoPages ? "1-varaq · " : ""}${who ? `№ ${pad3(who.number)} ${who.name}${(who.class_name) ? ` · ${who.class_name}` : ""}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}${twoPages && !rec.written ? " · endi 2-varaqni qo'ying" : ""}`;
+    setStatus(savedText, "ok");
+    await refreshQueue();
+  }
+
+  // 2-varaq (36–44): yozma kataklar rasmi. O'quvchi ID'si shart — u bilan 1-varaqqa qo'shiladi
+  async function keepPage2(a, number, student, pupil, crops) {
+    if (!number) { setStatus("2-varaq: ID o'qilmadi — ID'ni 2-varaqqa ham yozib bo'yang va qayta qo'ying", "bad"); haptic("error"); return; }
+    const written = crops.written ? await grayJpeg(crops.written) : await cropSheet(a.read.sheet, layout.written_area, READ_SCALE);
+    const who = student || pupil;
+    const label = `№ ${pad3(number)}${who ? ` ${who.name}` : ""}`;
+    const host = queue.find(r => !isPage2(r) && recNumber(r, d.students) === number);
+    if (host) { host.written = written; await scanDB.put(host); savedText = `✅ 2-varaq · ${label} — 1-varaqqa qo'shildi`; }
+    else {
+      for (const old of queue) if (isPage2(old) && old.number === number) await scanDB.del(old.uid);
+      await scanDB.put({ uid: newUid(), testId: testKey, created: Date.now(), page: 2, number, student: student ? { ...student } : null,
+        pupil, written, name: null, essays: [], error: null, payload: null, r: { questions: [] } });
+      savedText = `✅ 2-varaq · ${label} saqlandi`;
+    }
+    haptic("success");
+    cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 500);
     setStatus(savedText, "ok");
     await refreshQueue();
   }
@@ -2778,6 +2833,7 @@ VIEWS.scan = async ({ id }) => {
   const qList = document.getElementById("q-list"), qSend = document.getElementById("q-send"), qCount = document.getElementById("q-count");
   let sending = false;
   function whoOf(rec) {
+    if (isPage2(rec)) { const w = rec.student || rec.pupil; return `📄 2-varaq · № ${pad3(rec.number)}${w ? ` · ${esc(w.name)}` : ""}`; }
     const p = recPayload(rec);
     const st = p.student_id ? d.students.find(s => s.id === p.student_id) || (rec.r.student && rec.r.student.id === p.student_id ? rec.r.student : null) : null;
     const cls = (st && st.class_name) || (!st && rec.r.pupil && p.name === rec.r.pupil.name ? rec.r.pupil.class_name : null);
@@ -2790,7 +2846,12 @@ VIEWS.scan = async ({ id }) => {
     qCount.textContent = queue.length;
     qList.innerHTML = queue.slice().reverse().map((rec, i) => {
       const p = recPayload(rec), ready = recReady(rec), warn = recWarnings(rec);
-      const tags = [p.variant ? `${p.variant} variant` : "❗ variant tanlanmagan", warn ? `⚠️ ${warn} ta savolni tekshiring` : "",
+      if (isPage2(rec)) {
+        const tags2 = ["1-varaq hali skanerlanmagan — yuborilsa, 1-varaq kelganda qo'shiladi", rec.error ? `❗ ${esc(rec.error)}` : ""].filter(Boolean).join(" · ");
+        return `<button type="button" class="item" data-rec="${rec.uid}"><span class="rank">${queue.length - i}</span>
+        <span><b>${whoOf(rec)}</b><small>${tags2}</small></span><span class="pill-tag ${rec.error ? "wait" : "done"}">${rec.error ? "!" : "✓"}</span></button>`;
+      }
+      const tags = [twoPages ? (rec.written ? "📄 2-varaq ✓" : "📄 2-varaq kutilmoqda") : "", p.variant ? `${p.variant} variant` : "❗ variant tanlanmagan", warn ? `⚠️ ${warn} ta savolni tekshiring` : "",
         rec.essays.length ? `📝 esse: ${rec.essays.length} bet` : "", rec.payload ? "✏️ tuzatilgan" : "", rec.error ? `❗ ${esc(rec.error)}` : ""].filter(Boolean).join(" · ");
       return `<button type="button" class="item" data-rec="${rec.uid}"><span class="rank">${queue.length - i}</span>
         <span><b>${whoOf(rec)}</b><small>${tags}</small></span><span class="pill-tag ${ready && !warn && !rec.error ? "done" : "wait"}">${ready ? (warn || rec.error ? "!" : "✓") : "?"}</span></button>`;
@@ -2803,6 +2864,21 @@ VIEWS.scan = async ({ id }) => {
   function openRec(rec) {
     if (sending) return;
     stopLoop(); drawQuad(null);
+    if (isPage2(rec)) {
+      const url = URL.createObjectURL(rec.written);
+      const close = () => { URL.revokeObjectURL(url); review.innerHTML = ""; window.scrollTo({ top: 0, behavior: "smooth" }); startLoop(true); };
+      review.innerHTML = `<div class="card"><b>${whoOf(rec)}</b>
+        <span class="muted small">Yozma javoblar (36–44). 1-varaq skanerlanganda (yoki allaqachon yuborilgan bo'lsa) shu o'quvchi natijasiga qo'shiladi.</span>
+        <img src="${url}" alt="2-varaq" style="width:100%;border-radius:10px;border:1px solid var(--line)">
+        <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="p2-close" style="flex:1">Yopish</button><button type="button" class="btn ghost" id="p2-del" style="flex:1">🗑 O'chirish</button></div></div>`;
+      review.querySelector("#p2-close").onclick = () => { haptic("light"); close(); };
+      review.querySelector("#p2-del").onclick = async () => {
+        if (!(await confirmBox("Bu 2-varaqni telefondan o'chirasizmi?"))) return;
+        await scanDB.del(rec.uid); await refreshQueue(); toast("🗑 O'chirildi"); close();
+      };
+      review.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     const p = recPayload(rec), labels = layout.written_labels || [];
     const urls = [rec.written, rec.name].map(b => b ? URL.createObjectURL(b) : null);
     const student = p.student_id ? d.students.find(s => s.id === p.student_id) || rec.r.student : null;
@@ -2902,7 +2978,9 @@ VIEWS.scan = async ({ id }) => {
     try {
       const form = new FormData(); form.append("photo", await compressImage(file), "titul.jpg");
       const r = await apiForm(`/api/teacher/test/${id}/scan`, form);
-      haptic("success"); showReview(r, d, items, review, () => { review.innerHTML = ""; input.click(); });
+      haptic("success");
+      const next = () => { review.innerHTML = ""; input.click(); };
+      if (r.page === 2) showPage2Review(r, d, review, next); else showReview(r, d, items, review, next);
     } catch (e) {
       haptic("error");
       review.innerHTML = `<div class="card empty"><div class="big">📷</div><b>${esc(e.message)}</b><span>Qaytadan suratga oling.</span></div>`;
@@ -2927,6 +3005,26 @@ VIEWS.scan = async ({ id }) => {
   }
   startLoop();
 };
+
+// Ikki varaqli titulning 2-varag'i (server o'qigan): yozma kataklar rasmi → o'quvchi natijasiga
+function showPage2Review(r, d, box, onNext) {
+  const number = r.student ? r.student.number : r.pupil ? r.pupil.number : r.id_read;
+  const who = r.student || r.pupil;
+  box.innerHTML = `<div class="card"><b>📄 2-varaq · ${number ? `№ ${pad3(number)}` : "ID o'qilmadi"}${who ? ` · ${esc(who.name)}` : ""}</b>
+    <span class="muted small">${number ? "Yozma javoblar (36–44) shu o'quvchi natijasiga qo'shiladi." : "ID'ni 2-varaqqa yozib bo'yang va qayta skanerlang."}</span>
+    ${r.written_image ? `<img src="${r.written_image}" alt="2-varaq" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
+    <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="p2-skip" style="flex:1">Keyingisi</button>${number ? `<button type="button" class="btn" id="p2-save" style="flex:1">💾 Saqlash</button>` : ""}</div></div>`;
+  box.querySelector("#p2-skip").onclick = () => onNext();
+  const save = box.querySelector("#p2-save");
+  if (save) save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const image = await jpegDataUrl(r.written_image);
+      const res = await api(`/api/teacher/test/${d.test.id}/scan/save`, { page: 2, number, ...(r.student ? { student_id: r.student.id } : {}), written_image: image });
+      haptic("success"); toast(res.attached ? `✅ 2-varaq ${res.name} natijasiga qo'shildi` : `✅ 2-varaq saqlandi — 1-varaq skanerlanganda qo'shiladi`); onNext();
+    } catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+}
 
 // local — oflayn skanerdagi (telefonda saqlangan) titul: { save(payload), remove() } — server o'rniga telefonga yoziladi
 function showReview(r, d, allItems, box, onNext, local = null) {
@@ -2998,7 +3096,7 @@ function showReview(r, d, allItems, box, onNext, local = null) {
       d.students = (await api(`/api/teacher/test/${t.id}/students`)).students;
       box.innerHTML = `<div class="card success" style="padding:20px 10px">
         <svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg>
-        <h2>${esc(res.name)}</h2><p class="muted" style="margin:0">${milliy ? `${num(res.points)} / ${num(res.max_points)} ball (essesiz)` : `${res.correct} / ${res.auto_total} to'g'ri`}</p>
+        <h2>${esc(res.name)}</h2><p class="muted" style="margin:0">${res.essay_pending ? "Saqlandi · natija esse bahosi kiritilgach chiqadi" : milliy ? `${num(res.points)} / ${num(res.max_points)} ball (essesiz)` : `${res.correct} / ${res.auto_total} to'g'ri`}</p>
         <button class="btn block" id="next-sheet">📷 Keyingi titul</button></div>`;
       box.querySelector("#next-sheet").onclick = () => { haptic("light"); onNext(); };
       S.boot = null;

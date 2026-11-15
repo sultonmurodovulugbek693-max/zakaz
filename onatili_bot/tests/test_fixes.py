@@ -170,6 +170,7 @@ class ServerFixes(ServerBase):
 
     async def test_offline_essay_cancel_frees_id(self):
         _, r = await self.create("offline", fmt="milliy")
+        db.set_sheet_style(r["id"], "standard")  # eski titul: esse botda (yangi oflayn test — qog'ozda)
         test = db.get_test(r["id"])
         db.add_students(test["id"], ["Ali Valiyev"], ["A"], [7])
         self.user = {"id": OTHER, "name": "Begona", "username": "beg"}
@@ -302,6 +303,7 @@ class SixProblems(ServerBase):
     async def test_essay_pin(self):
         import sheet
         _, r = await self.create("offline", fmt="milliy")
+        db.set_sheet_style(r["id"], "standard")  # eski titul: esse botda (yangi oflayn test — qog'ozda)
         test = db.get_test(r["id"])
         db.add_students(test["id"], ["Ali Valiyev"], ["A"], [7])
         pin = sheet.essay_pin(test["id"], 7)
@@ -519,6 +521,89 @@ class EssayScore75(ServerBase):
         for bad in ("27", "76", "50,5", "abc"):
             self.assertEqual((await self.post(path, {"score75": bad}))[0], 400, bad)
         self.assertEqual((await self.post(path, {"score": "18,5"}))[1]["score_75"], 64.0)  # 24 ballik ham ishlaydi
+
+
+class OfficialSheet(ServerBase):
+    """Imtihon varaqasi: 1-varaq 1–35, 2-varaq 36–44 alohida skanerlanadi; esse qog'ozda — bahosi kiritilmaguncha natija yo'q."""
+
+    async def make(self):
+        _, r = await self.create("offline", fmt="milliy")
+        test = db.get_test(r["id"])
+        self.assertEqual(test["sheet_style"], "official")
+        db.add_students(test["id"], ["Ali Valiyev", "Vali Karimov"], ["A", "A"], [7, 8])
+        return test
+
+    async def upload(self, test, payload, written=None):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("data", json.dumps(payload))
+        if written:
+            form.add_field("written", written, filename="y.jpg", content_type="image/jpeg")
+        response = await self.client.post(f"/api/teacher/test/{test['id']}/scan/upload", data=form)
+        return response.status, await response.json()
+
+    async def test_pdf_has_four_pages_per_student(self):
+        import re
+        import sheet
+        test = await self.make()
+        pdf = sheet.sheets_pdf(test, ["A"], db.list_students(test["id"]), 0)
+        self.assertEqual(len(re.findall(rb"/Type /Page[^s]", pdf)), 8)  # 2 o'quvchi × 4 varaq
+        self.assertEqual(sheet.layout(test, ["A"])["pages"], 2)
+
+    async def test_page2_before_and_after_page1(self):
+        test = await self.make()
+        answers = {str(i): "A" for i in range(1, 36)}
+        # 7: avval 2-varaq, keyin 1-varaq
+        status, r = await self.upload(test, {"uid": "p2-7", "page": 2, "number": 7}, b"\xff\xd8 yozma7")
+        self.assertEqual((status, r["attached"]), (200, False))
+        status, r = await self.upload(test, {"uid": "p1-7", "number": "7", "variant": "A", "answers": answers})
+        self.assertEqual(status, 200)
+        self.assertIsNotNone(db.get_written_job(r["attempt_id"]))  # kutib turgan 2-varaq biriktirildi
+        self.assertIsNone(r["points"])  # esse bahosi yo'q — ball ko'rsatilmaydi
+        # 8: avval 1-varaq, keyin 2-varaq
+        _, r8 = await self.upload(test, {"uid": "p1-8", "number": "8", "variant": "A", "answers": answers})
+        self.assertIsNone(db.get_written_job(r8["attempt_id"]))
+        _, r = await self.upload(test, {"uid": "p2-8", "page": 2, "number": 8}, b"\xff\xd8 yozma8")
+        self.assertTrue(r["attached"])
+        self.assertIsNotNone(db.get_written_job(r8["attempt_id"]))
+        # 1-varaq qayta skanerlansa — 2-varaq rasmi yo'qolmaydi
+        _, again = await self.upload(test, {"uid": "p1-8b", "number": "8", "variant": "A", "answers": answers})
+        self.assertNotEqual(again["attempt_id"], r8["attempt_id"])
+        self.assertIsNotNone(db.get_written_job(again["attempt_id"]))
+        # ID'siz 2-varaq — xato
+        status, _ = await self.upload(test, {"uid": "p2-x", "page": 2}, b"\xff\xd8 x")
+        self.assertEqual(status, 400)
+
+    async def test_result_hidden_until_essay_score(self):
+        test = await self.make()
+        answers = {str(i): "A" for i in range(1, 36)}
+        _, r = await self.upload(test, {"uid": "a", "number": "7", "variant": "A", "answers": answers})
+        page = await (await self.client.get(f"/api/teacher/test/{test['id']}")).json()
+        row = page["attempts"][0]
+        self.assertEqual((row["essay_pending"], row["rasch"], row["grade"], page["essays_missing"]), (True, None, None, 1))
+        status, res = await self.post(f"/api/teacher/test/{test['id']}/announce", {})
+        self.assertEqual((status, res["essays_missing"]), (409, 1))
+        self.assertEqual((await self.post(f"/api/teacher/test/{test['id']}/certificates", {}))[0], 400)
+        import excel
+        import pdfs
+        self.assertTrue(pdfs.results_pdf(test, db.list_attempts(test["id"])).startswith(b"%PDF"))  # «kutilmoqda» bilan
+        excel.results_xlsx(test, db.list_attempts(test["id"]))
+        # O'qituvchi esse balini kiritadi — natija chiqadi
+        await self.post(f"/api/teacher/essay/{r['attempt_id']}", {"score75": 63})
+        page = await (await self.client.get(f"/api/teacher/test/{test['id']}")).json()
+        row = page["attempts"][0]
+        self.assertFalse(row["essay_pending"])
+        self.assertIsNotNone(row["rasch"])
+        self.assertEqual(page["essays_missing"], 0)
+        status, _ = await self.post(f"/api/teacher/test/{test['id']}/announce", {})
+        self.assertEqual(status, 200)
+
+    async def test_no_bot_essay_for_paper_test(self):
+        test = await self.make()
+        self.user = {"id": STUDENT, "name": "Ali", "username": None}
+        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 409)
+        status, _ = await self.post(f"/api/test/{test['code']}/essay", {"number": "0007", "name": "Ali Valiyev", "essay": "so'z " * 40})
+        self.assertEqual(status, 409)
 
 
 class Names(unittest.TestCase):

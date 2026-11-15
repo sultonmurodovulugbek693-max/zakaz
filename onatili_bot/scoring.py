@@ -15,8 +15,20 @@ from rasch import grade_for, rasch_scores
 from structure import essay_to_75
 
 
+def essay_on_paper(test: dict) -> bool:
+    """Esse qog'ozda (imtihon varaqasining 3–4-varag'i): bahoni o'qituvchi kiritmaguncha natija chiqmaydi."""
+    import sheet_styles
+    return test["fmt"] == "milliy" and sheet_styles.style_of(test) == "official"
+
+
+def essay_pending(test: dict, attempt: dict) -> bool:
+    """Natija hali yopiq: qog'ozdagi esse bahosi kiritilmagan."""
+    return essay_on_paper(test) and attempt.get("essay") is None
+
+
 def rasch_breakdown(test: dict, attempts: list[dict]) -> dict[int, dict]:
-    """{attempt_id: {"test": 1-bo'lim, "essay": esse (75 ballik) yoki None, "score": umumiy, "grade": daraja}}."""
+    """{attempt_id: {"test": 1-bo'lim, "essay": esse (75 ballik) yoki None, "score": umumiy, "grade": daraja}}.
+    Qog'ozdagi esse bahosi kiritilmagan bo'lsa — score va grade None, pending True (natija chiqmaydi)."""
     if not attempts:
         return {}
     labels = [item["label"] for item in test["items"]]
@@ -31,13 +43,17 @@ def rasch_breakdown(test: dict, attempts: list[dict]) -> dict[int, dict]:
         part1 = round(part1, 1)  # ko'rsatilgan sonlardan hisoblanadi — o'quvchi (test + esse) / 2 ni o'zi tekshira oladi
         essay = essay_to_75(attempt.get("essay")) if milliy else None
         score = round((part1 + essay) / 2, 1) if essay is not None else part1
+        if essay_pending(test, attempt):
+            out[attempt["id"]] = {"test": part1, "essay": None, "score": None, "grade": None, "pending": True}
+            continue
         out[attempt["id"]] = {"test": part1, "essay": essay, "score": score, "grade": grade_for(score)}
     return out
 
 
 def rasch_results(test: dict, attempts: list[dict]) -> dict[int, tuple[float, str]]:
     """{attempt_id: (umumiy ball, daraja)} — e'lon, PDF va Excel shundan foydalanadi."""
-    return {key: (value["score"], value["grade"]) for key, value in rasch_breakdown(test, attempts).items()}
+    return {key: (value["score"], value["grade"]) for key, value in rasch_breakdown(test, attempts).items()
+            if not value.get("pending")}  # esse bahosi kutilayotganlar — natijasiz
 
 
 def total_points(attempt: dict) -> float:

@@ -50,7 +50,7 @@ import subscription
 import webapp
 import config
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
-from scoring import rasch_results, total_points
+from scoring import essay_pending, rasch_results, total_points
 from structure import ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, grade, max_points, percent, text_items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -860,10 +860,12 @@ async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], 
     await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
 
 
-async def scan_notice(bot: Bot, chat_id: int, test: dict, name: str, points: float, max_points: float) -> None:
+async def scan_notice(bot: Bot, chat_id: int, test: dict, name: str, points: float | None, max_points: float) -> None:
     """APK skanerida saqlangan natija — o'qituvchining bot chatiga."""
+    result = (f"<b>{fmt_num(points)}</b> / {fmt_num(max_points)} ball" if points is not None
+              else "saqlandi · natija esse bahosi kiritilgach chiqadi")
     await bot.send_message(chat_id, f"📷 <b>Skaner</b> · {esc(test['title'])} (kod {test['code']})\n"
-                                    f"👤 {esc(name)} — <b>{fmt_num(points)}</b> / {fmt_num(max_points)} ball")
+                                    f"👤 {esc(name)} — {result}")
 
 
 async def store_photo(bot: Bot, chat_id: int, data: bytes, caption: str) -> str:
