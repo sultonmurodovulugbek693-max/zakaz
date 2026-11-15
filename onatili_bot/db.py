@@ -1209,9 +1209,15 @@ BACKUP_TABLES = {
     "payments": "*",
     "registrations": "*",
     "teacher_places": "*",
+    "teacher_students": "*",
+    "practice_essays": "*",
+    # Rasmlar (o'quvchi surati, to'lov cheki) nusxaga kirmaydi — hajmi katta; chek izi (hash, tranzaksiya) qoladi
+    "join_requests": "id, teacher_id, student_id, first_name, last_name, status, created_at, decided_at",
+    "essay_payments": "id, test_id, student_id, amount, status, receipt_hash, txn, note, created_at, decided_at",
+    "ai_usage": "*",
 }
 SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students",
-                 "payments", "registrations", "teacher_places")
+                 "payments", "registrations", "teacher_places", "practice_essays", "join_requests", "essay_payments")
 
 
 def export_tables() -> dict[str, list[dict]]:

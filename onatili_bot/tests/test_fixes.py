@@ -928,6 +928,34 @@ class EssayPaid(ServerBase):
         await bot.receipt_received(message)  # ochiq esse to'lovi yo'q — oddiy obuna chekiga o'tadi
         self.assertIn("Chek qabul qilinmadi", answers[-1])
 
+    async def test_backup_keeps_links_and_payments(self):
+        """Zaxira nusxa: ustoz-o'quvchi bog'lanishi, «O'quvchisiman» arizasi, esse to'lovi tiklanadi (rasmlarsiz)."""
+        import os
+        test = await self.paid_mock()
+        db.link_student(OWNER, STUDENT)
+        db.save_join_request(OWNER, OTHER, "Vali", "Aliyev", "cmFzbQ==", "image/jpeg")
+        await self.as_student(OTHER)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        self.good_receipt()
+        pay_id = db.open_essay_payment(OTHER)["id"]
+        await webapp.check_essay_receipt(pay_id, b"chek-b", "image/jpeg")
+        data = db.export_tables()
+        self.assertNotIn("receipt", data["essay_payments"][0])  # chek rasmi nusxaga kirmaydi
+        self.assertNotIn("photo", data["join_requests"][0])
+        original = db.DB_PATH
+        db.DB_PATH = os.path.join(_env.TMP, "restored_pay.db")
+        try:
+            if os.path.exists(db.DB_PATH):
+                os.remove(db.DB_PATH)
+            db.init()
+            db.import_tables(data)
+            self.assertTrue(db.is_linked(OWNER, STUDENT))
+            self.assertEqual(db.join_status(OWNER, OTHER), "pending")
+            self.assertEqual(db.essay_payment_of(test["id"], OTHER)["status"], "paid")
+            self.assertTrue(db.receipt_used(__import__("hashlib").sha256(b"chek-b").hexdigest(), None, 0))
+        finally:
+            db.DB_PATH = original
+
     # ---------- AI ishlamasa — qo'lda zaxira; AI hisobi ----------
 
     async def test_receipt_ai_timeout_goes_to_teacher(self):
