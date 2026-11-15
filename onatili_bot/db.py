@@ -140,6 +140,19 @@ SCHEMA = [
         decided_at   TEXT,
         UNIQUE (test_id, student_id)
     )""",
+    # AI ishlatilishi (admin /ai): kun × tur (written/receipt/essay) × model — so'rovlar, limit xatolari, tokenlar, narx
+    """CREATE TABLE IF NOT EXISTS ai_usage (
+        day        TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        calls      INTEGER NOT NULL DEFAULT 0,
+        failures   INTEGER NOT NULL DEFAULT 0,
+        limited    INTEGER NOT NULL DEFAULT 0,
+        tokens_in  BIGINT NOT NULL DEFAULT 0,
+        tokens_out BIGINT NOT NULL DEFAULT 0,
+        cost       REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, kind, model)
+    )""",
     # Eski: ustozga mock arizasi (endi ishlatilmaydi — ma'lumot saqlanib qoladi)
     f"""CREATE TABLE IF NOT EXISTS mock_requests (
         id         {ID},
@@ -1030,6 +1043,58 @@ def receipt_used(receipt_hash: str, txn: str | None, payment_id: int) -> bool:
             "SELECT 1 FROM essay_payments WHERE id <> ? AND status IN ('paid', 'review') AND "
             "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
             (payment_id, receipt_hash, txn or "", txn or "")).fetchone())
+
+
+def essay_payments_for_owner(owner_id: int, limit: int = 30) -> list[dict]:
+    """Ustozning mocklariga kelgan esse to'lovlari (chek yuborilganlari): ko'rib chiqilmaganlari birinchi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id, p.amount, p.status, p.note, p.created_at, p.student_id, t.title, t.code, u.full_name, u.username "
+            "FROM essay_payments p JOIN tests t ON t.id = p.test_id LEFT JOIN users u ON u.tg_id = p.student_id "
+            "WHERE t.owner_id = ? AND p.receipt IS NOT NULL "
+            "ORDER BY CASE p.status WHEN 'review' THEN 0 ELSE 1 END, p.id DESC LIMIT ?", (owner_id, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def record_ai_usage(kind: str, model: str, usage: dict | None, limited: bool = False) -> None:
+    day = datetime.now().strftime("%Y-%m-%d")
+    ok = usage is not None
+    usage = usage or {}
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO ai_usage (day, kind, model, calls, failures, limited, tokens_in, tokens_out, cost) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day, kind, model) DO UPDATE SET "
+            "calls = ai_usage.calls + excluded.calls, failures = ai_usage.failures + excluded.failures, "
+            "limited = ai_usage.limited + excluded.limited, tokens_in = ai_usage.tokens_in + excluded.tokens_in, "
+            "tokens_out = ai_usage.tokens_out + excluded.tokens_out, cost = ai_usage.cost + excluded.cost",
+            (day, kind, model[:60], 1 if ok else 0, 0 if ok else 1, 1 if limited else 0,
+             int(usage.get("in") or 0), int(usage.get("out") or 0), float(usage.get("cost") or 0)))
+
+
+def ai_usage_since(day: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, model, SUM(calls) AS calls, SUM(failures) AS failures, SUM(limited) AS limited, "
+            "SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, SUM(cost) AS cost FROM ai_usage "
+            "WHERE day >= ? GROUP BY kind, model ORDER BY kind, model", (day,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def ai_waiting_by_owner() -> list[dict]:
+    """AI navbatida kutayotganlar ustoz bo'yicha: yozma javoblar (titullar) va esselar."""
+    with connect() as conn:
+        written = conn.execute(
+            "SELECT t.owner_id, COUNT(*) AS n FROM written_jobs w JOIN tests t ON t.id = w.test_id "
+            "WHERE w.status = 'pending' GROUP BY t.owner_id").fetchall()
+        essays = conn.execute(
+            "SELECT t.owner_id, COUNT(*) AS n FROM essays e JOIN attempts a ON a.id = e.attempt_id "
+            "JOIN tests t ON t.id = a.test_id WHERE e.status = 'pending' GROUP BY t.owner_id").fetchall()
+    out: dict[int, dict] = {}
+    for row in written:
+        out.setdefault(row["owner_id"], {"owner_id": row["owner_id"], "written": 0, "essays": 0})["written"] = row["n"]
+    for row in essays:
+        out.setdefault(row["owner_id"], {"owner_id": row["owner_id"], "written": 0, "essays": 0})["essays"] = row["n"]
+    return list(out.values())
 
 
 def decide_essay_payment(payment_id: int, status: str, allowed: tuple[str, ...]) -> bool:

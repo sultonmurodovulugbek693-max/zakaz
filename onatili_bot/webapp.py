@@ -384,15 +384,21 @@ def _digits(text) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
 
+RECEIPT_AI_TIMEOUT = 90
+
+
 async def verify_receipt(data: bytes, mime: str, amount: int, card: dict) -> tuple[bool, list[str], str | None]:
     """AI chekni o'qiydi, qolganini kod solishtiradi: bugungi sana, summa, qabul qiluvchi karta (oxirgi 4 raqam) yoki ismi."""
     if not essay_ai.enabled():
         return False, ["AI o'chiq — admin tekshiradi"], None
-    try:
-        r = await essay_ai.read_receipt(data, mime)
+    try:  # AI 90 soniyada javob bermasa — chek ustozga (qo'lda)
+        r = await asyncio.wait_for(essay_ai.read_receipt(data, mime), RECEIPT_AI_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.warning("Chekni AI vaqtida o'qimadi")
+        return False, ["AI javob bermadi — ustoz tekshiradi"], None
     except Exception as error:
         logger.warning("Chekni AI o'qiy olmadi: %s", error)
-        return False, ["AI chekni o'qiy olmadi"], None
+        return False, ["AI chekni o'qiy olmadi — ustoz tekshiradi"], None
     reasons = []
     if not r.get("is_receipt"):
         reasons.append("rasm to'lov chekiga o'xshamaydi")
@@ -446,6 +452,28 @@ async def check_essay_receipt(payment_id: int, data: bytes, mime: str) -> dict:
         except Exception:
             logger.warning("Chek adminlarga yuborilmadi", exc_info=True)
     return {"ok": True, "status": status, "reasons": reasons}
+
+
+async def essay_payments_list(request: web.Request) -> web.Response:
+    """Ustoz ilovada: begonalarning esse to'lovlari (bot xabari yetmasa ham shu yerda ko'rinadi)."""
+    user = await auth(request)
+    return ok({"payments": await run(db.essay_payments_for_owner, user["id"])})
+
+
+async def essay_payment_receipt(request: web.Request) -> web.Response:
+    user = await auth(request)
+    pay = await run(db.get_essay_payment, int(request.match_info["payment_id"]))
+    if not pay or pay["owner_id"] != user["id"] or not pay["receipt"]:
+        raise ApiError(404, "Chek topilmadi")
+    return ok({"image": _image_data_url(pay["receipt"], pay["mime"])})
+
+
+async def essay_payment_decide(request: web.Request) -> web.Response:
+    user = await auth(request)
+    action = (await body(request)).get("action")
+    if action not in ("approve", "reject"):
+        raise ApiError(400, "Amal noto'g'ri")
+    return ok(await decide_essay_payment(int(request.match_info["payment_id"]), action == "approve", user["id"]))
 
 
 async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> dict:
@@ -2721,6 +2749,9 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/join/{request_id:\\d+}/photo", join_photo)
     app.router.add_post("/api/teacher/join/{request_id:\\d+}", join_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/essay-pay", essay_pay_start)
+    app.router.add_get("/api/teacher/essay-payments", essay_payments_list)
+    app.router.add_get("/api/teacher/essay-payment/{payment_id:\\d+}/receipt", essay_payment_receipt)
+    app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)
     app.router.add_post("/api/teacher/link", link_add)
     app.router.add_post("/api/teacher/link/remove", link_remove)
     app.router.add_post("/api/teacher/link/limit", link_limit)

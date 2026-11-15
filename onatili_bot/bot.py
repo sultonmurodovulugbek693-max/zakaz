@@ -568,7 +568,18 @@ async def essay_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: l
                   "🤖 AI: ⚠️ " + esc("; ".join(reasons) or "tekshirilmadi") + "\nTekshirib, qaror qiling:"))
     markup = inline([[("❌ Bekor qilish", f"ep:no:{payment_id}")]] if good else
                     [[("✅ Tasdiqlash", f"ep:ok:{payment_id}"), ("❌ Rad etish", f"ep:no:{payment_id}")]])
-    await bot.send_photo(pay["owner_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+    try:
+        await bot.send_photo(pay["owner_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+        return
+    except Exception:  # ustoz botni bloklagan / hech yozmagan — adminga (ilovada «🧾 Esse to'lovlari»da ham turadi)
+        logger.warning("Chek ustozga yuborilmadi: %s", pay["owner_id"])
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_photo(admin_id, BufferedInputFile(photo, filename="chek.jpg"),
+                                 caption=caption + "\n<i>Ustozga yetkazilmadi — siz qaror qilishingiz mumkin</i>",
+                                 reply_markup=markup)
+        except Exception:
+            logger.warning("Chek adminga ham yuborilmadi: %s", admin_id)
 
 
 @dp.callback_query(F.data.startswith("ep:"))
@@ -1263,9 +1274,10 @@ async def essay_worker(bot: Bot) -> None:
             logger.warning("AI vaqtincha ishlamayapti: %s", error)
             delay = min(delay * 2, 600)
             down_since = down_since or time.time()
-            if not alerted and time.time() - down_since > 3600:  # 1 soatdan beri — adminga xabar
+            if not alerted and time.time() - down_since > AI_DOWN_NOTICE:  # 30 daqiqadan beri — ustozlarga va adminga
                 alerted = True
-                logger.error("AI 1 soatdan beri ishlamayapti (yozma javoblar va esselar navbatda kutyapti): %s", error)
+                logger.error("AI %s daqiqadan beri ishlamayapti: %s", AI_DOWN_NOTICE // 60, error)
+                await ai_down_notice(bot, str(error))
         except Exception:
             logger.exception("Esse navbatida xato")
             delay = min(delay * 2, 600)
@@ -1277,6 +1289,74 @@ async def essay_worker(bot: Bot) -> None:
 
 
 WRITTEN_MAX_TRIES = 5
+AI_DOWN_NOTICE = 30 * 60  # AI shuncha vaqt ishlamasa — navbatda ishi bor ustozlarga «qo'lda tekshiring»
+
+
+async def ai_down_notice(bot: Bot, error: str) -> None:
+    """AI uzoq ishlamayapti (limit yoki uzilish): navbatda ishi bor ustozlarga — qo'lda tekshirish yo'li; adminga — sabab."""
+    waiting = await asyncio.to_thread(db.ai_waiting_by_owner)
+    for row in waiting:
+        parts = []
+        if row["written"]:
+            parts.append(f"✍️ {row['written']} ta titulning yozma javoblari — «✍️ Yozmalarni tekshirish»da rasmga qarab "
+                         "o'zingiz belgilashingiz mumkin")
+        if row["essays"]:
+            parts.append(f"📝 {row['essays']} ta esse — «📝 Esselar»da 75 ballik shkalada o'zingiz baholashingiz mumkin")
+        if not parts:
+            continue
+        try:
+            await bot.send_message(row["owner_id"], "⚠️ <b>AI hozir ishlamayapti</b> (limit yoki uzilish). Navbatda:\n"
+                                   + "\n".join(f"• {p}" for p in parts)
+                                   + "\n\nKutishingiz ham mumkin — AI tiklansa o'zi davom etadi.", reply_markup=app_markup())
+        except Exception:
+            logger.warning("AI haqida ustozga xabar yuborilmadi: %s", row["owner_id"])
+    total = sum(r["written"] + r["essays"] for r in waiting)
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, f"⚠️ <b>AI {AI_DOWN_NOTICE // 60} daqiqadan beri ishlamayapti</b>\n"
+                                   f"Navbatda: {total} ta ish · {len(waiting)} ta ustozga xabar berildi.\n"
+                                   f"Sabab: <code>{esc(error[:300])}</code>\n\nLimit bo'lsa — Google AI Studio'da "
+                                   "billingni yoqing. Hisobot: /ai")
+        except Exception:
+            logger.warning("AI haqida adminga xabar yuborilmadi: %s", admin_id)
+
+
+@dp.message(Command("ai"))
+async def cmd_ai_usage(message: Message) -> None:
+    """Admin: AI ishlatilishi — bugun va 30 kun: tur bo'yicha so'rovlar, limit xatolari, tokenlar, narx."""
+    if not is_admin(message):
+        await message.answer("⛔️ Bu buyruq faqat admin uchun.")
+        return
+    from datetime import datetime as _dt, timedelta as _td
+    names = {"written": "✍️ Yozma javoblar", "receipt": "🧾 Cheklar", "essay": "📝 Esselar", "other": "Boshqa"}
+
+    def block(rows: list[dict]) -> str:
+        if not rows:
+            return "— so'rov yo'q"
+        lines, by_kind = [], {}
+        for r in rows:
+            k = by_kind.setdefault(r["kind"], {"calls": 0, "failures": 0, "limited": 0, "tin": 0, "tout": 0, "cost": 0.0})
+            k["calls"] += r["calls"] or 0; k["failures"] += r["failures"] or 0; k["limited"] += r["limited"] or 0
+            k["tin"] += r["tokens_in"] or 0; k["tout"] += r["tokens_out"] or 0; k["cost"] += r["cost"] or 0
+        for kind, k in by_kind.items():
+            lines.append(f"{names.get(kind, kind)}: <b>{k['calls']}</b> ta"
+                         + (f" · ❌ {k['failures']} xato" + (f" ({k['limited']} limit)" if k["limited"] else "") if k["failures"] else "")
+                         + f" · {(k['tin'] + k['tout']) / 1000:.0f}k token" + (f" · ${k['cost']:.3f}" if k["cost"] else ""))
+        models = sorted({r["model"] for r in rows})
+        return "\n".join(lines) + f"\n<i>Modellar: {esc(', '.join(models))}</i>"
+
+    today = _dt.now().strftime("%Y-%m-%d")
+    month = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
+    rows_today = await asyncio.to_thread(db.ai_usage_since, today)
+    rows_month = await asyncio.to_thread(db.ai_usage_since, month)
+    limited = sum(r["limited"] or 0 for r in rows_month)
+    await message.answer(
+        f"🤖 <b>AI ishlatilishi</b>\nYozma va chek: {esc(essay_ai.provider_name())} · esse: {esc(essay_ai.essay_provider_name())}"
+        f"\n{LINE}\n<b>Bugun</b>\n{block(rows_today)}\n\n<b>30 kun</b>\n{block(rows_month)}"
+        + (f"\n\n⚠️ 30 kunda {limited} marta limitga urildi — Google AI Studio'da billingni yoqish tavsiya etiladi."
+           if limited else "")
+        + ("" if essay_ai.GEMINI_PRICE_IN else "\n\n<i>Gemini narxi hisoblanmayapti: Render'da GEMINI_PRICE_IN va "
+           "GEMINI_PRICE_OUT (USD / 1 mln token) ni kiriting.</i>"))
 
 
 async def read_written_group(bot: Bot, jobs: list[dict]) -> None:

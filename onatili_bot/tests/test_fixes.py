@@ -928,6 +928,112 @@ class EssayPaid(ServerBase):
         await bot.receipt_received(message)  # ochiq esse to'lovi yo'q — oddiy obuna chekiga o'tadi
         self.assertIn("Chek qabul qilinmadi", answers[-1])
 
+    # ---------- AI ishlamasa — qo'lda zaxira; AI hisobi ----------
+
+    async def test_receipt_ai_timeout_goes_to_teacher(self):
+        test = await self.paid_mock()
+        await self.as_student(OTHER)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+
+        async def slow(image, mime="image/jpeg"):
+            await asyncio.sleep(5)
+        essay_ai.read_receipt, timeout = slow, webapp.RECEIPT_AI_TIMEOUT
+        webapp.RECEIPT_AI_TIMEOUT = 0.05
+        try:
+            result = await webapp.check_essay_receipt(db.open_essay_payment(OTHER)["id"], b"chek", "image/jpeg")
+        finally:
+            webapp.RECEIPT_AI_TIMEOUT = timeout
+        self.assertEqual((result["status"], result["reasons"]), ("review", ["AI javob bermadi — ustoz tekshiradi"]))
+        self.assertIn("kutib turing", self.bot.messages[-1][1])
+
+    async def test_teacher_sees_payments_in_app(self):
+        test = await self.paid_mock()
+        await self.as_student(OTHER)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        self.good_receipt(amount=100)
+        pay_id = db.open_essay_payment(OTHER)["id"]
+        await webapp.check_essay_receipt(pay_id, b"chek", "image/jpeg")
+        await self.as_student(STUDENT)  # begona ustoz ko'rmaydi
+        self.assertEqual((await (await self.client.get("/api/teacher/essay-payments")).json())["payments"], [])
+        self.assertEqual((await self.client.get(f"/api/teacher/essay-payment/{pay_id}/receipt")).status, 404)
+        self.assertEqual((await self.post(f"/api/teacher/essay-payment/{pay_id}", {"action": "approve"}))[0], 404)
+        await self.as_owner()
+        listed = (await (await self.client.get("/api/teacher/essay-payments")).json())["payments"]
+        self.assertEqual((listed[0]["status"], listed[0]["amount"]), ("review", 15000))
+        self.assertIn("summa", listed[0]["note"])
+        image = await (await self.client.get(f"/api/teacher/essay-payment/{pay_id}/receipt")).json()
+        self.assertTrue(image["image"].startswith("data:image/"))
+        self.assertEqual((await self.post(f"/api/teacher/essay-payment/{pay_id}", {"action": "approve"}))[1]["status"], "paid")
+        await self.as_student(OTHER)
+        self.assertIsNone((await self.info(test))[1]["essay_pay"])
+
+    async def test_receipt_notice_falls_back_to_admin(self):
+        test = await self.paid_mock()
+        await self.as_student(OTHER)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        pay_id = db.open_essay_payment(OTHER)["id"]
+        sent = []
+
+        class Tg:
+            async def send_photo(self, chat_id, photo, caption=None, **_):
+                if chat_id == OWNER:
+                    raise RuntimeError("Forbidden: bot was blocked by the user")
+                sent.append((chat_id, caption))
+        admins, bot.ADMIN_IDS = bot.ADMIN_IDS, {999}
+        try:
+            await bot.essay_receipt_notice(Tg(), pay_id, False, ["summa kam"], b"chek")
+        finally:
+            bot.ADMIN_IDS = admins
+        self.assertEqual(sent[0][0], 999)
+        self.assertIn("Ustozga yetkazilmadi", sent[0][1])
+
+    async def test_ai_down_notice_tells_teachers(self):
+        test = await self.paid_mock()
+        db.link_student(OWNER, STUDENT)
+        await self.as_student(STUDENT)
+        status, res = await self.submit(test, self.ESSAY)
+        self.assertEqual(status, 200)
+        db.create_written_job(res["attempt_id"], test["id"], "aGk=", "image/png", "pending")
+        admins, bot.ADMIN_IDS = bot.ADMIN_IDS, {999}
+        try:
+            await bot.ai_down_notice(self.bot, "Gemini band yoki limit: 429")
+        finally:
+            bot.ADMIN_IDS = admins
+        to_owner = [t for c, t in self.bot.messages if c == OWNER]
+        self.assertTrue(to_owner and "Yozmalarni tekshirish" in to_owner[-1] and "Esselar" in to_owner[-1])
+        self.assertTrue(any(c == 999 and "429" in t for c, t in self.bot.messages))
+
+    async def test_ai_usage_recorded(self):
+        ready, gemini = essay_ai._ready, essay_ai._gemini
+        calls = []
+
+        async def fake(system, text, images, schema):
+            if calls:
+                raise essay_ai.AIError("Gemini band yoki limit: 429 (m)", retry=True)
+            calls.append(1)
+            return "{}", {"in": 1000, "out": 200, "cost": 0.0, "model": "gemini-x"}
+        essay_ai._ready, essay_ai._gemini = (lambda provider: True), fake
+        try:
+            await essay_ai._call("s", "t", [], None, provider="gemini", kind="written")
+            with self.assertRaises(essay_ai.AIError):
+                await essay_ai._call("s", "t", [], None, provider="gemini", kind="written")
+        finally:
+            essay_ai._ready, essay_ai._gemini = ready, gemini
+        rows = db.ai_usage_since("2000-01-01")
+        total = {k: sum(r[k] for r in rows if r["kind"] == "written") for k in ("calls", "failures", "limited", "tokens_in")}
+        self.assertEqual(total, {"calls": 1, "failures": 1, "limited": 1, "tokens_in": 1000})
+        answers = []
+
+        async def answer(text, **_):
+            answers.append(text)
+        admins, bot.ADMIN_IDS = bot.ADMIN_IDS, {999}
+        try:
+            await bot.cmd_ai_usage(types.SimpleNamespace(from_user=types.SimpleNamespace(id=999), answer=answer))
+        finally:
+            bot.ADMIN_IDS = admins
+        self.assertIn("Yozma javoblar", answers[0])
+        self.assertIn("limitga urildi", answers[0])
+
 
 class Names(unittest.TestCase):
     def test_names_match(self):

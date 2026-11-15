@@ -156,7 +156,8 @@ RECEIPT_SCHEMA = {
 
 async def read_receipt(image: bytes, mime: str = "image/jpeg") -> dict:
     """To'lov chekini o'qiydi (AI_PROVIDER'da, arzon): summa, sana, qabul qiluvchi karta/ism, tranzaksiya raqami."""
-    out, _usage = await _call(RECEIPT_PROMPT, "Shu chekni o'qing.", [(image, mime)], RECEIPT_SCHEMA, effort="low")
+    out, _usage = await _call(RECEIPT_PROMPT, "Shu chekni o'qing.", [(image, mime)], RECEIPT_SCHEMA, effort="low",
+                              kind="receipt")
     try:
         data = json.loads(out)
     except json.JSONDecodeError as error:
@@ -283,7 +284,8 @@ async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schem
     except (KeyError, IndexError) as error:
         raise AIError(f"Gemini bo'sh javob berdi: {str(payload)[:300]}", retry=True) from error
     usage = payload.get("usageMetadata", {})
-    return out, {"in": usage.get("promptTokenCount", 0), "out": usage.get("candidatesTokenCount", 0), "cost": 0.0}
+    return out, {"in": usage.get("promptTokenCount", 0), "out": usage.get("candidatesTokenCount", 0), "cost": 0.0,
+                 "model": model}
 
 
 # ---------- Claude (rasmiy anthropic SDK) ----------
@@ -334,14 +336,40 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
     return out, {"in": usage.input_tokens, "out": usage.output_tokens, "cost": round(cost, 5)}
 
 
+# Gemini narxi (USD, 1 mln token uchun) — billing yoqilgach Google Cloud'dagi narxni Render'ga yozing; 0 — hisoblanmaydi
+GEMINI_PRICE_IN = float(os.getenv("GEMINI_PRICE_IN") or 0)
+GEMINI_PRICE_OUT = float(os.getenv("GEMINI_PRICE_OUT") or 0)
+
+
+def _record(kind: str, model: str, usage: dict | None, limited: bool = False) -> None:
+    """AI so'rovi hisobga (admin /ai): tur, model, tokenlar, narx; xato — limit xatosimi."""
+    try:
+        import db
+        db.record_ai_usage(kind, model, usage, limited)
+    except Exception:
+        logger.warning("AI hisobi yozilmadi", exc_info=True)
+
+
 async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
-                provider: str | None = None, effort: str = "medium") -> tuple[str, dict]:
+                provider: str | None = None, effort: str = "medium", kind: str = "other") -> tuple[str, dict]:
     provider = provider or AI_PROVIDER
     if not _ready(provider):
         raise AIError("AI sozlanmagan (AI_PROVIDER / ESSAY_PROVIDER va API kalit)", retry=False)
-    if provider == "claude":
-        return await _claude(system, text, images, schema, effort)
-    return await _gemini(system, text, images, schema)
+    model = CLAUDE_MODEL if provider == "claude" else GEMINI_MODEL
+    try:
+        if provider == "claude":
+            out, usage = await _claude(system, text, images, schema, effort)
+        else:
+            out, usage = await _gemini(system, text, images, schema)
+    except AIError as error:
+        text_error = str(error).lower()
+        await asyncio.to_thread(_record, kind, model, None, "429" in text_error or "limit" in text_error)
+        raise
+    if provider != "claude":
+        model = usage.get("model") or model
+        usage["cost"] = round((usage.get("in", 0) * GEMINI_PRICE_IN + usage.get("out", 0) * GEMINI_PRICE_OUT) / 1e6, 6)
+    await asyncio.to_thread(_record, kind, model, usage)
+    return out, usage
 
 
 async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, str]] | None = None) -> dict:
@@ -349,7 +377,7 @@ async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, st
     # Esse — ESSAY_PROVIDER'da, chuqurroq tahlil bilan (effort "high"); matnli esse qayta ko'chirilmaydi
     schema = RESULT_SCHEMA_TEXT if essay_text else RESULT_SCHEMA
     out, usage = await _call(SYSTEM_PROMPT, _user_text(topic, essay_text), images or [], schema,
-                             provider=ESSAY_PROVIDER, effort="high")
+                             provider=ESSAY_PROVIDER, effort="high", kind="essay")
     try:
         result = finalize(json.loads(out))
     except (json.JSONDecodeError, ValueError, TypeError) as error:
@@ -362,7 +390,7 @@ async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, st
 
 async def transcribe(images: list[tuple[bytes, str]]) -> tuple[str, float]:
     """Qo'lyozma rasmlarini matnga aylantiradi (o'quvchi tasdiqlashi uchun)."""
-    out, usage = await _call(TRANSCRIBE_PROMPT, "Transcribe the essay.", images, None)
+    out, usage = await _call(TRANSCRIBE_PROMPT, "Transcribe the essay.", images, None, kind="essay")
     return out.strip(), usage["cost"]
 
 
@@ -410,7 +438,7 @@ def _clean_written(items, labels: list[str]) -> dict[str, str]:
 async def read_written(image: bytes, labels: list[str], mime: str = "image/png") -> tuple[dict[str, str], float]:
     """Titul rasmidagi yozma javob kataklari → {"36": "aziz", ...} (o'qituvchi tekshiradi)."""
     out, usage = await _call(WRITTEN_PROMPT, "Read these answer rows: " + ", ".join(labels),
-                             [(image, mime)], _written_schema(labels))
+                             [(image, mime)], _written_schema(labels), kind="written")
     try:
         items = json.loads(out).get("answers", [])
     except (json.JSONDecodeError, AttributeError) as error:
@@ -447,7 +475,7 @@ async def read_written_batch(images: list[tuple[bytes, str]], labels: list[str])
             "answers from one sheet to another; if a row is empty on a sheet, it is empty for that sheet. "
             f"For every sheet read these answer rows: {', '.join(labels)}. "
             f"Return exactly one entry per sheet with its number (1–{count}).")
-    out, _usage = await _call(WRITTEN_PROMPT, text, images, _written_batch_schema(labels))
+    out, _usage = await _call(WRITTEN_PROMPT, text, images, _written_batch_schema(labels), kind="written")
     try:
         sheets = json.loads(out).get("sheets", [])
     except (json.JSONDecodeError, AttributeError) as error:

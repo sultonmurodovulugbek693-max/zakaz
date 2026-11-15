@@ -112,6 +112,17 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
 - Yozma javoblar **8 tadan titul bitta so'rovda** o'qiladi (`WRITTEN_BATCH`): 30 titul ≈ 4 so'rov, ~1–2 daqiqa.
 - Bepul limit taxminan kuniga bir necha yuz so'rov: 8 titul = 1 so'rov, 1 esse = 1 so'rov.
   Ko'proq kerak bo'lsa — AI Studio'da «Set up billing» (taxminan 1000 titul ≈ 1 $).
+- **Billingni yoqish (limit yetmasa)**: aistudio.google.com → API Keys → kalitingiz turgan loyihada «Set up billing»
+  → Google Cloud billing hisobini (karta) ulang. Kalit o'zgarmaydi — Render'da hech narsa almashtirilmaydi, limitlar
+  o'zi oshadi. Darhol Google Cloud → Billing → «Budgets & alerts»da oylik byudjet va ogohlantirish qo'ying (masalan 5 $).
+  Narxni hisobotda ko'rish uchun Render'ga `GEMINI_PRICE_IN` / `GEMINI_PRICE_OUT` (USD, 1 mln token — Google narx
+  sahifasidagi modelingiz narxi) yozing.
+- **`/ai` (admin)**: bugun va 30 kun — yozma javoblar, cheklar, esselar bo'yicha so'rovlar, xatolar (shundan limit),
+  tokenlar, narx va qaysi modellar ishlagani. «Limitga urildi» ko'p bo'lsa — billingni yoqish vaqti.
+- **AI ishlamasa — qo'lda zaxira**: AI 30 daqiqadan beri ishlamasa, navbatda ishi bor ustozlarga bir marta xabar
+  («✍️ Yozmalarni tekshirish»da rasmga qarab belgilang, «📝 Esselar»da baholang) va adminga sabab. Chekni AI 90 soniyada
+  o'qimasa yoki xato bersa — chek ustozga; ustozga botda yetmasa — adminga; har holda ilovada «👥 O'quvchilarim →
+  🧾 Esse to'lovlari»da chekni ko'rib tasdiqlaydi.
 - **Esse — alohida** (`ESSAY_PROVIDER`): sifatli baholash uchun `ESSAY_PROVIDER=claude` +
   `ANTHROPIC_API_KEY` (console.anthropic.com, balans). Model — `claude-sonnet-5-5` (≈ 250–500 so'm/esse),
   chuqur tahlil bilan. Yozma javoblar esa `AI_PROVIDER` (bepul Gemini) da qoladi.
