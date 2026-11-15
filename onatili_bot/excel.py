@@ -32,7 +32,7 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
     ws = wb.active
     ws.title = "Natijalar"
     if milliy:
-        head = ["O'rin", "F.I.Sh.", "Variant", "Test (35)", "Yozma (14)", "Esse (75)", "Esse mezon (24)",
+        head = ["O'rin", "F.I.Sh.", "Variant", "Test (35)", "Yozma (14)", "Esse (75)",
                 f"Ball ({max_points(test['items'], test['fmt']):g})", "Umumiy (75)", "Daraja"]
     else:
         head = ["O'rin", "F.I.Sh.", "Variant", "To'g'ri", "Foiz"]
@@ -42,7 +42,7 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
         if milliy:
             score, grade = rasch.get(a["id"], (None, None))
             row = [place, a["student_name"], a["variant"], a["test_correct"], a["written_correct"],
-                   essay_to_75(a["essay"]), a["essay"], total_points(a), score, grade]
+                   essay_to_75(a["essay"]), total_points(a), score, grade]
         else:
             right = a["test_correct"] + a["written_correct"]
             row = [place, a["student_name"], a["variant"], right, percent(right, a["auto_total"])]

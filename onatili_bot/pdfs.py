@@ -81,7 +81,7 @@ def _draw_essay_page(c: canvas.Canvas, width: float, height: float, margin: floa
     c.rect(margin, y - 10 * mm, width - 2 * margin, 10 * mm, stroke=0, fill=1)
     c.setFillColor(colors.white)
     c.setFont("Sans-Bold", 12.5)
-    c.drawCentredString(width / 2, y - 7 * mm, f"45. ESSE VARAQASI ({ESSAY_MAX} ballik mezon → {ESSAY_SCALE} ballik shkala)")
+    c.drawCentredString(width / 2, y - 7 * mm, f"45. ESSE VARAQASI ({ESSAY_SCALE} ballik shkala)")
     y -= 16 * mm
     c.setFillColor(INK)
     c.setFont("Sans-Bold", 10)
@@ -372,8 +372,8 @@ def _milliy_note(attempts: list[dict]) -> str:
     )
     return (
         "<b>Ball</b> — UZBMB rasmiy namunasidagi savol ballari bo'yicha (1,1 / 1,7 / 2,5; esse 24; jami 100). "
-        "<b>Umumiy (75)</b> — DTM tartibida: test qismi (Rasch, T-shkala, eng yuqori 75) va esse (24 ballik mezon → "
-        "75 ballik shkala) o'rtachasi. Rasch shu testni ishlagan qatnashchilar javoblaridan hisoblanadi: qatnashchilar "
+        "<b>Umumiy (75)</b> — DTM tartibida: test qismi (Rasch, T-shkala, eng yuqori 75) va esse (75 ballik shkala) "
+        "o'rtachasi. Rasch shu testni ishlagan qatnashchilar javoblaridan hisoblanadi: qatnashchilar "
         f"ko'p bo'lsa aniqroq. Taxminiy natija, rasmiy emas. {essay_note}<br/><b>Darajalar:</b> A+ — 70 va yuqori · "
         "A — 65–69,9 · B+ — 60–64,9 · B — 55–59,9 · C+ — 50–54,9 · C — 46–49,9 · NC — 46 dan past (sertifikat berilmaydi)."
     )

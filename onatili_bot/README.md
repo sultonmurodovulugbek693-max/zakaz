@@ -90,8 +90,10 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   Shu ball avtomatik natijaga qo'shiladi (test bilan Rasch umumiy bali va daraja), o'qituvchiga bot xabar beradi;
   o'qituvchi «📝 Esselar»da xohlasa o'zgartiradi. AI o'chiq yoki limit tugagan bo'lsa — o'qituvchi baholaydi.
 - **O'qituvchi esse balini 75 ballik shkalada kiritadi** (oflayn — qog'ozdagi esse): «📝 Esselar» → «✏️ Ballarni
-  ketma-ket kiritish» — hamma o'quvchi bir ro'yxatda, ball yozib Enter (0 yoki 28–75, DTM jadvali; 24 ballik mezonga
-  o'zi o'tadi: 51 → 12). Bitta esse oynasida ham 75 ballik (yoki 24 ballik mezon) maydon. Ball Rasch'ga qo'shiladi.
+  ketma-ket kiritish» — hamma o'quvchi bir ro'yxatda, ball yozib Enter (0 yoki 28–75, DTM jadvali).
+  Bitta esse oynasida ham 75 ballik maydon. Ball Rasch'ga qo'shiladi. Ilovada esse faqat 75 ballik shkalada ko'rinadi;
+  AI (Claude) ham imtihon eksperti kabi qat'iy baholaydi va natijani 75 ballik shkalada beradi
+  (ichki hisob: 12 mezon × 0–2 → 27 + 2 × ball).
 - Qog'ozdagi esse (rasm) va titulli testning essesi: AI bahosi — taklif, o'qituvchi tasdiqlaydi; yozma
   javoblarni «✍️ Yozmalarni tekshirish»da tuzatsa bo'ladi.
 

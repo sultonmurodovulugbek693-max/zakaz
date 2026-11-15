@@ -1257,7 +1257,7 @@ async function watchMyEssay(attemptId) {
     if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e); haptic("success"); return; }
     box.innerHTML = e && e.status === "manual" ? `<div class="card essay-wait"><b>✍️ Essengizni o'qituvchi tekshiradi</b><span class="muted small">Natija e'lon qilinganda ko'rasiz.</span></div>`
       : e && e.status === "failed" ? `<div class="card essay-wait"><b>✍️ Esse AI'da tekshirilmadi</b><span class="muted small">O'qituvchingiz o'zi baholaydi.</span></div>`
-      : `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">AI 24 ballik mezon bo'yicha baholamoqda — odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi.</span></div>`;
+      : `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">AI imtihondagidek 75 ballik shkalada baholamoqda — odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi.</span></div>`;
     if (e && (e.status === "manual" || e.status === "failed")) return;
     await new Promise(r => setTimeout(r, 4000));
   }
@@ -1265,7 +1265,7 @@ async function watchMyEssay(attemptId) {
 function myEssayHTML(e) {
   return `<div class="card essay-self">
     <div class="row between"><b>📝 Esse natijangiz</b><span class="pill-tag done">AI tekshirdi</span></div>
-    <div class="essay-score"><b>${num(e.score_75)}</b><span>/ ${e.scale}</span><small class="muted">mezon bo'yicha ${num(e.score)} / ${e.max}</small></div>
+    <div class="essay-score"><b>${num(e.score_75)}</b><span>/ ${e.scale}</span></div>
     ${(e.criteria || []).map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}
     <span class="muted small">Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.${e.teacher_changed ? " O'qituvchi bahoni o'zgartirgan." : ""}</span></div>`;
@@ -1296,7 +1296,7 @@ VIEWS.result = async ({ id }) => {
     return `<div class="wr"><div class="row between"><b>${ok ? "✅" : "❌"} ${i.label}</b></div><span>${esc(a.answers[i.label] || "—")}</span>${ok ? "" : `<span class="muted small">To'g'ri: ${esc(r.key[i.label] || "")}</span>`}</div>`;
   }).join("");
   const e = r.essay;
-  const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay_75)} / 75 · mezon ${num(a.essay)} / ${r.essay_max}</span></div>
+  const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay_75)} / 75</span></div>
     <div class="card">${e.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}</div>` : "";
   $app.innerHTML = `<div class="view">${card}
@@ -3241,9 +3241,9 @@ async function essaySheet(attemptId, testId) {
   const crit = e.ai && e.ai.criteria ? e.ai.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("") : "";
   modal.innerHTML = `<div role="dialog" aria-label="Esse">
     <div class="row between"><h2>${esc(e.name)}</h2><button class="btn plain" data-close>Yopish</button></div>
-    ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(essay75(e.essay))} / 75 (${num(e.essay)} / 24 mezon)</div>` : ""}
+    ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(essay75(e.essay))} / 75</div>` : ""}
     ${e.status === "graded" ? `<div class="row between"><b>🤖 AI bahosi</b><span class="bigcode" style="font-size:26px;letter-spacing:0">${num(essay75(e.ai_score))}<small class="muted" style="font-size:13px"> / 75</small></span></div>
-      <span class="muted small">24 ballik mezon bo'yicha ${num(e.ai_score)} → DTM jadvali bo'yicha ${num(essay75(e.ai_score))} / 75</span>${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
+      ${crit}${e.ai.comment ? `<p class="muted small">💬 ${esc(e.ai.comment)}</p>` : ""}` : ""}
     ${e.status === "pending" ? `<p class="muted">⏳ AI hali tekshirmoqda — birozdan keyin qayta oching.</p>` : ""}
     ${e.status === "failed" ? `<p class="muted">❗️ AI baholay olmadi: ${esc(e.error || "")}</p>` : ""}
     ${e.status === "none" && e.essay == null ? `<p class="muted small">➖ Esse ilovada yuborilmagan. Qog'ozda yozgan bo'lsa — bahoni quyida 75 ballik shkalada kiriting.</p>` : ""}
@@ -3251,33 +3251,22 @@ async function essaySheet(attemptId, testId) {
     ${e.status === "graded" ? `<button class="btn block" data-act="confirm">✅ AI bahosini tasdiqlash (${num(essay75(e.ai_score))} / 75)</button>` : ""}
     ${e.status === "failed" ? `<button class="btn ghost block" data-act="retry">🔁 AI'da qayta tekshirish</button>` : ""}
     <div class="field"><label for="manual">O'z bahoyingiz</label>
-      <div class="chips" id="scale"><button type="button" class="chip on" data-scale="75">75 ballik</button><button type="button" class="chip" data-scale="24">24 ballik mezon</button></div>
       <div class="row"><input class="input" id="manual" inputmode="numeric" placeholder="0 yoki 28–75" value="${e.essay != null ? num(essay75(e.essay)) : ""}"><button class="btn ghost" data-act="score">Saqlash</button></div>
-      <span class="muted small" id="manual-75">75 ballik: 0 yoki 28–75 (DTM jadvali). 24 ballik mezonga o'zi o'tadi.</span></div>
+      <span class="muted small" id="manual-75">75 ballik shkala: 0 yoki 28–75 (DTM jadvali).</span></div>
   </div>`;
   document.body.appendChild(modal);
   const close = () => modal.remove();
   modal.onclick = ev => { if (ev.target === modal || ev.target.closest("[data-close]")) close(); };
   const manual = modal.querySelector("#manual"), hint = modal.querySelector("#manual-75");
-  let scale = 75;
-  const hintText = () => {
-    const v = parseFloat(manual.value.replace(",", "."));
-    if (scale === 75) return isNaN(v) ? "75 ballik: 0 yoki 28–75 (DTM jadvali). 24 ballik mezonga o'zi o'tadi."
-      : essay24(v) == null ? "⚠️ 75 ballik baho 0 yoki 28–75 oralig'idagi butun son bo'ladi" : `= ${num(essay24(v))} / 24 mezon`;
-    return isNaN(v) || v < 0 || v > 24 ? "24 ballik mezon: 0–24, 0,5 qadam" : `= ${num(essay75(v))} / 75 ball (DTM jadvali)`;
+  manual.oninput = () => {
+    manual.value = manual.value.replace(/\D/g, "").slice(0, 2);
+    const v = manual.value === "" ? NaN : Number(manual.value);
+    hint.textContent = isNaN(v) || essay24(v) != null ? "75 ballik shkala: 0 yoki 28–75 (DTM jadvali)."
+      : "⚠️ Baho 0 yoki 28–75 oralig'idagi butun son bo'ladi";
   };
-  manual.oninput = () => { hint.textContent = hintText(); };
-  modal.querySelectorAll("[data-scale]").forEach(x => x.onclick = () => {
-    const was = scale, v = parseFloat(manual.value.replace(",", "."));
-    scale = +x.dataset.scale;
-    modal.querySelectorAll("[data-scale]").forEach(y => y.classList.toggle("on", y === x));
-    if (!isNaN(v) && was !== scale) { const c = scale === 24 ? essay24(v) : essay75(v); manual.value = c == null ? "" : num(c); }
-    manual.placeholder = scale === 75 ? "0 yoki 28–75" : "Masalan 18,5"; manual.inputMode = scale === 75 ? "numeric" : "decimal";
-    hint.textContent = hintText(); haptic("select");
-  });
   modal.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const action = b.dataset.act, payload = { action };
-    if (action === "score") { if (scale === 75) payload.score75 = manual.value; else payload.score = manual.value; }
+    if (action === "score") payload.score75 = manual.value;
     try { await api(`/api/teacher/essay/${attemptId}`, payload); haptic("success"); toast(action === "retry" ? "🔁 Navbatga qo'yildi" : "✅ Saqlandi"); close(); rerender(); }
     catch (err) { toast(err.message); haptic("error"); }
   });
@@ -3302,7 +3291,7 @@ function bulkEssays(d) {
     if (essay24(v) == null) { state.textContent = "⚠️ 0 yoki 28–75"; el.classList.add("bad"); haptic("error"); return false; }
     try {
       await api(`/api/teacher/essay/${el.dataset.att}`, { score75: v });
-      el.dataset.saved = raw; el.classList.remove("bad"); state.textContent = `✅ ${v} / 75 · ${num(essay24(v))} / 24`;
+      el.dataset.saved = raw; el.classList.remove("bad"); state.textContent = `✅ ${v} / 75`;
       S.teacherCache = null; return true;
     } catch (e) { state.textContent = "⚠️ " + e.message; el.classList.add("bad"); return false; }
   };

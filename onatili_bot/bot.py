@@ -1007,8 +1007,7 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
     try:
         await bot.send_message(
             attempt["tg_id"],
-            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b> "
-            f"({fmt_num(score)}/{ESSAY_MAX} mezon bo'yicha)\n"
+            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b>\n"
             f"💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>",
             reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
         )
@@ -1233,7 +1232,7 @@ async def self_check_notice(bot: Bot, attempt: dict, score: float) -> None:
         await bot.send_message(
             test["owner_id"],
             f"📝 <b>{esc(test['title'])}</b> · {esc(attempt['student_name'])}\n"
-            f"Esse AI bilan tekshirildi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b> ({fmt_num(score)}/{ESSAY_MAX} mezon) — "
+            f"Esse AI bilan tekshirildi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b> — "
             "natijaga va Rasch'ga qo'shildi. O'zgartirish: «📝 Esselar».",
             reply_markup=app_markup("◈ Testni ochish", t=test["id"]))
     except Exception:
