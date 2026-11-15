@@ -111,7 +111,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
                                   "answers": dict(self.answers, **{"37": "kitob"})})
         before = db.get_attempt(r["attempt_id"])
 
-        async def fake_read(image, labels, mime="image/png"):
+        async def fake_read(image, labels, mime="image/png", paid=False):
             self.assertEqual(mime, "image/jpeg")
             return {"36": "KITOB", "37": "noto'g'ri", "38": "kitop"}, 0.0
 
@@ -139,12 +139,12 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
             ids.append(r["attempt_id"])
         calls = {"batch": 0, "single": 0}
 
-        async def fake_batch(images, labels):
+        async def fake_batch(images, labels, paid=False):
             calls["batch"] += 1
             self.assertEqual(len(images), 3)
             return [{"36": "kitob"}, None, {"36": "xato"}]  # 2-titulni AI qaytarmadi
 
-        async def fake_single(image, labels, mime="image/png"):
+        async def fake_single(image, labels, mime="image/png", paid=False):
             calls["single"] += 1
             self.assertEqual(image, "\xff\xd8 rasm 1".encode())  # aynan qaytmagan titul alohida o'qiladi
             return {"36": "kitob"}, 0.0

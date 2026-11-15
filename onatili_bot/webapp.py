@@ -194,6 +194,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
         "my_card": await run(teacher_card, user["id"]),
+        "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
+        "free_ai": plans.ai_unlimited(user["id"]) and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
         "joins_pending": sum(1 for r in await run(db.join_requests_for, user["id"]) if r["status"] == "pending"),
         "my_teachers": [t["full_name"] or "Ustoz" for t in await run(db.teachers_of, user["id"])],
         "plans": await run(plans.offers),
@@ -772,6 +774,27 @@ async def written_ai(owner_id: int) -> bool:
     return plans.ai_unlimited(owner_id) and essay_ai.enabled() and await ai_allowed(owner_id, "written")
 
 
+PAID_SHEETS_PER_CREDIT = 10  # pullik tekshiruv: shuncha titulning yozma javoblari = 1 kredit
+
+
+def paid_check(test: dict) -> bool:
+    """Oflayn testning yozma javoblari pullik AI (Claude) bilan tekshiriladimi."""
+    return test.get("check_mode") == "paid" and essay_ai.paid_enabled()
+
+
+async def paid_written_allowed(owner_id: int) -> bool:
+    """Pullik tekshiruv: har PAID_SHEETS_PER_CREDIT ta titulga ustozning 1 krediti (birinchi titulda yechiladi).
+    Kredit tugagan bo'lsa — False (titul «qo'lda» bo'ladi) va ustozga bir marta xabar."""
+    if plans.ai_unlimited(owner_id):
+        return True
+    key = f"paid_sheets:{owner_id}"
+    used = int((await run(db.get_settings)).get(key) or 0)
+    if used % PAID_SHEETS_PER_CREDIT == 0 and not await ai_allowed(owner_id, "essays"):
+        return False
+    await run(db.set_setting, key, used + 1)
+    return True
+
+
 CREDIT_WARN = 5  # shuncha kredit qolganda o'qituvchiga ogohlantirish
 
 
@@ -850,8 +873,13 @@ async def create_test(request: web.Request) -> web.Response:
             raise ApiError(400, "Esse tekshiruvi narxini so'mda yozing (1 000 – 1 000 000)")
         if len(_digits(card)) < 12:
             raise ApiError(400, "Begonalar to'laydigan kartangiz raqamini yozing")
+    check_mode = "paid" if payload.get("check_mode") == "paid" and mode == "offline" else "free"
+    if check_mode == "paid" and not essay_ai.paid_enabled():
+        raise ApiError(400, "Pullik AI tekshiruvi hali ulanmagan — admin bilan bog'laning")
     test = await run(db.create_test, user["id"], title, fmt, count, items, keys, topic if fmt == "milliy" else None)
     await run(db.set_theme, test["id"], theme)
+    if check_mode == "paid":
+        await run(db.set_check_mode, test["id"], "paid")
     if price:
         await run(db.set_test_price, test["id"], price)
         await run(db.set_setting, f"teacher_card:{user['id']}", card)
@@ -2237,7 +2265,8 @@ async def attach_written(test: dict, attempt: dict, image_b64: str, mime: str) -
     """Yozma kataklar rasmi natijaga: AI o'qiydi (ruxsat bo'lsa) yoki o'qituvchi «✍️ Yozmalarni tekshirish»da belgilaydi."""
     labels = [i["label"] for i in text_items(test["items"])]
     need_ai = [label for label in labels if not attempt["answers"].get(label)]
-    queued = bool(need_ai) and await written_ai(test["owner_id"])
+    queued = bool(need_ai) and (await paid_written_allowed(test["owner_id"]) if paid_check(test)
+                                else await written_ai(test["owner_id"]))
     await run(db.create_written_job, attempt["id"], test["id"], image_b64, mime[:20], "pending" if queued else "manual")
     if queued and "wake_ai" in HOOKS:
         HOOKS["wake_ai"]()

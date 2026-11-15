@@ -117,6 +117,12 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   o'zi oshadi. Darhol Google Cloud → Billing → «Budgets & alerts»da oylik byudjet va ogohlantirish qo'ying (masalan 5 $).
   Narxni hisobotda ko'rish uchun Render'ga `GEMINI_PRICE_IN` / `GEMINI_PRICE_OUT` (USD, 1 mln token — Google narx
   sahifasidagi modelingiz narxi) yozing.
+- **Oflayn testda ikki xil tekshiruv** (yozma javoblar 36–44): ustoz oflayn test yaratishda «✍️ Yozmalarni
+  tekshirish»da tanlaydi. 🆓 Bepul — FREE_IDS/adminlarda Gemini o'qiydi, boshqalar «✍️ Yozmalarni tekshirish»da rasmga
+  qarab o'zi belgilaydi (avvalgidek). 💎 AI tekshiruvi — Claude (`PAID_MODEL`, standart `claude-haiku-5-5`) o'qiydi,
+  ustoz kreditidan: har 10 ta titul = 1 kredit (FREE_IDS uchun bepul); kredit tugasa titul qo'lda tekshirishga o'tadi.
+  Yoqish: Render'ga `ANTHROPIC_API_KEY` (console.anthropic.com → API Keys, balans to'ldiriladi). Kalit bo'lmasa tanlov
+  ko'rinmaydi.
 - **`/ai` (admin)**: bugun va 30 kun — yozma javoblar, cheklar, esselar bo'yicha so'rovlar, xatolar (shundan limit),
   tokenlar, narx va qaysi modellar ishlagani. «Limitga urildi» ko'p bo'lsa — billingni yoqish vaqti.
 - **AI ishlamasa — qo'lda zaxira**: AI 30 daqiqadan beri ishlamasa, navbatda ishi bor ustozlarga bir marta xabar

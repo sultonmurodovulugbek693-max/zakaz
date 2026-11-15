@@ -370,7 +370,8 @@ MIGRATIONS = [
     ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
     ("tests", "sheets_sent", "INTEGER NOT NULL DEFAULT 0"),  # titul PDF'i botga yuborilgan (1-qadam bajarilgan)
     ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),
-    ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),  # begona o'quvchi shu mock essesini tekshirish uchun to'laydi (so'm)  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
+    ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),
+    ("tests", "check_mode", "TEXT NOT NULL DEFAULT 'free'"),  # oflayn yozma javoblar: free — Gemini/qo'lda, paid — Claude (kreditdan)  # begona o'quvchi shu mock essesini tekshirish uchun to'laydi (so'm)  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
     ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
 ]
 
@@ -1695,6 +1696,11 @@ def set_test_channels(test_id: int, channels: list[dict]) -> None:
 def set_sheet_style(test_id: int, style: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE tests SET sheet_style = ? WHERE id = ?", (style, test_id))
+
+
+def set_check_mode(test_id: int, check_mode: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET check_mode = ? WHERE id = ?", (check_mode, test_id))
 
 
 def set_mode(test_id: int, mode: str) -> None:

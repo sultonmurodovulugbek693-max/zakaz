@@ -1121,5 +1121,101 @@ class CourseJoin(ServerBase):
         self.assertEqual((await self.client.get("/api/courses?region=Yo'q&district=Yo'q")).status, 400)
 
 
+class PaidCheck(ServerBase):
+    """Oflayn test: yozma javoblar — bepul (Gemini: FREE_IDS; boshqalar qo'lda) yoki pullik Claude (ustoz kreditidan)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._saved = (plans.SALES_ENABLED, webapp.SALES_ENABLED, essay_ai.ANTHROPIC_API_KEY)
+        plans.SALES_ENABLED = webapp.SALES_ENABLED = False
+        plans.set_access(OWNER, True)  # ruxsat berilgan ustoz (FREE_IDS emas)
+        essay_ai.ANTHROPIC_API_KEY = "test-key"
+
+    async def asyncTearDown(self):
+        plans.SALES_ENABLED, webapp.SALES_ENABLED, essay_ai.ANTHROPIC_API_KEY = self._saved
+        await super().asyncTearDown()
+
+    async def offline(self, check_mode):
+        items = structure.build_items("milliy", 45)
+        key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
+        status, r = await self.post("/api/teacher/tests", {"title": "Oflayn", "fmt": "milliy", "mode": "offline",
+                                                           "keys": {"A": key}, "channels": [], "check_mode": check_mode})
+        self.assertEqual(status, 200, r)
+        return db.get_test(r["id"])
+
+    async def attempt(self, test, n):
+        attempt = await bot.record_attempt(self.bot, test, 9000 + n, f"O'quvchi {n}", "A", {}, None, [], 0.0, notify=False)
+        return db.get_attempt(attempt["id"])
+
+    async def test_paid_mode_spends_credit_per_ten_sheets(self):
+        test = await self.offline("paid")
+        self.assertEqual(test["check_mode"], "paid")
+        db.add_credits(OWNER, 2)
+        queued = [await webapp.attach_written(test, await self.attempt(test, n), "aGk=", "image/png") for n in range(12)]
+        self.assertEqual(queued, [True] * 12)
+        self.assertEqual(db.get_credits(OWNER), 0)  # 1–10 → 1 kredit, 11–12 → 2-kredit
+        for n in range(12, 20):  # 2-kredit 20-titulgacha yetadi
+            self.assertTrue(await webapp.attach_written(test, await self.attempt(test, n), "aGk=", "image/png"))
+        self.assertFalse(await webapp.attach_written(test, await self.attempt(test, 20), "aGk=", "image/png"))  # 21-titul
+
+    async def test_paid_mode_without_credit_is_manual(self):
+        test = await self.offline("paid")
+        attempt = await self.attempt(test, 1)
+        self.assertFalse(await webapp.attach_written(test, attempt, "aGk=", "image/png"))
+        self.assertEqual(db.get_written_job(attempt["id"])["status"], "manual")  # ustoz rasmga qarab belgilaydi
+
+    async def test_free_mode_for_regular_teacher_is_manual(self):
+        test = await self.offline("free")
+        db.add_credits(OWNER, 5)
+        attempt = await self.attempt(test, 1)
+        self.assertFalse(await webapp.attach_written(test, attempt, "aGk=", "image/png"))
+        self.assertEqual(db.get_credits(OWNER), 5)  # bepul rejimda kredit ketmaydi
+
+    async def test_paid_needs_key_and_online_ignored(self):
+        essay_ai.ANTHROPIC_API_KEY = ""
+        items = structure.build_items("milliy", 45)
+        key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
+        base = {"title": "Sinov", "fmt": "milliy", "keys": {"A": key}, "channels": [], "check_mode": "paid"}
+        self.assertEqual((await self.post("/api/teacher/tests", {**base, "mode": "offline"}))[0], 400)
+        status, r = await self.post("/api/teacher/tests", {**base, "mode": "online"})
+        self.assertEqual((status, db.get_test(r["id"])["check_mode"]), (200, "free"))
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertFalse(boot["paid_ai"])
+
+    async def test_claude_haiku_request_shape(self):
+        """Haiku: server zaxirasi (betas/fallbacks) yuborilmaydi; Sonnet'da yuboriladi."""
+        import anthropic
+        sent = []
+
+        class Fake:
+            def __init__(self, api_key):
+                self.beta = types.SimpleNamespace(messages=types.SimpleNamespace(create=self.create))
+
+            async def create(self, **params):
+                sent.append(params)
+                return types.SimpleNamespace(
+                    stop_reason="end_turn", content=[types.SimpleNamespace(type="thinking"),
+                                                     types.SimpleNamespace(type="text", text='{"ok": 1}')],
+                    usage=types.SimpleNamespace(input_tokens=1000, output_tokens=100))
+
+            async def close(self):
+                pass
+        original = anthropic.AsyncAnthropic
+        anthropic.AsyncAnthropic = Fake
+        try:
+            out, usage = await essay_ai._call("s", "t", [], None, provider="claude", model="claude-haiku-5-5",
+                                              effort="low", kind="written")
+            await essay_ai._call("s", "t", [], None, provider="claude", model="claude-sonnet-5-5", kind="essay")
+        finally:
+            anthropic.AsyncAnthropic = original
+        self.assertEqual(out, '{"ok": 1}')  # thinking bloki o'tkazib yuboriladi
+        self.assertEqual((sent[0]["model"], sent[0]["output_config"]["effort"]), ("claude-haiku-5-5", "low"))
+        self.assertNotIn("fallbacks", sent[0])
+        self.assertNotIn("betas", sent[0])
+        self.assertEqual(sent[1]["fallbacks"], "default")
+        self.assertAlmostEqual(usage["cost"], (1000 * 0.10 + 100 * 0.50) / 1e6, places=6)
+        self.assertEqual({r["model"] for r in db.ai_usage_since("2000-01-01")}, {"claude-haiku-5-5", "claude-sonnet-5-5"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1368,6 +1368,7 @@ VIEWS.create = async () => {
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
     ${st.fmt === "milliy" && st.mode !== "offline" ? essayPriceHTML(st) : ""}
+    ${st.mode === "offline" ? checkModeHTML(st) : ""}
     <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
     ${bubbleSheet(items, key)}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">ma'nodosh — ixtiyoriy</span></div>
@@ -1420,6 +1421,7 @@ VIEWS.create = async () => {
       del.closest(".syn-row").remove(); haptic("select"); refresh();
     });
   });
+  document.querySelectorAll("[data-check]").forEach(x => x.onclick = () => { collect(); st.checkMode = x.dataset.check; haptic("select"); saveDraft(); rerender(); });
   document.querySelectorAll("[data-mode]").forEach(x => x.onclick = () => { collect(); st.mode = x.dataset.mode; haptic("select"); rerender(); });
   document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; haptic("select"); rerender(); });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
@@ -1431,7 +1433,7 @@ VIEWS.create = async () => {
     if (miss.length) { toast(`${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} — kaliti yo'q`); haptic("error"); return; }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
     try {
-      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
+      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
       if (st.mode === "offline") {  // titul: darhol test sahifasiga — titul chiqarish va skanerlash shu yerda
         S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
@@ -1799,6 +1801,19 @@ async function aiView(mode) {
     if (!(await confirmBox("O'quvchini uzasizmi? U endi kreditingizdan esse tekshirtira olmaydi."))) return;
     try { await api("/api/teacher/link/remove", { student_id: +x.dataset.unlink }); rerender(); } catch (e) { toast(e.message); }
   });
+}
+
+// Oflayn test: yozma javoblarni kim o'qiydi — bepul (Gemini: FREE_IDS; boshqalar — o'zi rasmga qarab) yoki pullik AI (Claude, kreditdan)
+function checkModeHTML(st) {
+  const b = S.boot || {};
+  if (!b.paid_ai) return "";
+  const free = b.free_ai ? "🆓 Bepul AI (Gemini)" : "✋ O'zim tekshiraman";
+  const mode = st.checkMode || "free";
+  return `<div class="card"><b>✍️ Yozma javoblarni tekshirish</b>
+    <div class="chips"><button type="button" class="chip ${mode === "free" ? "on" : ""}" data-check="free">${free}</button>
+      <button type="button" class="chip ${mode === "paid" ? "on" : ""}" data-check="paid">💎 AI tekshiruvi (Claude)</button></div>
+    <span class="muted small">${mode === "paid" ? `Skanerlangan titullarning yozma javoblarini Claude o'qiydi — aniqroq. ${b.ai_credits == null ? "Siz uchun bepul." : `Har 10 ta titul = 1 kredit (qoldi: <b>${b.ai_credits}</b>). Kredit tugasa — rasmga qarab o'zingiz belgilaysiz.`}`
+      : b.free_ai ? "Yozma javoblarni bepul Gemini o'qiydi, keyin tekshirib tasdiqlaysiz." : "Skanerdan keyin «✍️ Yozmalarni tekshirish»da har titul rasmiga qarab ✅ / ❌ belgilaysiz."}</span></div>`;
 }
 
 // Mock yaratish: begonalar uchun esse tekshiruvi narxi va ustoz kartasi; o'z o'quvchilari — kreditdan (tugasa ogohlantirish)

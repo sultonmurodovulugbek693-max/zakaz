@@ -1239,7 +1239,7 @@ async def essay_worker(bot: Bot) -> None:
     AI navbati: avval skanerlangan titullarning yozma javoblari (tez, kichik rasm), keyin esselar.
     Xato bo'lsa — keyinroq qayta urinadi, hech narsa yo'qolmaydi.
     """
-    if not essay_ai.enabled() and not essay_ai.essay_enabled():
+    if not essay_ai.enabled() and not essay_ai.essay_enabled() and not essay_ai.paid_enabled():
         logger.info("AI o'chiq (AI_PROVIDER=%s, ESSAY_PROVIDER=%s)", essay_ai.AI_PROVIDER, essay_ai.ESSAY_PROVIDER)
         return
     logger.info("AI yoqildi: yozma javoblar — %s, esse — %s",
@@ -1252,7 +1252,7 @@ async def essay_worker(bot: Bot) -> None:
                 purged_at = time.time()
                 if removed := await asyncio.to_thread(db.purge_written_images):
                     logger.info("Eski yozma kataklar rasmlari o'chirildi: %s ta", removed)
-            jobs = await asyncio.to_thread(db.pending_written, 40) if essay_ai.enabled() else []
+            jobs = await asyncio.to_thread(db.pending_written, 40) if essay_ai.enabled() or essay_ai.paid_enabled() else []
             groups: dict[int, list[dict]] = {}
             for job in jobs:  # bitta testning titullari — bitta so'rovda (WRITTEN_BATCH tadan)
                 groups.setdefault(job["test_id"], []).append(job)
@@ -1379,7 +1379,8 @@ async def read_written_group(bot: Bot, jobs: list[dict]) -> None:
             await written_notice(bot, test)
         return
     try:
-        results = await essay_ai.read_written_batch([(base64.b64decode(j["image"]), j["mime"]) for j in valid], labels)
+        results = await essay_ai.read_written_batch([(base64.b64decode(j["image"]), j["mime"]) for j in valid], labels,
+                                                    paid=webapp.paid_check(test))
     except essay_ai.AIError as error:
         if error.retry:  # limit/tarmoq — hammasi navbatda qoladi, butun navbat biroz kutadi
             raise
@@ -1401,7 +1402,8 @@ async def read_written_one(bot: Bot, job: dict) -> None:
         await asyncio.to_thread(db.written_failed, job["attempt_id"], "Titul yoki rasm topilmadi", True)
         return
     try:
-        written, _cost = await essay_ai.read_written(base64.b64decode(job["image"]), labels, job["mime"])
+        written, _cost = await essay_ai.read_written(base64.b64decode(job["image"]), labels, job["mime"],
+                                                     paid=webapp.paid_check(test))
     except essay_ai.AIError as error:
         give_up = not error.retry or job["tries"] + 1 >= WRITTEN_MAX_TRIES
         await asyncio.to_thread(db.written_failed, job["attempt_id"], str(error), give_up)

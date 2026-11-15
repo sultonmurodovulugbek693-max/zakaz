@@ -34,6 +34,8 @@ GEMINI_FALLBACK = [m.strip() for m in (os.getenv("GEMINI_FALLBACK") or "gemini-f
 ESSAY_PROVIDER = (os.getenv("ESSAY_PROVIDER") or AI_PROVIDER).strip().lower()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL") or "claude-sonnet-5-5"
+# Oflayn testning pullik tekshiruvi (yozma javoblar): arzon va aniq — ustoz kreditidan; ANTHROPIC_API_KEY kerak
+PAID_MODEL = os.getenv("PAID_MODEL") or "claude-haiku-5-5"
 # Narx: 1 mln token uchun $ (o'qish, yozish); thinking ham yozish hisobida. Sarfni ko'rsatish uchun
 CLAUDE_PRICES = {"claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0), "claude-haiku-5-5": (0.10, 0.50)}
 
@@ -186,6 +188,11 @@ def enabled() -> bool:
     return _ready(AI_PROVIDER)
 
 
+def paid_enabled() -> bool:
+    """Pullik tekshiruv (Claude, PAID_MODEL) ulanganmi — Render'da ANTHROPIC_API_KEY bor."""
+    return _ready("claude")
+
+
 def essay_enabled() -> bool:
     """Esseni AI baholaydimi."""
     return _ready(ESSAY_PROVIDER)
@@ -291,7 +298,7 @@ async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schem
 # ---------- Claude (rasmiy anthropic SDK) ----------
 
 async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
-                  effort: str = "medium") -> tuple[str, dict]:
+                  effort: str = "medium", model: str | None = None) -> tuple[str, dict]:
     import anthropic
 
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
@@ -299,16 +306,17 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
                                             "data": base64.standard_b64encode(data).decode()}}
                for data, mime in images]
     content.append({"type": "text", "text": text})
+    model = model or CLAUDE_MODEL
     params = {
-        "model": CLAUDE_MODEL,
+        "model": model,
         "max_tokens": 16000,
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": content}],
         "output_config": {"effort": effort, **({"format": {"type": "json_schema", "schema": schema}} if schema else {})},
-        # Xavfsizlik filtri rad etsa, so'rov boshqa modelda avtomatik qayta bajariladi
-        "betas": ["server-side-fallback-2026-07-01"],
-        "fallbacks": "default",
     }
+    if not model.startswith("claude-haiku"):  # Haiku'da server zaxirasi yo'q
+        # Xavfsizlik filtri rad etsa, so'rov boshqa modelda avtomatik qayta bajariladi
+        params.update(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
     try:
         response = await client.beta.messages.create(**params)
     except anthropic.RateLimitError as error:
@@ -331,7 +339,7 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
     usage = response.usage
     tokens_in = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25 \
         + (getattr(usage, "cache_read_input_tokens", 0) or 0) * 0.1
-    price_in, price_out = CLAUDE_PRICES.get(CLAUDE_MODEL, CLAUDE_PRICES["claude-opus-5-5"])
+    price_in, price_out = CLAUDE_PRICES.get(model, CLAUDE_PRICES["claude-opus-5-5"])
     cost = tokens_in * price_in / 1e6 + (usage.output_tokens or 0) * price_out / 1e6
     return out, {"in": usage.input_tokens, "out": usage.output_tokens, "cost": round(cost, 5)}
 
@@ -351,14 +359,15 @@ def _record(kind: str, model: str, usage: dict | None, limited: bool = False) ->
 
 
 async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
-                provider: str | None = None, effort: str = "medium", kind: str = "other") -> tuple[str, dict]:
+                provider: str | None = None, effort: str = "medium", kind: str = "other",
+                model: str | None = None) -> tuple[str, dict]:
     provider = provider or AI_PROVIDER
     if not _ready(provider):
         raise AIError("AI sozlanmagan (AI_PROVIDER / ESSAY_PROVIDER va API kalit)", retry=False)
-    model = CLAUDE_MODEL if provider == "claude" else GEMINI_MODEL
+    model = model or (CLAUDE_MODEL if provider == "claude" else GEMINI_MODEL)
     try:
         if provider == "claude":
-            out, usage = await _claude(system, text, images, schema, effort)
+            out, usage = await _claude(system, text, images, schema, effort, model)
         else:
             out, usage = await _gemini(system, text, images, schema)
     except AIError as error:
@@ -435,10 +444,16 @@ def _clean_written(items, labels: list[str]) -> dict[str, str]:
     return result
 
 
-async def read_written(image: bytes, labels: list[str], mime: str = "image/png") -> tuple[dict[str, str], float]:
+def _paid(paid: bool) -> dict:
+    """Pullik tekshiruv: Claude PAID_MODEL (kam o'ylab — matnni o'qish oddiy ish)."""
+    return {"provider": "claude", "model": PAID_MODEL, "effort": "low"} if paid and paid_enabled() else {}
+
+
+async def read_written(image: bytes, labels: list[str], mime: str = "image/png",
+                       paid: bool = False) -> tuple[dict[str, str], float]:
     """Titul rasmidagi yozma javob kataklari → {"36": "aziz", ...} (o'qituvchi tekshiradi)."""
     out, usage = await _call(WRITTEN_PROMPT, "Read these answer rows: " + ", ".join(labels),
-                             [(image, mime)], _written_schema(labels), kind="written")
+                             [(image, mime)], _written_schema(labels), kind="written", **_paid(paid))
     try:
         items = json.loads(out).get("answers", [])
     except (json.JSONDecodeError, AttributeError) as error:
@@ -462,7 +477,8 @@ def _written_batch_schema(labels: list[str]) -> dict:
     }
 
 
-async def read_written_batch(images: list[tuple[bytes, str]], labels: list[str]) -> list[dict[str, str] | None]:
+async def read_written_batch(images: list[tuple[bytes, str]], labels: list[str],
+                             paid: bool = False) -> list[dict[str, str] | None]:
     """
     Bir nechta titul bitta so'rovda → har biri uchun {"36": "aziz", ...} (rasmlar tartibida).
     AI biror titulni qaytarmasa — o'rnida None (u titul keyin alohida o'qiladi).
@@ -475,7 +491,7 @@ async def read_written_batch(images: list[tuple[bytes, str]], labels: list[str])
             "answers from one sheet to another; if a row is empty on a sheet, it is empty for that sheet. "
             f"For every sheet read these answer rows: {', '.join(labels)}. "
             f"Return exactly one entry per sheet with its number (1–{count}).")
-    out, _usage = await _call(WRITTEN_PROMPT, text, images, _written_batch_schema(labels), kind="written")
+    out, _usage = await _call(WRITTEN_PROMPT, text, images, _written_batch_schema(labels), kind="written", **_paid(paid))
     try:
         sheets = json.loads(out).get("sheets", [])
     except (json.JSONDecodeError, AttributeError) as error:
