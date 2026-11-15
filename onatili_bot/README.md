@@ -41,11 +41,15 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   @username / Telegram ID'sini qo'shadi yoki taklif havolasini yuboradi (`t.me/<bot>?start=t_<ID>_<imzo>`).
   Ustoz har o'quvchiga oylik chegara qo'yadi (boshlang'ich 10 ta).
 - **Kursingizni toping**: o'quvchi «O'quvchi» rolini tanlagach viloyat → tumanini tanlaydi va shu yerda kurs ochgan ustozlar (ism, telefon) chiqadi. «🙋 O'quvchisiman» — ism va familiya (majburiy), rasm (ixtiyoriy) bilan ariza; ustozga botda «Tasdiqlash / Rad etish» tugmalari bilan boradi va ilovada «👥 O'quvchilarim → Ro'yxatdan o'tganlar»da ko'rinadi. Tasdiqlansa — o'quvchi ustozga ulanadi (mocklar bepul, esse ustoz kreditidan). «Shunchaki kirayapman» — arizasiz kiradi.
-- **«👥 O'quvchilarim» va onlayn mock**: ro'yxatdagi (ulangan) o'quvchilar ustozning onlayn mocklarini bepul
-  topshiradi (esse — ustoz kreditidan). Ro'yxatda yo'q o'quvchi uchun mock avtomatik pullik: narx va kartani ustoz
-  bir marta shu bo'limda kiritadi; o'quvchi ariza (ism, telefon) va chek rasmini yuboradi → ustozga botda chek
-  «✅ Tasdiqlash / ❌ Rad etish» tugmalari bilan keladi va ilovada «🧾 Mock arizalari»da ko'rinadi → tasdiqlansa
-  faqat shu mock ochiladi. Narx kiritilmagan bo'lsa — o'quvchiga «ustozingiz bilan bog'laning».
+- **Onlayn mock va esse to'lovi**: test hammaga bepul. Ustozning o'quvchilari («👥 O'quvchilarim») essesi ustoz
+  kreditidan tekshiriladi. Begona o'quvchi esseli (milliy) mockni ochsa — «Esse tekshiruvi — N so'm» oynasi:
+  «💳 Botda to'lash» bosilsa bot admin kartasi va summani yozadi, o'quvchi chek skrinshotini botga yuboradi.
+  AI chekni o'qiydi, kod solishtiradi: bugungi sana, summa ≥ narx, qabul qiluvchi karta (oxirgi 4 raqam) yoki ismi,
+  tahrir belgisi yo'q, chek oldin ishlatilmagan. To'g'ri bo'lsa — «✅ To'landi», mock ochiladi (ustoz krediti
+  ishlatilmaydi); aks holda «⏳ kutib turing» va chek adminga «Tasdiqlash / Rad etish» bilan boradi. AI tasdiqlagan
+  cheklar ham adminga «Bekor qilish» tugmasi bilan keladi. Narx: `/esse_narx 15000` yoki «/sozlama → 📝 Esse
+  narxi»; karta — «/sozlama → 💳 Karta». Narx yoki karta kiritilmagan bo'lsa — begonalar ham bepul (esseni ustoz
+  qo'lda baholaydi).
 - **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
   to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.

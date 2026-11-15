@@ -16,6 +16,7 @@ from aiogram.exceptions import TelegramRetryAfter
 
 import bot
 import db
+import essay_ai
 import plans
 import structure
 import webapp
@@ -759,75 +760,153 @@ class LinkedPractice(TeacherCredits):
         self.assertEqual((await self.post("/api/plan/order", {"period": "month"}))[0], 403)  # obuna yopiq
 
 
-class AutoPaidMock(ServerBase):
-    """Onlayn mock: ustozning o'quvchilari bepul; boshqalar avtomatik — ariza va chek, ustoz tasdiqlasa shu mock bepul."""
+class EssayPaid(ServerBase):
+    """Begona o'quvchi: test bepul; esseli mock — esse tekshiruvi adminga to'lanadi, chekni AI tekshiradi (botda)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._enabled, self._essay_enabled, self._read = essay_ai.enabled, essay_ai.essay_enabled, essay_ai.read_receipt
+        essay_ai.enabled = essay_ai.essay_enabled = lambda: True
+        self.receipt = {}
+
+        async def fake_read(image, mime="image/jpeg"):
+            return dict(self.receipt)
+        essay_ai.read_receipt = fake_read
+        self.notices = []
+
+        async def notice(*args):
+            self.notices.append(args)
+        webapp.HOOKS["essay_receipt_notice"] = notice
+        webapp.HOOKS["bot_username"] = lambda: asyncio.sleep(0, "test_bot")
+
+    async def asyncTearDown(self):
+        essay_ai.enabled, essay_ai.essay_enabled, essay_ai.read_receipt = self._enabled, self._essay_enabled, self._read
+        await super().asyncTearDown()
 
     async def as_student(self, uid):
         self.user = {"id": uid, "name": f"O'quvchi {uid}", "username": f"u{uid}"}
 
-    async def as_owner(self):
-        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+    def good_receipt(self, **kw):
+        self.receipt = {"is_receipt": True, "success": True, "amount": 15000, "date": plans.now().strftime("%Y-%m-%d"),
+                        "time": "10:00", "recipient_card": "8600 **** **** 9012", "recipient_name": "ADMIN ADMINOV",
+                        "transaction_id": "TX1", "looks_edited": False, "note": "", **kw}
 
-    async def apply(self, code, photo=b"\xff\xd8 chek"):
-        from aiohttp import FormData
-        form = FormData()
-        form.add_field("name", "Begona O'quvchi")
-        form.add_field("phone", "+998901234567")
-        if photo:
-            form.add_field("photo", photo, filename="chek.jpg", content_type="image/jpeg")
-        response = await self.client.post(f"/api/test/{code}/request", data=form)
-        return response.status, await response.json()
+    def set_price(self):
+        db.set_setting("essay_price", "15000")
+        db.set_setting("card_number", "8600 1234 5678 9012")
+        db.set_setting("card_holder", "Admin Adminov")
 
-    async def test_linked_free_others_pay_then_approved(self):
-        _, r = await self.create()
-        test = db.get_test(r["id"])
+    async def test_free_without_essay_or_price(self):
+        _, r = await self.create()  # oddiy — essesiz
+        _, m = await self.create(fmt="milliy")
+        await self.as_student(OTHER)
+        self.assertEqual((await self.client.get(f"/api/test/{db.get_test(m['id'])['code']}")).status, 200)  # narx yo'q
+        self.set_price()
+        self.assertEqual((await self.client.get(f"/api/test/{db.get_test(r['id'])['code']}")).status, 200)  # test bepul
+        self.assertFalse(await webapp.essay_ai_ok(db.get_test(m["id"]), OTHER))  # to'lamagan — AI yo'q, ustoz krediti ham
+
+    async def test_pay_in_bot_ai_approves(self):
+        _, m = await self.create(fmt="milliy")
+        test = db.get_test(m["id"])
+        self.set_price()
         db.link_student(OWNER, STUDENT)
         await self.as_student(STUDENT)
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # o'quvchim — bepul
+        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # ustozning o'quvchisi
         await self.as_student(OTHER)
         response = await self.client.get(f"/api/test/{test['code']}")
-        data = await response.json()
-        self.assertEqual((response.status, data["paywall"]["price"]), (402, 0))  # narx yo'q — faqat murojaat
-        self.assertEqual((await self.apply(test["code"]))[0], 409)
-        await self.as_owner()
-        self.assertEqual((await self.post("/api/teacher/mock-price", {"price": 30000, "card": "8600 1234 5678 9012"}))[0], 200)
-        await self.as_student(OTHER)
-        data = await (await self.client.get(f"/api/test/{test['code']}")).json()
-        self.assertEqual((data["paywall"]["price"], data["paywall"]["card"]), (30000, "8600 1234 5678 9012"))
+        wall = (await response.json())["paywall"]
+        self.assertEqual((response.status, wall["price"], wall["card"]), (402, 15000, "8600 1234 5678 9012"))
         self.assertEqual((await self.post(f"/api/test/{test['code']}/submit",
-                                          {"variant": "A", "name": "Begona O'quvchi", "answers": {"1": "A"}}))[0], 402)
-        self.assertEqual((await self.apply(test["code"], photo=None))[0], 400)  # chek shart
-        self.assertEqual((await self.apply(test["code"]))[1]["status"], "pending")
-        await self.as_owner()
-        listed = (await (await self.client.get("/api/teacher/requests")).json())["requests"]
-        self.assertEqual((listed[0]["status"], listed[0]["name"]), ("pending", "Begona O'quvchi"))
-        receipt = await (await self.client.get(f"/api/teacher/request/{listed[0]['id']}/receipt")).json()
-        self.assertTrue(receipt["image"].startswith("data:image/"))
-        self.bot.messages.clear()
-        status, res = await self.post(f"/api/teacher/request/{listed[0]['id']}", {"action": "approve"})
-        self.assertEqual((status, res["status"]), (200, "approved"))
-        self.assertTrue(any(c == OTHER and "tasdiqlandi" in t for c, t in self.bot.messages))
-        await self.as_student(OTHER)
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # shu mock ochildi
-        await self.as_owner()
-        _, r2 = await self.create()
-        await self.as_student(OTHER)
-        self.assertEqual((await self.client.get(f"/api/test/{db.get_test(r2['id'])['code']}")).status, 402)  # boshqasi — yo'q
+                                          {"variant": "A", "name": "Begona Bola", "answers": {}}))[0], 402)
+        status, res = await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        self.assertEqual((status, res["status"], res["bot"]), (200, "open", "test_bot"))
+        self.assertIn("8600 1234 5678 9012", self.bot.messages[-1][1])
+        pay = db.open_essay_payment(OTHER)
+        self.good_receipt()
+        credits = db.get_credits(OWNER)
+        result = await webapp.check_essay_receipt(pay["id"], b"chek-1", "image/jpeg")
+        self.assertEqual(result["status"], "paid")
+        self.assertIn("To'landi", self.bot.messages[-1][1])
+        self.assertTrue(self.notices[-1][1])  # adminga: AI tasdiqladi
+        self.assertIsNone(db.open_essay_payment(OTHER))
+        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # mock ochildi
+        self.assertTrue(await webapp.essay_ai_ok(test, OTHER))
+        self.assertEqual(db.get_credits(OWNER), credits)  # ustoz krediti ishlatilmadi
 
-    async def test_bot_button_decides_and_owner_only(self):
-        _, r = await self.create()
-        test = db.get_test(r["id"])
-        db.set_setting(f"teacher_price:{OWNER}", 20000)
-        db.set_setting(f"teacher_card:{OWNER}", "8600123412341234")
+    async def test_bad_receipt_goes_to_admin(self):
+        _, m = await self.create(fmt="milliy")
+        _, m2 = await self.create(fmt="milliy")
+        test, test2 = db.get_test(m["id"]), db.get_test(m2["id"])
+        self.set_price()
         await self.as_student(OTHER)
-        await self.apply(test["code"])
-        request_id = db.mock_request_of(test["id"], OTHER)["id"]
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        pay = db.open_essay_payment(OTHER)
+        yesterday = (plans.now() - __import__("datetime").timedelta(days=2)).strftime("%Y-%m-%d")
+        self.good_receipt(amount=5000, date=yesterday, recipient_card="9860 **** 1111", recipient_name="Boshqa Odam")
+        result = await webapp.check_essay_receipt(pay["id"], b"chek-2", "image/jpeg")
+        self.assertEqual(result["status"], "review")
+        self.assertEqual(len(result["reasons"]), 3)  # summa, sana, karta
+        self.assertIn("kutib turing", self.bot.messages[-1][1])
+        self.assertFalse(self.notices[-1][1])
+        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 402)
+        self.assertEqual((await webapp.check_essay_receipt(pay["id"], b"chek-3", "image/jpeg"))["status"], "review")  # adminda
+        await webapp.decide_essay_payment(pay["id"], True)  # admin tasdiqladi
+        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)
         with self.assertRaises(webapp.ApiError):
-            await webapp.decide_request(STUDENT, request_id, True)  # begona ustoz emas
-        result = await webapp.decide_request(OWNER, request_id, False)
-        self.assertEqual(result["status"], "rejected")
-        with self.assertRaises(webapp.ApiError):
-            await webapp.decide_request(OWNER, request_id, True)  # allaqachon ko'rib chiqilgan
+            await webapp.decide_essay_payment(pay["id"], True)
+        # Shu chek ikkinchi mockka — qayta ishlatilgan
+        await self.post(f"/api/test/{test2['code']}/essay-pay", {})
+        pay2 = db.open_essay_payment(OTHER)
+        self.assertEqual(pay2["test_id"], test2["id"])
+        self.good_receipt()
+        result = await webapp.check_essay_receipt(pay2["id"], b"chek-2", "image/jpeg")
+        self.assertEqual((result["status"], result["reasons"]), ("review", ["bu chek oldin ishlatilgan"]))
+        await webapp.decide_essay_payment(pay2["id"], False)  # rad etildi — qayta yuborsa bo'ladi
+        self.assertEqual(db.open_essay_payment(OTHER)["status"], "rejected")
+        self.assertEqual((await self.check_card_name())["status"], "paid")
+
+    async def check_card_name(self):
+        """Karta raqami ko'rinmasa ham qabul qiluvchi ismi mos — to'g'ri."""
+        pay = db.open_essay_payment(OTHER)
+        self.good_receipt(recipient_card="", transaction_id="TX9")
+        return await webapp.check_essay_receipt(pay["id"], b"chek-4", "image/jpeg")
+
+    async def test_linked_student_cannot_pay(self):
+        _, m = await self.create(fmt="milliy")
+        self.set_price()
+        db.link_student(OWNER, STUDENT)
+        await self.as_student(STUDENT)
+        self.assertEqual((await self.post(f"/api/test/{db.get_test(m['id'])['code']}/essay-pay", {}))[0], 409)
+
+    async def test_bot_photo_handler(self):
+        """Botga rasm: ochiq esse to'lovi bo'lsa — yuklab oladi va AI tekshiradi; to'g'ri bo'lsa — paid."""
+        import io
+        _, m = await self.create(fmt="milliy")
+        test = db.get_test(m["id"])
+        self.set_price()
+        await self.as_student(OTHER)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        self.good_receipt()
+        answers = []
+
+        class Sent:
+            async def delete(self):
+                pass
+
+        async def answer(text, **_):
+            answers.append(text)
+            return Sent()
+
+        async def download(file_id):
+            return io.BytesIO(b"bot-chek")
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=OTHER), photo=[types.SimpleNamespace(file_id="F1")], document=None,
+            answer=answer, bot=types.SimpleNamespace(download=download))
+        await bot.receipt_received(message)
+        self.assertEqual(db.essay_payment_of(test["id"], OTHER)["status"], "paid")
+        self.assertIn("To'landi", self.bot.messages[-1][1])
+        await bot.receipt_received(message)  # boshqa ochiq to'lov yo'q — oddiy obuna chekiga o'tadi
+        self.assertIn("Chek qabul qilinmadi", answers[-1])
 
 
 class Names(unittest.TestCase):
@@ -881,7 +960,6 @@ class CourseJoin(ServerBase):
         self.assertEqual((await self.join(photo=bytes([255, 216]) + b" rasm"))[1]["status"], "pending")
         self.assertEqual(self.notices[0][2], "Ali Valiyev")
         self.assertEqual((await self.courses())["teachers"][0]["status"], "pending")
-        self.assertEqual((await self.client.get(f"/api/test/{code}")).status, 402)  # hali o'quvchi emas
         self.user = {"id": OWNER, "name": "Ustoz", "username": None}
         joins = (await (await self.client.get("/api/teacher/joins")).json())["joins"]
         self.assertEqual((joins[0]["first_name"], joins[0]["has_photo"]), ("Ali", True))

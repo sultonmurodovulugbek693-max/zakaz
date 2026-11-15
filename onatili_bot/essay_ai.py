@@ -130,6 +130,40 @@ RESULT_SCHEMA_TEXT = {
 }
 
 
+RECEIPT_PROMPT = (
+    "Siz bank to'lov chekini (Payme, Click, Uzum, bank ilovasi skrinshoti yoki kvitansiya) o'qiysiz. "
+    "Rasmda ko'ringanini aynan yozing, taxmin qilmang. amount — o'tkazilgan summa so'mda (faqat raqam, komissiyasiz; "
+    "o'qib bo'lmasa 0). date — to'lov sanasi YYYY-MM-DD (ko'rinmasa bo'sh). time — HH:MM. recipient_card — qabul "
+    "qiluvchi karta raqami rasmdagidek (yashirilgan qismi * bilan). recipient_name — qabul qiluvchi ismi. "
+    "transaction_id — tranzaksiya/chek raqami. success — to'lov muvaffaqiyatli bajarilgan (\"Успешно\", \"Muvaffaqiyatli\", "
+    "\"O'tkazildi\" va h.k.). is_receipt — bu haqiqatan to'lov cheki. looks_edited — raqamlar yoki matn tahrirlangan, "
+    "qo'shib yozilgan yoki shrift mos emasga o'xshasa true. note — qisqa izoh (o'zbekcha)."
+)
+
+RECEIPT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_receipt": {"type": "boolean"}, "success": {"type": "boolean"}, "amount": {"type": "number"},
+        "date": {"type": "string"}, "time": {"type": "string"}, "recipient_card": {"type": "string"},
+        "recipient_name": {"type": "string"}, "transaction_id": {"type": "string"},
+        "looks_edited": {"type": "boolean"}, "note": {"type": "string"},
+    },
+    "required": ["is_receipt", "success", "amount", "date", "time", "recipient_card", "recipient_name",
+                 "transaction_id", "looks_edited", "note"],
+    "additionalProperties": False,
+}
+
+
+async def read_receipt(image: bytes, mime: str = "image/jpeg") -> dict:
+    """To'lov chekini o'qiydi (AI_PROVIDER'da, arzon): summa, sana, qabul qiluvchi karta/ism, tranzaksiya raqami."""
+    out, _usage = await _call(RECEIPT_PROMPT, "Shu chekni o'qing.", [(image, mime)], RECEIPT_SCHEMA, effort="low")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as error:
+        raise AIError(f"Chekni o'qib bo'lmadi: {out[:200]}", retry=False) from error
+    return {key: data.get(key) for key in RECEIPT_SCHEMA["properties"]}
+
+
 class AIError(Exception):
     """Baholash bajarilmadi. retry=True — keyinroq qayta urinish mumkin (limit, tarmoq)."""
 

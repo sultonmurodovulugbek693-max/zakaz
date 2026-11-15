@@ -334,16 +334,6 @@ async def cmd_credit(message: Message, command: CommandObject) -> None:
         logger.warning("Kredit haqida xabar yuborilmadi: %s", user["tg_id"])
 
 
-async def mock_request_notice(bot: Bot, test: dict, request_id: int, name: str, phone: str | None,
-                              username: str | None, photo: bytes) -> None:
-    """Pullik mockga yangi ariza: ustozga chek rasmi va «Tasdiqlash / Rad etish» tugmalari."""
-    caption = (f"🧾 <b>Mockga ariza</b> · {esc(test['title'])} (kod {test['code']})\n{LINE}\n"
-               f"👤 {esc(name)}" + (f" (@{esc(username)})" if username else "") + (f"\n📞 {esc(phone)}" if phone else "")
-               + f"\n💳 {plans.money(test.get('price') or 0)} so'm")
-    markup = inline([[("✅ Tasdiqlash", f"req:ok:{request_id}"), ("❌ Rad etish", f"req:no:{request_id}")]])
-    await bot.send_photo(test["owner_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
-
-
 async def join_notice(bot: Bot, teacher_id: int, request_id: int, name: str, username: str | None,
                       photo: bytes | None) -> None:
     """«O'quvchisiman» arizasi ustozga: ism (va rasm), «Tasdiqlash / Rad etish»."""
@@ -371,22 +361,6 @@ async def decide_join_button(callback: CallbackQuery) -> None:
             await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}")
         else:
             await callback.message.edit_text(f"{callback.message.html_text}\n{LINE}\n{note}")
-    except TelegramBadRequest:
-        pass
-
-
-@dp.callback_query(F.data.startswith("req:"))
-async def decide_mock_request(callback: CallbackQuery) -> None:
-    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
-    try:
-        result = await webapp.decide_request(callback.from_user.id, int(raw), action == "ok")
-    except webapp.ApiError as error:
-        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
-        return
-    await callback.answer("✅ Tasdiqlandi" if action == "ok" else "❌ Rad etildi")
-    note = "✅ Tasdiqlandi — shu mock bepul" if action == "ok" else "❌ Rad etildi"
-    try:
-        await callback.message.edit_caption(caption=f"{callback.message.caption or ''}\n{LINE}\n{note}")
     except TelegramBadRequest:
         pass
 
@@ -536,6 +510,10 @@ async def cmd_myid(message: Message) -> None:
 @dp.message(StateFilter(None), F.photo | F.document)
 async def receipt_received(message: Message) -> None:
     """Chek rasmi: ochiq to'lov so'rovi bo'lsa — adminlarga tasdiqlash uchun yuboriladi."""
+    essay_pay = await asyncio.to_thread(db.open_essay_payment, message.from_user.id)
+    if essay_pay:
+        await essay_receipt_received(message, essay_pay)
+        return
     payment = await asyncio.to_thread(db.open_payment, message.from_user.id)
     if not payment:
         await message.answer("🧾 Chek qabul qilinmadi: avval ilovadagi «💎 Obuna» tugmasidan muddatni tanlang.",
@@ -551,6 +529,88 @@ async def receipt_received(message: Message) -> None:
                          f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, "
                          + ("esselarni qo'shadi." if payment["period"] == plans.PACK else "obunangizni yoqadi."))
     await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo))
+
+
+async def essay_receipt_received(message: Message, pay: dict) -> None:
+    """Begona o'quvchining esse to'lovi cheki: AI tekshiradi (sana, summa, karta) — to'g'ri bo'lsa mock ochiladi."""
+    if pay["status"] == "review":
+        await message.answer(f"⏳ Chekingiz adminda · {esc(pay['title'])}. Kutib turing — tasdiqlansa bot xabar beradi.")
+        return
+    if message.document and not (message.document.mime_type or "").startswith("image/"):
+        await message.answer("🧾 Chekni rasm (skrinshot) ko'rinishida yuboring.")
+        return
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    mime = "image/jpeg" if message.photo else message.document.mime_type
+    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    try:
+        data = (await message.bot.download(file_id)).read()
+        await webapp.check_essay_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
+    except Exception:
+        logger.exception("Esse cheki tekshirilmadi")
+        await message.answer("⚠️ Chekni tekshirib bo'lmadi — birozdan keyin qayta yuboring.")
+    finally:
+        try:
+            await wait.delete()
+        except TelegramBadRequest:
+            pass
+
+
+async def essay_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: list[str], photo: bytes) -> None:
+    """Adminlarga: chek rasmi va AI xulosasi. AI tasdiqlagan bo'lsa — «Bekor qilish», aks holda «Tasdiqlash / Rad etish»."""
+    pay = await asyncio.to_thread(db.get_essay_payment, payment_id)
+    if not pay:
+        return
+    who = esc(pay["full_name"] or str(pay["student_id"])) + (f" (@{esc(pay['username'])})" if pay["username"] else "")
+    caption = (f"🧾 <b>Esse to'lovi</b> · {esc(pay['title'])} (kod {pay['code']})\n{LINE}\n👤 {who} · "
+               f"<code>{pay['student_id']}</code>\n💳 {plans.money(pay['amount'])} so'm\n"
+               + ("🤖 AI: ✅ chek to'g'ri — mock ochildi" if good else
+                  "🤖 AI: ⚠️ " + esc("; ".join(reasons) or "tekshirilmadi") + "\nTekshirib, qaror qiling:"))
+    markup = inline([[("❌ Bekor qilish", f"ep:no:{payment_id}")]] if good else
+                    [[("✅ Tasdiqlash", f"ep:ok:{payment_id}"), ("❌ Rad etish", f"ep:no:{payment_id}")]])
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_photo(admin_id, BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+        except Exception:
+            logger.warning("Chek adminga yuborilmadi: %s", admin_id)
+
+
+@dp.callback_query(F.data.startswith("ep:"))
+async def decide_essay_payment_button(callback: CallbackQuery) -> None:
+    if not is_admin(callback):
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    try:
+        await webapp.decide_essay_payment(int(raw), action == "ok")
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("✅ Tasdiqlandi" if action == "ok" else "❌ Rad etildi")
+    note = "✅ Tasdiqlandi — mock ochildi" if action == "ok" else "❌ Rad etildi / bekor qilindi"
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}", reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+
+@dp.message(Command("esse_narx"))
+async def cmd_essay_price(message: Message, command: CommandObject) -> None:
+    """Admin: /esse_narx 15000 — begona o'quvchi bitta mock essesini tekshirtirish narxi (0 — bepul)."""
+    if not is_admin(message):
+        await message.answer("⛔️ Bu buyruq faqat admin uchun.")
+        return
+    raw = (command.args or "").replace(" ", "").replace("'", "")
+    card = await asyncio.to_thread(plans.card)
+    if not raw.isdigit():
+        price = await asyncio.to_thread(webapp.essay_price)
+        await message.answer(f"📝 Begona o'quvchilar uchun esse narxi: <b>{plans.money(price)} so'm</b>"
+                             + ("" if price else " (bepul)")
+                             + f"\n💳 Karta: <code>{esc(card['number']) or '— kiritilmagan (/sozlama)'}</code>"
+                             + "\n\nO'zgartirish: <code>/esse_narx 15000</code> · o'chirish: <code>/esse_narx 0</code>")
+        return
+    await asyncio.to_thread(db.set_setting, "essay_price", str(int(raw)))
+    await message.answer(f"✅ Esse narxi: <b>{plans.money(int(raw))} so'm</b>" + (" — bepul" if not int(raw) else "")
+                         + ("" if card["number"] else "\n⚠️ Karta kiritilmagan — /sozlama → 💳 Karta"))
 
 
 async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> None:
@@ -841,6 +901,8 @@ SETTING_FIELDS = {
     "trial_days": ("⏳ Bepul sinov necha kun bo'lsin? <code>0</code> — sinov o'chiq", True),
     "ai_essays": ("🤖 Obunada oyiga nechta esseni AI tekshirsin? (har bir o'qituvchiga)", True),
     "pack_essays": ("📦 Bitta esse paketida nechta esse bo'lsin?", True),
+    "essay_price": ("📝 Begona o'quvchi (ustozning o'quvchisi emas) bitta mock essesini tekshirtirish narxi, so'mda. "
+                    "<code>0</code> — bepul", True),
 }
 
 
@@ -857,6 +919,7 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
         f"⏳ Bepul sinov: <b>{trial}</b> kun" + (" <i>(o'chiq — darhol obuna kerak)</i>" if not trial else ""),
         f"🤖 Obunada AI: oyiga <b>{limits['essays']}</b> ta esse",
         f"📦 Esse paketi: +{offer['essays']} ta — <b>{plans.money(offer['price'])} so'm</b>",
+        f"📝 Esse (begona o'quvchi): <b>{plans.money(plans.setting('essay_price', 0))} so'm</b>",
         "", "<b>Narxlar</b> — tugma bosib o'zgartiring:",
     ]
     rows = []
@@ -871,6 +934,7 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
     rows.append([("⏳ Sinov kunlari", "set:trial_days")])
     rows.append([("🤖 Oylik esse limiti", "set:ai_essays")])
     rows.append([("📦 Paket narxi", "set:price_pack"), ("📦 Paket hajmi", "set:pack_essays")])
+    rows.append([("📝 Esse narxi (begonalar)", "set:essay_price")])
     rows.append([("🔄 Yangilash", "settings"), ("↩️ Admin paneli", "admin")])
     return "\n".join(lines), inline(rows)
 
@@ -930,7 +994,7 @@ async def settings_save(message: Message, state: FSMContext) -> None:
     if not key or not value:
         await message.answer("✋ Qiymatni matn ko'rinishida yuboring.")
         return
-    if key.startswith(("price_", "discount_", "trial_", "ai_", "pack_")):
+    if key.startswith(("price_", "discount_", "trial_", "ai_", "pack_", "essay_")):
         digits = value.replace(" ", "").replace("'", "").replace(",", "")
         if not digits.isdigit():
             await message.answer("Faqat raqam yozing, masalan: <code>99000</code>")
@@ -1014,7 +1078,7 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     except db.IntegrityError:  # shu test uchun javob allaqachon bor (SQLite ham, PostgreSQL ham)
         return None
     if test["fmt"] == "milliy":
-        ai = essay_ai.essay_enabled() and await webapp.ai_allowed(test["owner_id"], "essays") if (essay_text or photos) else False
+        ai = await webapp.essay_ai_ok(test, tg_id) if (essay_text or photos) else False  # begona — o'zi to'lagan bo'lsa
         status = ("pending" if ai else "manual") if (essay_text or photos) else "none"
         await asyncio.to_thread(db.create_essay, attempt["id"], essay_text, photos, status)
         if essay_cost:
@@ -1475,7 +1539,7 @@ async def main() -> None:
         send_text=lambda chat_id, text: bot.send_message(chat_id, text),
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,
-        mock_request_notice=lambda *a: mock_request_notice(bot, *a),
+        essay_receipt_notice=lambda *a: essay_receipt_notice(bot, *a),
         join_notice=lambda *a: join_notice(bot, *a),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),

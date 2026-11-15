@@ -124,7 +124,23 @@ SCHEMA = [
         decided_at TEXT,
         UNIQUE (teacher_id, student_id)
     )""",
-    # Pullik mockga ariza: o'quvchi (ustozning o'quvchisi emas) chek rasmini yuboradi, ustoz tasdiqlasa — shu mock bepul
+    # Begona o'quvchining esse to'lovi (admin narxi): chekni AI tekshiradi — to'g'ri bo'lsa «paid», bo'lmasa admin ko'radi
+    f"""CREATE TABLE IF NOT EXISTS essay_payments (
+        id           {ID},
+        test_id      {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        student_id   {BIG} NOT NULL,
+        amount       INTEGER NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'open',
+        receipt      TEXT,
+        mime         TEXT,
+        receipt_hash TEXT,
+        txn          TEXT,
+        note         TEXT,
+        created_at   TEXT,
+        decided_at   TEXT,
+        UNIQUE (test_id, student_id)
+    )""",
+    # Eski: ustozga mock arizasi (endi ishlatilmaydi — ma'lumot saqlanib qoladi)
     f"""CREATE TABLE IF NOT EXISTS mock_requests (
         id         {ID},
         test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
@@ -953,50 +969,74 @@ def decide_join_request(request_id: int, status: str) -> bool:
                                  (status, _now(), request_id)).rowcount)
 
 
-# ---------- Pullik mock: arizalar ----------
+# ---------- Begona o'quvchining esse to'lovi (adminga; chekni AI tekshiradi) ----------
 
-def set_test_price(test_id: int, price: int) -> None:
+_PAY_COLS = "id, test_id, student_id, amount, status, txn, note, created_at, decided_at"
+
+
+def essay_payment_of(test_id: int, student_id: int) -> dict | None:
     with connect() as conn:
-        conn.execute("UPDATE tests SET price = ? WHERE id = ?", (max(0, price), test_id))
-
-
-def save_mock_request(test_id: int, student_id: int, name: str, phone: str | None, receipt: str, mime: str) -> int:
-    """Yangi ariza yoki rad etilgan/kutilayotganini yangilash (tasdiqlangani o'zgarmaydi)."""
-    with connect() as conn:
-        return conn.execute(
-            "INSERT INTO mock_requests (test_id, student_id, name, phone, receipt, mime, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(test_id, student_id) DO UPDATE SET name = excluded.name, "
-            "phone = excluded.phone, receipt = excluded.receipt, mime = excluded.mime, status = 'pending', "
-            "created_at = excluded.created_at, decided_at = NULL WHERE mock_requests.status <> 'approved' RETURNING id",
-            (test_id, student_id, name, phone, receipt, mime, _now())).fetchone()["id"]
-
-
-def get_mock_request(request_id: int) -> dict | None:
-    with connect() as conn:
-        return _row(conn.execute("SELECT * FROM mock_requests WHERE id = ?", (request_id,)).fetchone())
-
-
-def mock_request_of(test_id: int, student_id: int) -> dict | None:
-    with connect() as conn:
-        return _row(conn.execute("SELECT id, status, name, created_at FROM mock_requests WHERE test_id = ? AND student_id = ?",
+        return _row(conn.execute(f"SELECT {_PAY_COLS} FROM essay_payments WHERE test_id = ? AND student_id = ?",
                                  (test_id, student_id)).fetchone())
 
 
-def mock_requests_for_owner(owner_id: int, limit: int = 100) -> list[dict]:
-    """Ustozning barcha mocklariga kelgan arizalar: kutilayotganlar birinchi (chek rasmisiz — u alohida)."""
+def start_essay_payment(test_id: int, student_id: int, amount: int) -> dict:
+    """To'lov boshlanadi (yoki rad etilgani qayta ochiladi). To'langan / adminda turgani o'zgarmaydi."""
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT r.id, r.test_id, r.student_id, r.name, r.phone, r.status, r.created_at, t.title, t.code, "
-            "u.username FROM mock_requests r JOIN tests t ON t.id = r.test_id LEFT JOIN users u ON u.tg_id = r.student_id "
-            "WHERE t.owner_id = ? ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT ?",
-            (owner_id, limit)).fetchall()
-    return [dict(row) for row in rows]
+        conn.execute(
+            "INSERT INTO essay_payments (test_id, student_id, amount, status, created_at) VALUES (?, ?, ?, 'open', ?) "
+            "ON CONFLICT(test_id, student_id) DO UPDATE SET amount = excluded.amount, status = 'open', "
+            "created_at = excluded.created_at WHERE essay_payments.status IN ('open', 'rejected')",
+            (test_id, student_id, amount, _now()))
+        return _row(conn.execute(f"SELECT {_PAY_COLS} FROM essay_payments WHERE test_id = ? AND student_id = ?",
+                                 (test_id, student_id)).fetchone())
 
 
-def decide_mock_request(request_id: int, status: str) -> bool:
+def open_essay_payment(student_id: int) -> dict | None:
+    """Botga chek yuborilganda: o'quvchining eng oxirgi to'lanmagan esse to'lovi."""
     with connect() as conn:
-        return bool(conn.execute("UPDATE mock_requests SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
-                                 (status, _now(), request_id)).rowcount)
+        return _row(conn.execute(
+            "SELECT p.id, p.test_id, p.amount, p.status, t.title, t.code FROM essay_payments p JOIN tests t ON t.id = p.test_id "
+            "WHERE p.student_id = ? AND p.status IN ('open', 'rejected', 'review') ORDER BY p.created_at DESC, p.id DESC LIMIT 1",
+            (student_id,)).fetchone())
+
+
+def get_essay_payment(payment_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT p.*, t.title, t.code, t.owner_id, u.full_name, u.username FROM essay_payments p "
+            "JOIN tests t ON t.id = p.test_id LEFT JOIN users u ON u.tg_id = p.student_id WHERE p.id = ?",
+            (payment_id,)).fetchone())
+
+
+def save_essay_receipt(payment_id: int, receipt: str, mime: str, receipt_hash: str, txn: str | None,
+                       note: str, status: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE essay_payments SET receipt = ?, mime = ?, receipt_hash = ?, txn = ?, note = ?, status = ?, "
+                     "decided_at = ? WHERE id = ?",
+                     (receipt, mime, receipt_hash, txn, note, status, _now() if status == "paid" else None, payment_id))
+
+
+def receipt_used(receipt_hash: str, txn: str | None, payment_id: int) -> bool:
+    """Shu chek (rasm yoki tranzaksiya raqami) boshqa to'lovda ishlatilganmi."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "SELECT 1 FROM essay_payments WHERE id <> ? AND status IN ('paid', 'review') AND "
+            "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
+            (payment_id, receipt_hash, txn or "", txn or "")).fetchone())
+
+
+def decide_essay_payment(payment_id: int, status: str, allowed: tuple[str, ...]) -> bool:
+    marks = ", ".join("?" * len(allowed))
+    with connect() as conn:
+        return bool(conn.execute(f"UPDATE essay_payments SET status = ?, decided_at = ? WHERE id = ? AND status IN ({marks})",
+                                 (status, _now(), payment_id, *allowed)).rowcount)
+
+
+
+
+
+
 
 
 def save_written_pending(test_id: int, number: int, image_b64: str, mime: str) -> None:
