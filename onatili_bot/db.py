@@ -357,7 +357,7 @@ MIGRATIONS = [
     ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
     ("tests", "sheets_sent", "INTEGER NOT NULL DEFAULT 0"),  # titul PDF'i botga yuborilgan (1-qadam bajarilgan)
     ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),
-    ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),  # pullik mock: o'quvchilarim bepul, boshqalar shuncha so'm to'laydi  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
+    ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),  # begona o'quvchi shu mock essesini tekshirish uchun to'laydi (so'm)  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
     ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
 ]
 
@@ -969,7 +969,13 @@ def decide_join_request(request_id: int, status: str) -> bool:
                                  (status, _now(), request_id)).rowcount)
 
 
-# ---------- Begona o'quvchining esse to'lovi (adminga; chekni AI tekshiradi) ----------
+# ---------- Begona o'quvchining esse to'lovi (ustoz kartasiga; chekni AI tekshiradi) ----------
+
+def set_test_price(test_id: int, price: int) -> None:
+    """Begona o'quvchi uchun shu mock essesini tekshirish narxi (0 — to'lovsiz)."""
+    with connect() as conn:
+        conn.execute("UPDATE tests SET price = ? WHERE id = ?", (max(0, price), test_id))
+
 
 _PAY_COLS = "id, test_id, student_id, amount, status, txn, note, created_at, decided_at"
 

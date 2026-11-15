@@ -41,15 +41,16 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   @username / Telegram ID'sini qo'shadi yoki taklif havolasini yuboradi (`t.me/<bot>?start=t_<ID>_<imzo>`).
   Ustoz har o'quvchiga oylik chegara qo'yadi (boshlang'ich 10 ta).
 - **Kursingizni toping**: o'quvchi «O'quvchi» rolini tanlagach viloyat → tumanini tanlaydi va shu yerda kurs ochgan ustozlar (ism, telefon) chiqadi. «🙋 O'quvchisiman» — ism va familiya (majburiy), rasm (ixtiyoriy) bilan ariza; ustozga botda «Tasdiqlash / Rad etish» tugmalari bilan boradi va ilovada «👥 O'quvchilarim → Ro'yxatdan o'tganlar»da ko'rinadi. Tasdiqlansa — o'quvchi ustozga ulanadi (mocklar bepul, esse ustoz kreditidan). «Shunchaki kirayapman» — arizasiz kiradi.
-- **Onlayn mock va esse to'lovi**: test hammaga bepul. Ustozning o'quvchilari («👥 O'quvchilarim») essesi ustoz
-  kreditidan tekshiriladi. Begona o'quvchi esseli (milliy) mockni ochsa — «Esse tekshiruvi — N so'm» oynasi:
-  «💳 Botda to'lash» bosilsa bot admin kartasi va summani yozadi, o'quvchi chek skrinshotini botga yuboradi.
-  AI chekni o'qiydi, kod solishtiradi: bugungi sana, summa ≥ narx, qabul qiluvchi karta (oxirgi 4 raqam) yoki ismi,
-  tahrir belgisi yo'q, chek oldin ishlatilmagan. To'g'ri bo'lsa — «✅ To'landi», mock ochiladi (ustoz krediti
-  ishlatilmaydi); aks holda «⏳ kutib turing» va chek adminga «Tasdiqlash / Rad etish» bilan boradi. AI tasdiqlagan
-  cheklar ham adminga «Bekor qilish» tugmasi bilan keladi. Narx: `/esse_narx 15000` yoki «/sozlama → 📝 Esse
-  narxi»; karta — «/sozlama → 💳 Karta». Narx yoki karta kiritilmagan bo'lsa — begonalar ham bepul (esseni ustoz
-  qo'lda baholaydi).
+- **Onlayn mock va esse to'lovi**: test hammaga bepul. Ustoz milliy onlayn mock yaratishda «📝 Esse tekshiruvi»da
+  begonalar uchun narx, kartasi va karta egasini kiritadi (karta keyingi mocklarga eslab qolinadi; narx bo'sh —
+  to'lovsiz, begonalar essesini ustoz qo'lda baholaydi). Ustozning o'quvchilari («👥 O'quvchilarim») essesi ustoz
+  kreditidan; kredit tugagan bo'lsa o'quvchiga test ichida, ustozga yaratish oynasida ogohlantirish chiqadi.
+  Begona o'quvchi testni yechadi, «45. Esse» o'rnida «🔒 Esse tekshiruvi — N so'm» turadi: «💳 Botda to'lash» —
+  bot ustoz kartasi va summani yozadi, o'quvchi chek skrinshotini botga yuboradi. AI chekni o'qiydi, kod solishtiradi:
+  bugungi sana, summa ≥ narx, qabul qiluvchi karta (oxirgi 4 raqam) yoki ismi, tahrir belgisi yo'q, chek oldin
+  ishlatilmagan. To'g'ri bo'lsa — «✅ To'landi», esse maydoni ochiladi (belgilangan javoblar saqlanadi); aks holda
+  «⏳ kutib turing» va chek ustozga «Tasdiqlash / Rad etish» bilan boradi. AI tasdiqlaganlari ham ustozga
+  «Bekor qilish» tugmasi bilan keladi. To'lamasa — testni essesiz yuborishi mumkin.
 - **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
   to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.

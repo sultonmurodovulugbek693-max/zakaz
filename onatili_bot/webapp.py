@@ -193,6 +193,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
+        "my_card": await run(teacher_card, user["id"]),
         "joins_pending": sum(1 for r in await run(db.join_requests_for, user["id"]) if r["status"] == "pending"),
         "my_teachers": [t["full_name"] or "Ustoz" for t in await run(db.teachers_of, user["id"])],
         "plans": await run(plans.offers),
@@ -281,7 +282,6 @@ async def test_info(request: web.Request) -> web.Response:
     previous = await run(db.find_attempt, test["id"], user["id"])
     if not previous:
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
-        await essay_gate(test, user)
     keys = await run(db.get_keys, test["id"])
     return ok({
         "code": test["code"], "title": test["title"], "fmt": test["fmt"],
@@ -289,12 +289,27 @@ async def test_info(request: web.Request) -> web.Response:
         "variants": list(keys), "closed": bool(test["closed"]), "theme": test.get("theme") or "classic",
         "essay_topic": test.get("essay_topic"), "submitted": previous["id"] if previous else None,
         "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
+        "essay_pay": None if previous else await essay_pay_info(test, user),
+        "essay_warning": None if previous else await essay_warning(test, user),
     })
 
 
-def essay_price() -> int:
-    """Begona o'quvchi uchun bitta mock essesini AI tekshirish narxi (admin «/sozlama» yoki /esse_narx bilan qo'yadi)."""
-    return max(0, plans.setting("essay_price", 0))
+async def essay_warning(test: dict, user: dict) -> str | None:
+    """Ustozning o'quvchisi: esse ustoz limitidan — limit tugagan bo'lsa ogohlantirish (esseni ustoz o'zi baholaydi)."""
+    if test["fmt"] != "milliy" or not essay_ai.essay_enabled() or test["owner_id"] == user["id"]:
+        return None
+    if await is_outsider(test, user["id"]) or await run(plans.ai_unlimited, test["owner_id"]):
+        return None
+    if await run(db.get_credits, test["owner_id"]) > 0:
+        return None
+    return "Ustozingizning esse tekshirish limiti tugagan — essengizni AI tekshirmaydi, ustoz o'zi baholaydi."
+
+
+
+def teacher_card(teacher_id: int) -> dict:
+    """Ustozning to'lov kartasi (begonalar esse tekshiruvini shunga to'laydi) — mock yaratishda bir marta kiritiladi."""
+    saved = db.get_settings()
+    return {"number": saved.get(f"teacher_card:{teacher_id}", ""), "holder": saved.get(f"teacher_holder:{teacher_id}", "")}
 
 
 async def is_outsider(test: dict, student_id: int) -> bool:
@@ -304,24 +319,21 @@ async def is_outsider(test: dict, student_id: int) -> bool:
     return not await run(db.is_linked, test["owner_id"], student_id)
 
 
-async def essay_gate(test: dict, user: dict) -> None:
-    """Onlayn mock: test hammaga bepul. Esseli mock (milliy) — ustozning o'quvchilari essesi ustoz kreditidan;
-    begonalar esse tekshiruvini o'zi to'laydi (admin narxi, admin kartasi): chekni AI tekshiradi va to'g'ri bo'lsa
-    mock ochiladi. Narx yoki karta kiritilmagan bo'lsa — begonalar ham bepul (esseni ustoz qo'lda baholaydi)."""
+async def essay_pay_info(test: dict, user: dict) -> dict | None:
+    """Onlayn mock: test hammaga bepul. Esseli mock (milliy)da begona o'quvchi (ustozning o'quvchisi emas) esseni
+    yuklashdan oldin esse tekshiruvini to'laydi — narxni ustoz mock yaratishda qo'ygan, pul ustoz kartasiga.
+    Chekni botga yuboradi, AI tekshiradi. None — to'lov kerak emas (o'quvchisi, to'langan yoki narx qo'yilmagan)."""
     if test["fmt"] != "milliy" or not await is_outsider(test, user["id"]):
-        return
-    price, card = await run(essay_price), await run(plans.card)
+        return None
+    price, card = int(test.get("price") or 0), await run(teacher_card, test["owner_id"])
     if not price or not card["number"]:
-        return
+        return None
     pay = await run(db.essay_payment_of, test["id"], user["id"])
     if pay and pay["status"] == "paid":
-        return
-    owner = await run(db.find_user, str(test["owner_id"])) or {}
-    raise ApiError(402, "Esseni tekshirish pullik — to'lovdan keyin mock ochiladi", paywall={
-        "code": test["code"], "title": test["title"], "price": price, "card": card["number"], "holder": card["holder"],
-        "teacher": owner.get("full_name") or "Ustoz", "status": pay["status"] if pay else None,
-        "note": pay["note"] if pay and pay["status"] == "rejected" else None,
-        "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""})
+        return None
+    return {"price": price, "card": card["number"], "holder": card["holder"], "status": pay["status"] if pay else None,
+            "note": pay["note"] if pay and pay["status"] == "rejected" else None,
+            "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
 
 
 async def essay_ai_ok(test: dict, student_id: int) -> bool:
@@ -342,7 +354,7 @@ async def _paid_test(request: web.Request, user: dict) -> dict:
         raise ApiError(409, "Mock yopilgan — natijalar e'lon qilingan")
     if not await is_outsider(test, user["id"]):
         raise ApiError(409, "Siz ustozning o'quvchisisiz — to'lov kerak emas")
-    if not await run(essay_price) or not (await run(plans.card))["number"]:
+    if not test.get("price") or not (await run(teacher_card, test["owner_id"]))["number"]:
         raise ApiError(409, "To'lov kerak emas")
     return test
 
@@ -352,7 +364,7 @@ async def essay_pay_start(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await _paid_test(request, user)
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
-    price, card = await run(essay_price), await run(plans.card)
+    price, card = int(test["price"]), await run(teacher_card, test["owner_id"])
     pay = await run(db.start_essay_payment, test["id"], user["id"], price)
     if pay["status"] == "open" and "send_text" in HOOKS:
         try:
@@ -372,7 +384,7 @@ def _digits(text) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
 
-async def verify_receipt(data: bytes, mime: str, amount: int) -> tuple[bool, list[str], str | None]:
+async def verify_receipt(data: bytes, mime: str, amount: int, card: dict) -> tuple[bool, list[str], str | None]:
     """AI chekni o'qiydi, qolganini kod solishtiradi: bugungi sana, summa, qabul qiluvchi karta (oxirgi 4 raqam) yoki ismi."""
     if not essay_ai.enabled():
         return False, ["AI o'chiq — admin tekshiradi"], None
@@ -381,7 +393,6 @@ async def verify_receipt(data: bytes, mime: str, amount: int) -> tuple[bool, lis
     except Exception as error:
         logger.warning("Chekni AI o'qiy olmadi: %s", error)
         return False, ["AI chekni o'qiy olmadi"], None
-    card = await run(plans.card)
     reasons = []
     if not r.get("is_receipt"):
         reasons.append("rasm to'lov chekiga o'xshamaydi")
@@ -408,23 +419,23 @@ async def verify_receipt(data: bytes, mime: str, amount: int) -> tuple[bool, lis
 
 
 async def check_essay_receipt(payment_id: int, data: bytes, mime: str) -> dict:
-    """Botga yuborilgan chek: AI to'g'ri desa — «paid», mock ochiladi; aks holda adminga, o'quvchiga «kutib turing»."""
+    """Botga yuborilgan chek: AI to'g'ri desa — «paid», esse ochiladi; aks holda ustozga, o'quvchiga «kutib turing»."""
     pay = await run(db.get_essay_payment, payment_id)
     if not pay:
         raise ApiError(404, "To'lov topilmadi")
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
     digest = hashlib.sha256(data).hexdigest()
-    good, reasons, txn = await verify_receipt(data, mime, pay["amount"])
+    good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["owner_id"]))
     if await run(db.receipt_used, digest, txn, payment_id):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
     status = "paid" if good else "review"
     await run(db.save_essay_receipt, payment_id, base64.b64encode(data).decode(), mime, digest, txn, "; ".join(reasons), status)
     if "send_text" in HOOKS:
-        text = (f"✅ <b>To'landi!</b> · {html.escape(pay['title'])}\nMockni topshirishingiz mumkin — ilovada kod "
+        text = (f"✅ <b>To'landi!</b> · {html.escape(pay['title'])}\nEsse maydoni ochildi — ilovada kod "
                 f"<b>{pay['code']}</b> ni kiriting. Essengizni AI imtihondagidek tekshiradi." if good else
                 f"⏳ <b>Chek tekshirilmoqda — kutib turing</b> · {html.escape(pay['title'])}\n"
-                "Avtomatik tasdiqlanmadi, admin ko'rib chiqadi va bot xabar beradi.")
+                "Avtomatik tasdiqlanmadi, ustoz ko'rib chiqadi va bot xabar beradi.")
         try:
             await HOOKS["send_text"](pay["student_id"], text)
         except Exception:
@@ -437,19 +448,19 @@ async def check_essay_receipt(payment_id: int, data: bytes, mime: str) -> dict:
     return {"ok": True, "status": status, "reasons": reasons}
 
 
-async def decide_essay_payment(payment_id: int, approve: bool) -> dict:
-    """Admin: chekni tasdiqlaydi (mock ochiladi) yoki rad etadi / AI tasdiqlaganini bekor qiladi."""
+async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> dict:
+    """Mock egasi (yoki admin): chekni tasdiqlaydi (esse ochiladi) yoki rad etadi / AI tasdiqlaganini bekor qiladi."""
     pay = await run(db.get_essay_payment, payment_id)
-    if not pay:
+    if not pay or (pay["owner_id"] != by_id and by_id not in ADMIN_IDS):
         raise ApiError(404, "To'lov topilmadi")
     allowed = ("open", "review", "rejected") if approve else ("open", "review", "paid")
     if not await run(db.decide_essay_payment, payment_id, "paid" if approve else "rejected", allowed):
         raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
     if "send_text" in HOOKS:
-        text = (f"✅ <b>To'lov tasdiqlandi</b> · {html.escape(pay['title'])}\nMockni topshirishingiz mumkin — kod "
+        text = (f"✅ <b>To'lov tasdiqlandi</b> · {html.escape(pay['title'])}\nEsse maydoni ochildi — kod "
                 f"<b>{pay['code']}</b>." if approve else
                 f"❌ <b>To'lov tasdiqlanmadi</b> · {html.escape(pay['title'])}\nChek mos kelmadi (summa, sana yoki karta). "
-                "To'g'ri chekni qayta yuboring yoki admin bilan bog'laning.")
+                "To'g'ri chekni qayta yuboring yoki ustoz bilan bog'laning.")
         try:
             await HOOKS["send_text"](pay["student_id"], text)
         except Exception:
@@ -483,7 +494,6 @@ async def submit(request: web.Request) -> web.Response:
     if (test.get("mode") or "online") == "offline":
         raise ApiError(409, "Bu test qog'ozda o'tkaziladi")
     await test_gate(test, user)
-    await essay_gate(test, user)
     keys = await run(db.get_keys, test["id"])
     variant = payload.get("variant") or next(iter(keys))
     if variant not in keys:
@@ -497,6 +507,10 @@ async def submit(request: web.Request) -> web.Response:
         essay = ""
     if essay and len(essay) < ESSAY_MIN_CHARS:
         raise ApiError(400, f"Esse juda qisqa ({len(essay)} belgi) — to'liq yozing yoki bo'sh qoldiring")
+    if essay:
+        pay = await essay_pay_info(test, user)
+        if pay:  # begona o'quvchi: esse — to'lovdan keyin (test o'zi bepul)
+            raise ApiError(402, "Esseni yuborishdan oldin esse tekshiruvini to'lang — yoki essesiz yuboring", essay_pay=pay)
     await run(db.remember_user, user["id"], user["name"], user["username"])
     await run(db.set_last_name_used, user["id"], name)
     attempt = await HOOKS["record_attempt"](test, user["id"], name, variant, answers, essay[:12000] or None, [], 0.0)
@@ -801,8 +815,19 @@ async def create_test(request: web.Request) -> web.Response:
     mode = "offline" if payload.get("mode") == "offline" else "online"
     # Oflayn (qog'ozdagi) testda majburiy obuna yo'q — o'quvchi testni ilovada ochmaydi
     channels = await resolve_channels(payload.get("channels") or []) if mode == "online" else []
+    price = to_int(payload.get("essay_price") or 0, 0, "Esse narxi") if fmt == "milliy" and mode == "online" else 0
+    card = " ".join(str(payload.get("card") or "").split())[:30]
+    if price:
+        if not 1000 <= price <= 1_000_000:
+            raise ApiError(400, "Esse tekshiruvi narxini so'mda yozing (1 000 – 1 000 000)")
+        if len(_digits(card)) < 12:
+            raise ApiError(400, "Begonalar to'laydigan kartangiz raqamini yozing")
     test = await run(db.create_test, user["id"], title, fmt, count, items, keys, topic if fmt == "milliy" else None)
     await run(db.set_theme, test["id"], theme)
+    if price:
+        await run(db.set_test_price, test["id"], price)
+        await run(db.set_setting, f"teacher_card:{user['id']}", card)
+        await run(db.set_setting, f"teacher_holder:{user['id']}", " ".join(str(payload.get("holder") or "").split())[:60])
     if channels:
         await run(db.set_test_channels, test["id"], channels)
     await run(db.set_mode, test["id"], mode)

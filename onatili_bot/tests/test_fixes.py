@@ -761,7 +761,8 @@ class LinkedPractice(TeacherCredits):
 
 
 class EssayPaid(ServerBase):
-    """Begona o'quvchi: test bepul; esseli mock — esse tekshiruvi adminga to'lanadi, chekni AI tekshiradi (botda)."""
+    """Test hammaga bepul. Ustoz mock yaratishda begonalar uchun esse narxini qo'yadi; begona esseni yuklashdan oldin
+    ustoz kartasiga to'lab, chekni botga yuboradi — AI tekshiradi. Ustozning o'quvchisi — kreditdan, tugasa ogohlantirish."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
@@ -786,104 +787,123 @@ class EssayPaid(ServerBase):
     async def as_student(self, uid):
         self.user = {"id": uid, "name": f"O'quvchi {uid}", "username": f"u{uid}"}
 
+    async def as_owner(self):
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+
     def good_receipt(self, **kw):
         self.receipt = {"is_receipt": True, "success": True, "amount": 15000, "date": plans.now().strftime("%Y-%m-%d"),
-                        "time": "10:00", "recipient_card": "8600 **** **** 9012", "recipient_name": "ADMIN ADMINOV",
+                        "time": "10:00", "recipient_card": "8600 **** **** 9012", "recipient_name": "NODIRA KARIMOVA",
                         "transaction_id": "TX1", "looks_edited": False, "note": "", **kw}
 
-    def set_price(self):
-        db.set_setting("essay_price", "15000")
-        db.set_setting("card_number", "8600 1234 5678 9012")
-        db.set_setting("card_holder", "Admin Adminov")
+    async def paid_mock(self, price=15000):
+        """Ustoz milliy onlayn mock yaratadi: begonalar uchun esse narxi va kartasi bilan."""
+        await self.as_owner()
+        items = structure.build_items("milliy", 45)
+        key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
+        status, r = await self.post("/api/teacher/tests", {"title": "Mock", "fmt": "milliy", "mode": "online", "keys": {"A": key},
+                                                           "channels": [], "essay_price": price, "card": "8600 1234 5678 9012",
+                                                           "holder": "Nodira Karimova"})
+        self.assertEqual(status, 200, r)
+        return db.get_test(r["id"])
 
-    async def test_free_without_essay_or_price(self):
-        _, r = await self.create()  # oddiy — essesiz
-        _, m = await self.create(fmt="milliy")
-        await self.as_student(OTHER)
-        self.assertEqual((await self.client.get(f"/api/test/{db.get_test(m['id'])['code']}")).status, 200)  # narx yo'q
-        self.set_price()
-        self.assertEqual((await self.client.get(f"/api/test/{db.get_test(r['id'])['code']}")).status, 200)  # test bepul
-        self.assertFalse(await webapp.essay_ai_ok(db.get_test(m["id"]), OTHER))  # to'lamagan — AI yo'q, ustoz krediti ham
-
-    async def test_pay_in_bot_ai_approves(self):
-        _, m = await self.create(fmt="milliy")
-        test = db.get_test(m["id"])
-        self.set_price()
-        db.link_student(OWNER, STUDENT)
-        await self.as_student(STUDENT)
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # ustozning o'quvchisi
-        await self.as_student(OTHER)
+    async def info(self, test):
         response = await self.client.get(f"/api/test/{test['code']}")
-        wall = (await response.json())["paywall"]
-        self.assertEqual((response.status, wall["price"], wall["card"]), (402, 15000, "8600 1234 5678 9012"))
-        self.assertEqual((await self.post(f"/api/test/{test['code']}/submit",
-                                          {"variant": "A", "name": "Begona Bola", "answers": {}}))[0], 402)
+        return response.status, await response.json()
+
+    async def submit(self, test, essay=""):
+        return await self.post(f"/api/test/{test['code']}/submit", {"variant": "A", "name": "Begona Bola", "answers": {}, "essay": essay})
+
+    ESSAY = "Vatan — bu ona. " * 30
+
+    async def test_price_validation_and_card_saved(self):
+        items = structure.build_items("milliy", 45)
+        key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
+        base = {"title": "Mock", "fmt": "milliy", "mode": "online", "keys": {"A": key}, "channels": []}
+        self.assertEqual((await self.post("/api/teacher/tests", {**base, "essay_price": 15000}))[0], 400)  # kartasiz
+        self.assertEqual((await self.post("/api/teacher/tests", {**base, "essay_price": 50, "card": "8600123412341234"}))[0], 400)
+        test = await self.paid_mock()
+        self.assertEqual(test["price"], 15000)
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual(boot["my_card"], {"number": "8600 1234 5678 9012", "holder": "Nodira Karimova"})
+
+    async def test_free_without_price(self):
+        test = await self.paid_mock(price=0)
+        await self.as_student(OTHER)
+        status, data = await self.info(test)
+        self.assertEqual((status, data["essay_pay"]), (200, None))
+        self.assertFalse(await webapp.essay_ai_ok(test, OTHER))  # begona, to'lamagan — ustoz krediti ishlatilmaydi
+
+    async def test_outsider_pays_before_essay(self):
+        test = await self.paid_mock()
+        await self.as_student(OTHER)
+        status, data = await self.info(test)  # mock ochiladi, test bepul
+        self.assertEqual((status, data["essay_pay"]["price"], data["essay_pay"]["card"]), (200, 15000, "8600 1234 5678 9012"))
+        status, res = await self.submit(test, self.ESSAY)
+        self.assertEqual((status, res["essay_pay"]["price"]), (402, 15000))  # esse — to'lovdan keyin
         status, res = await self.post(f"/api/test/{test['code']}/essay-pay", {})
         self.assertEqual((status, res["status"], res["bot"]), (200, "open", "test_bot"))
         self.assertIn("8600 1234 5678 9012", self.bot.messages[-1][1])
-        pay = db.open_essay_payment(OTHER)
         self.good_receipt()
         credits = db.get_credits(OWNER)
-        result = await webapp.check_essay_receipt(pay["id"], b"chek-1", "image/jpeg")
+        result = await webapp.check_essay_receipt(db.open_essay_payment(OTHER)["id"], b"chek-1", "image/jpeg")
         self.assertEqual(result["status"], "paid")
         self.assertIn("To'landi", self.bot.messages[-1][1])
-        self.assertTrue(self.notices[-1][1])  # adminga: AI tasdiqladi
-        self.assertIsNone(db.open_essay_payment(OTHER))
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)  # mock ochildi
+        self.assertTrue(self.notices[-1][1])
+        self.assertIsNone((await self.info(test))[1]["essay_pay"])  # esse maydoni ochildi
         self.assertTrue(await webapp.essay_ai_ok(test, OTHER))
+        self.assertEqual((await self.submit(test, self.ESSAY))[0], 200)
         self.assertEqual(db.get_credits(OWNER), credits)  # ustoz krediti ishlatilmadi
 
-    async def test_bad_receipt_goes_to_admin(self):
-        _, m = await self.create(fmt="milliy")
-        _, m2 = await self.create(fmt="milliy")
-        test, test2 = db.get_test(m["id"]), db.get_test(m2["id"])
-        self.set_price()
+    async def test_outsider_can_submit_without_essay(self):
+        test = await self.paid_mock()
+        await self.as_student(OTHER)
+        self.assertEqual((await self.submit(test))[0], 200)
+
+    async def test_bad_receipt_goes_to_teacher(self):
+        test = await self.paid_mock()
+        test2 = await self.paid_mock()
         await self.as_student(OTHER)
         await self.post(f"/api/test/{test['code']}/essay-pay", {})
         pay = db.open_essay_payment(OTHER)
-        yesterday = (plans.now() - __import__("datetime").timedelta(days=2)).strftime("%Y-%m-%d")
-        self.good_receipt(amount=5000, date=yesterday, recipient_card="9860 **** 1111", recipient_name="Boshqa Odam")
+        old = (plans.now() - __import__("datetime").timedelta(days=2)).strftime("%Y-%m-%d")
+        self.good_receipt(amount=5000, date=old, recipient_card="9860 **** 1111", recipient_name="Boshqa Odam")
         result = await webapp.check_essay_receipt(pay["id"], b"chek-2", "image/jpeg")
-        self.assertEqual(result["status"], "review")
-        self.assertEqual(len(result["reasons"]), 3)  # summa, sana, karta
+        self.assertEqual((result["status"], len(result["reasons"])), ("review", 3))  # summa, sana, karta
         self.assertIn("kutib turing", self.bot.messages[-1][1])
-        self.assertFalse(self.notices[-1][1])
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 402)
-        self.assertEqual((await webapp.check_essay_receipt(pay["id"], b"chek-3", "image/jpeg"))["status"], "review")  # adminda
-        await webapp.decide_essay_payment(pay["id"], True)  # admin tasdiqladi
-        self.assertEqual((await self.client.get(f"/api/test/{test['code']}")).status, 200)
+        self.assertEqual((await self.info(test))[1]["essay_pay"]["status"], "review")
         with self.assertRaises(webapp.ApiError):
-            await webapp.decide_essay_payment(pay["id"], True)
-        # Shu chek ikkinchi mockka — qayta ishlatilgan
+            await webapp.decide_essay_payment(pay["id"], True, STUDENT)  # begona ustoz qaror qila olmaydi
+        await webapp.decide_essay_payment(pay["id"], True, OWNER)  # mock egasi tasdiqladi
+        self.assertIsNone((await self.info(test))[1]["essay_pay"])
+        with self.assertRaises(webapp.ApiError):
+            await webapp.decide_essay_payment(pay["id"], True, OWNER)
+        await self.as_student(OTHER)
         await self.post(f"/api/test/{test2['code']}/essay-pay", {})
         pay2 = db.open_essay_payment(OTHER)
-        self.assertEqual(pay2["test_id"], test2["id"])
         self.good_receipt()
-        result = await webapp.check_essay_receipt(pay2["id"], b"chek-2", "image/jpeg")
+        result = await webapp.check_essay_receipt(pay2["id"], b"chek-2", "image/jpeg")  # o'sha rasm
         self.assertEqual((result["status"], result["reasons"]), ("review", ["bu chek oldin ishlatilgan"]))
-        await webapp.decide_essay_payment(pay2["id"], False)  # rad etildi — qayta yuborsa bo'ladi
+        await webapp.decide_essay_payment(pay2["id"], False, OWNER)
         self.assertEqual(db.open_essay_payment(OTHER)["status"], "rejected")
-        self.assertEqual((await self.check_card_name())["status"], "paid")
+        self.good_receipt(recipient_card="", transaction_id="TX9")  # karta ko'rinmasa ham ism mos
+        self.assertEqual((await webapp.check_essay_receipt(pay2["id"], b"chek-4", "image/jpeg"))["status"], "paid")
 
-    async def check_card_name(self):
-        """Karta raqami ko'rinmasa ham qabul qiluvchi ismi mos — to'g'ri."""
-        pay = db.open_essay_payment(OTHER)
-        self.good_receipt(recipient_card="", transaction_id="TX9")
-        return await webapp.check_essay_receipt(pay["id"], b"chek-4", "image/jpeg")
-
-    async def test_linked_student_cannot_pay(self):
-        _, m = await self.create(fmt="milliy")
-        self.set_price()
+    async def test_linked_student_credit_warning(self):
+        test = await self.paid_mock()
         db.link_student(OWNER, STUDENT)
         await self.as_student(STUDENT)
-        self.assertEqual((await self.post(f"/api/test/{db.get_test(m['id'])['code']}/essay-pay", {}))[0], 409)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay-pay", {}))[0], 409)  # to'lov kerak emas
+        status, data = await self.info(test)
+        self.assertIsNone(data["essay_pay"])
+        self.assertIn("limiti tugagan", data["essay_warning"])  # ustozda kredit yo'q
+        db.add_credits(OWNER, 3)
+        self.assertIsNone((await self.info(test))[1]["essay_warning"])
+        self.assertTrue(await webapp.essay_ai_ok(test, STUDENT))
 
     async def test_bot_photo_handler(self):
         """Botga rasm: ochiq esse to'lovi bo'lsa — yuklab oladi va AI tekshiradi; to'g'ri bo'lsa — paid."""
         import io
-        _, m = await self.create(fmt="milliy")
-        test = db.get_test(m["id"])
-        self.set_price()
+        test = await self.paid_mock()
         await self.as_student(OTHER)
         await self.post(f"/api/test/{test['code']}/essay-pay", {})
         self.good_receipt()
@@ -905,7 +925,7 @@ class EssayPaid(ServerBase):
         await bot.receipt_received(message)
         self.assertEqual(db.essay_payment_of(test["id"], OTHER)["status"], "paid")
         self.assertIn("To'landi", self.bot.messages[-1][1])
-        await bot.receipt_received(message)  # boshqa ochiq to'lov yo'q — oddiy obuna chekiga o'tadi
+        await bot.receipt_received(message)  # ochiq esse to'lovi yo'q — oddiy obuna chekiga o'tadi
         self.assertIn("Chek qabul qilinmadi", answers[-1])
 
 

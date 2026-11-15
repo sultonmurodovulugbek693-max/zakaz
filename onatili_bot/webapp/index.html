@@ -1119,7 +1119,7 @@ function testGate(code, channels) {
 VIEWS.answer = async ({ code }) => {
   loading();
   let t; try { t = await api(`/api/test/${code}`); }
-  catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : e.data && e.data.paywall ? paywall(code, e.data.paywall) : fail(e); }
+  catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : fail(e); }
   if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
   if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "milliy" ? t.submitted : null }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
@@ -1139,7 +1139,10 @@ VIEWS.answer = async ({ code }) => {
     ${bubbleSheet(t.items, answers)}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2><span class="muted small">${texts[0].label}–${texts[texts.length - 1].label}</span></div>
       <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" value="${esc(written[i.label] || "")}" placeholder="Javob" autocomplete="off"></div>`).join("")}</div>` : ""}
-    ${t.fmt === "milliy" ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+    ${t.fmt === "milliy" && t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">to'lovdan keyin</span></div>
+      ${t.essay_topic ? `<div class="card"><div class="topic">${esc(t.essay_topic)}</div></div>` : ""}${essayPayHTML(t.essay_pay)}` : ""}
+    ${t.fmt === "milliy" && !t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai && !t.essay_warning ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+      ${t.essay_warning ? `<div class="card" style="border:1.5px solid var(--warn)"><span class="small">⚠️ ${esc(t.essay_warning)}</span></div>` : ""}
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
         <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
         <div class="counter" id="essay-count"></div></div>` : ""}
@@ -1171,6 +1174,7 @@ VIEWS.answer = async ({ code }) => {
   document.querySelectorAll("[data-v]").forEach(x => x.onclick = () => { variant = x.dataset.v; document.querySelectorAll("[data-v]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); save(); });
   nameEl.oninput = save; if (essayEl) essayEl.oninput = progress;
   progress();
+  if (t.essay_pay) bindEssayPay(t.code, t.essay_pay, () => { save(); rerender(); });
   document.getElementById("submit").onclick = async () => {
     const name = nameEl.value.trim();
     if (name.length < 3) { toast("Ism va familiyangizni yozing"); nameEl.focus(); haptic("error"); return; }
@@ -1178,7 +1182,7 @@ VIEWS.answer = async ({ code }) => {
     const missing = choices.length - Object.keys(answers).length;
     const essay = essayEl ? essayEl.value.trim() : "";
     if (essay && essay.length < 200) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
-    const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && !essay ? "esse yozilmagan" : ""].filter(Boolean).join(", ");
+    const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && !essay ? (t.essay_pay ? "esse to'lanmagan — essesiz yuboriladi" : "esse yozilmagan") : ""].filter(Boolean).join(", ");
     if (!(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
@@ -1188,6 +1192,7 @@ VIEWS.answer = async ({ code }) => {
       done({ title: t.title, attemptId: res.essay ? res.attempt_id : null });
     } catch (e) {
       if (e.data && e.data.channels) { toast(e.message); haptic("error"); return testGate(t.code, e.data.channels); }  // javoblar qoralamada saqlangan
+      if (e.data && e.data.essay_pay) { toast(e.message); haptic("error"); save(); return rerender(); }
       toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish";
     }
   };
@@ -1362,6 +1367,7 @@ VIEWS.create = async () => {
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
+    ${st.fmt === "milliy" && st.mode !== "offline" ? essayPriceHTML(st) : ""}
     <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
     ${bubbleSheet(items, key)}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">ma'nodosh — ixtiyoriy</span></div>
@@ -1380,6 +1386,9 @@ VIEWS.create = async () => {
   function collect() {
     const ti = document.getElementById("title"); if (ti) st.title = ti.value;
     const tp = document.getElementById("topic"); if (tp) st.topic = tp.value;
+    const ep = document.getElementById("ep-price"); if (ep) st.essayPrice = ep.value.replace(/\D/g, "");
+    const ec = document.getElementById("ep-card"); if (ec) st.card = ec.value;
+    const eh = document.getElementById("ep-holder"); if (eh) st.holder = eh.value;
     const ct = document.getElementById("count"); if (ct) st.count = Math.max(5, Math.min(100, parseInt(ct.value) || 30));
     document.querySelectorAll(".wkey").forEach(box => {
       const parts = [box.querySelector(".wk-main"), ...box.querySelectorAll(".wk-syn")].map(x => x.value.replace(/\|/g, " ").trim()).filter(Boolean);
@@ -1422,7 +1431,7 @@ VIEWS.create = async () => {
     if (miss.length) { toast(`${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} — kaliti yo'q`); haptic("error"); return; }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
     try {
-      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
+      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
       if (st.mode === "offline") {  // titul: darhol test sahifasiga — titul chiqarish va skanerlash shu yerda
         S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
@@ -1791,25 +1800,36 @@ async function aiView(mode) {
   });
 }
 
-// Begona o'quvchi (ustozning o'quvchisi emas): esseli mock — esse tekshiruvi pullik. To'lov va chek — faqat botda
-function paywall(code, p) {
+// Mock yaratish: begonalar uchun esse tekshiruvi narxi va ustoz kartasi; o'z o'quvchilari — kreditdan (tugasa ogohlantirish)
+function essayPriceHTML(st) {
+  const b = S.boot || {}, card = b.my_card || {};
+  if (st.card == null) { st.card = card.number || ""; st.holder = card.holder || ""; }
+  const out = b.ai && b.ai_credits === 0;
+  return `<div class="card"><b>📝 Esse tekshiruvi</b>
+    <span class="muted small">«👥 O'quvchilarim»dagilar essesi kreditingizdan tekshiriladi${b.ai_credits != null ? ` (qoldi: <b>${b.ai_credits}</b> ta)` : ""}. Boshqalar esseni yuklashdan oldin shu narxni kartangizga to'lab, chekni botga yuboradi — AI tekshiradi.</span>
+    ${out ? `<span class="small" style="color:var(--bad)">⚠️ AI esse limitingiz tugagan — o'quvchilaringiz essesini AI tekshirmaydi, o'zingiz baholaysiz.</span>` : ""}
+    <div class="field"><label for="ep-price">Begonalar uchun narx (so'm) <span class="muted">— bo'sh: to'lovsiz</span></label><input class="input" id="ep-price" inputmode="numeric" value="${esc(st.essayPrice || "")}" placeholder="Masalan 15000"></div>
+    <div class="field"><label for="ep-card">Kartangiz</label><input class="input" id="ep-card" inputmode="numeric" value="${esc(st.card || "")}" placeholder="8600 0000 0000 0000"></div>
+    <div class="field"><label for="ep-holder">Karta egasi</label><input class="input" id="ep-holder" value="${esc(st.holder || "")}" placeholder="Ism Familiya — AI chekda shuni tekshiradi"></div></div>`;
+}
+
+// Begona o'quvchi (ustozning o'quvchisi emas): test bepul, esseni yuklashdan oldin esse tekshiruvi to'lanadi.
+// To'lov va chek — faqat botda; to'langach esse maydoni ochiladi
+function essayPayHTML(p) {
   const review = p.status === "review", rejected = p.status === "rejected";
-  $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${esc(p.code)}</span><h1>${esc(p.title)}</h1>
-      <span class="muted small">Ustoz: ${esc(p.teacher)}</span></div>
-    ${review ? `<div class="card" style="border:1.5px solid var(--warn)"><b>⏳ Chekingiz tekshirilmoqda</b>
-      <span class="muted small">Kutib turing — tasdiqlansa bot xabar beradi va mock ochiladi.</span></div>` : ""}
-    ${rejected ? `<div class="card" style="border:1.5px solid var(--bad)"><b>❌ Chek tasdiqlanmadi</b>
-      <span class="muted small">${p.note ? esc(p.note) + ". " : ""}To'g'ri chekni botga qayta yuboring.</span></div>` : ""}
-    <div class="card"><b>📝 Esse tekshiruvi — ${sum(p.price)} so'm</b>
-      <span class="muted small">Test bepul. Bu mockda esse bor — uni AI imtihondagidek tekshirishi pullik. Ustozning o'quvchilari bepul topshiradi.</span>
-      <span class="small">1. Botga o'ting — karta va summani yozadi<br>2. To'lab, chek skrinshotini botga yuboring<br>3. Chek to'g'ri bo'lsa mock darhol ochiladi</span>
-      ${review ? "" : `<button type="button" class="btn block" id="pw-bot">💳 Botda to'lash</button>`}
-      <button type="button" class="btn ghost block" id="pw-check">🔄 Holatni tekshirish</button></div>
-    <button type="button" class="item" data-go-courses><span class="ico">🏫</span><span><b>Ustozning o'quvchisiman</b><small>Kursingizni toping — ustoz tasdiqlasa bepul</small></span><span class="muted">›</span></button>
-  </div>`;
-  document.querySelectorAll("[data-go-courses]").forEach(x => x.onclick = () => { haptic("light"); go("courses"); });
-  document.getElementById("pw-check").onclick = () => { haptic("light"); rerender(); };
+  return `<div class="card" id="essay-pay" style="${review ? "border:1.5px solid var(--warn)" : rejected ? "border:1.5px solid var(--bad)" : ""}">
+    <b>🔒 Esse tekshiruvi — ${sum(p.price)} so'm</b>
+    ${review ? `<span class="small">⏳ Chekingiz tekshirilmoqda — kutib turing, tasdiqlansa bot xabar beradi.</span>`
+      : rejected ? `<span class="small">❌ Chek tasdiqlanmadi${p.note ? `: ${esc(p.note)}` : ""}. To'g'ri chekni botga qayta yuboring.</span>`
+      : `<span class="muted small">Test bepul. Esseni yuklashdan oldin uning tekshiruvini to'lang — AI imtihondagidek 75 ballik shkalada tekshiradi.</span>`}
+    <span class="small">1. «Botda to'lash» — bot karta va summani yozadi<br>2. To'lab, chek skrinshotini botga yuboring<br>3. To'g'ri bo'lsa esse maydoni ochiladi</span>
+    ${review ? "" : `<button type="button" class="btn block" id="pw-bot">💳 Botda to'lash</button>`}
+    <button type="button" class="btn ghost block" id="pw-check">🔄 To'ladim — tekshirish</button>
+    <span class="muted small">Belgilagan javoblaringiz saqlanadi. To'lamasangiz — testni essesiz yuborishingiz mumkin.</span></div>`;
+}
+function bindEssayPay(code, p, reload) {
+  const check = document.getElementById("pw-check"); if (!check) return;
+  check.onclick = () => { haptic("light"); reload(); };
   const btn = document.getElementById("pw-bot");
   if (btn) btn.onclick = async () => {
     btn.disabled = true;
