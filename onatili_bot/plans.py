@@ -73,6 +73,12 @@ def set_access(tg_id: int, allowed: bool) -> bool:
     return True
 
 
+def ai_unlimited(tg_id: int) -> bool:
+    """AI cheksiz: admin va Render'dagi FREE_IDS. Botda /ruxsat bilan qo'shilgan o'qituvchi test yaratadi,
+    lekin AI esse tekshiruvi uning kreditidan yechiladi (o'qituvchi to'laydi — o'quvchilari foydalanadi)."""
+    return tg_id in ADMIN_IDS or tg_id in FREE_IDS
+
+
 def is_free(tg_id: int) -> bool:
     """Admin, Render'dagi FREE_IDS yoki admin botda ruxsat bergan o'qituvchi — hammasi bepul va cheksiz."""
     return tg_id in ADMIN_IDS or tg_id in FREE_IDS or tg_id in granted_ids()
@@ -206,10 +212,14 @@ def grant(tg_id: int, period: str, count: int = 1) -> dict:
 def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written".
     Avval oylik limitdan, u tugasa — esse paketidan (faqat faol obuna bilan)."""
-    if is_free(tg_id):
+    if ai_unlimited(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
     if not SALES_ENABLED:
+        # Obuna yopiq: esse tekshiruvi o'qituvchining kreditidan (admin /kredit bilan to'ldiradi)
+        if kind == "essays" and db.use_credits(tg_id, amount):
+            db.consume_usage(tg_id, month_key(), kind, amount, None)
+            return True
         return False
     sub = db.get_subscription(tg_id)
     if not sub or _expires(sub) <= now():

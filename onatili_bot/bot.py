@@ -271,6 +271,42 @@ async def cmd_access(message: Message, command: CommandObject) -> None:
         logger.warning("Ruxsat haqida xabar yuborilmadi: %s", user["tg_id"])
 
 
+@dp.message(Command("kredit"))
+async def cmd_credit(message: Message, command: CommandObject) -> None:
+    """Admin: /kredit <ID yoki @username> <son> — o'qituvchiga AI esse krediti (1 kredit = 1 esse tekshiruvi).
+    /kredit <ID> — qoldiqni ko'rish. O'qituvchi to'lagan pulga mos kredit qo'shiladi."""
+    if message.from_user.id not in ADMIN_IDS:
+        balance = await asyncio.to_thread(db.get_credits, message.from_user.id)
+        await message.answer(f"🤖 AI esse kreditingiz: <b>{balance}</b> ta (1 kredit = 1 esse tekshiruvi)."
+                             + (f"\nTo'ldirish: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""))
+        return
+    args = (command.args or "").split()
+    if not args:
+        await message.answer("Ishlatish:\n<code>/kredit 123456789 100</code> — 100 ta esse krediti qo'shish\n"
+                             "<code>/kredit 123456789</code> — qoldiq\n\n1 kredit = o'quvchining 1 ta essesini AI tekshirishi.")
+        return
+    user = await asyncio.to_thread(db.find_user, args[0])
+    if not user:
+        await message.answer("Bunday foydalanuvchi topilmadi — Telegram ID'sini yozing.")
+        return
+    if len(args) < 2:
+        balance = await asyncio.to_thread(db.get_credits, user["tg_id"])
+        await message.answer(f"🤖 {_who(user)}\nAI esse krediti: <b>{balance}</b> ta")
+        return
+    if not args[1].isdigit() or not 0 < int(args[1]) <= 100000:
+        await message.answer("Kredit soni musbat butun son bo'lsin, masalan 100.")
+        return
+    amount = int(args[1])
+    balance = await asyncio.to_thread(plans.add_pack, user["tg_id"], amount)
+    await message.answer(f"✅ {_who(user)}\n🤖 +{amount} esse krediti · jami <b>{balance}</b> ta")
+    try:
+        await message.bot.send_message(
+            user["tg_id"], f"🤖 <b>AI esse krediti qo'shildi: +{amount}</b>\nJami: <b>{balance}</b> ta. "
+            "O'quvchilaringiz essesi endi AI bilan tekshiriladi (1 esse = 1 kredit).", reply_markup=app_markup())
+    except Exception:
+        logger.warning("Kredit haqida xabar yuborilmadi: %s", user["tg_id"])
+
+
 @dp.message(Command("ruxsatlar"))
 async def cmd_access_list(message: Message) -> None:
     if message.from_user.id not in ADMIN_IDS:

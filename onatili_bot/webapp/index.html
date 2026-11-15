@@ -162,6 +162,9 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps li { counter-increment: st; display: grid; grid-template-columns: 30px 1fr; column-gap: 10px; align-items: start; }
 .scan-steps li::before { content: counter(st); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
+.credit-card { display: grid; gap: 8px; }
+.credit-card .credit-n { font-family: var(--font-display); font-size: 26px; font-weight: 800; }
+.credit-card.low { border: 1.5px solid color-mix(in srgb, var(--warn) 55%, transparent); }
 .locked-card { display: grid; gap: 10px; border: 1.5px dashed color-mix(in srgb, var(--warn) 55%, transparent); }
 .locked-card .t-code { justify-self: start; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 800; padding: 7px 12px; border-radius: 10px; cursor: copy; }
 /* O'sish grafigi (bitta qator): chiziq rangi yorug' va tungi fonda tekshirilgan (#00a844 — OKLCH L, kontrast) */
@@ -965,7 +968,7 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
       ${myTestsHTML(b.tests)}
-      ${b.sales ? planCard(b.plan) : ""}`}
+      ${b.sales ? planCard(b.plan) : creditCard(b)}`}
   </div>`;
   bindHomeActions(); bindMyTests();
   document.querySelectorAll("[data-copy-id]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.copyId).then(() => { toast("ID nusxalandi"); haptic("success"); }, () => toast(x.dataset.copyId)));
@@ -1770,6 +1773,17 @@ function compressImage(file, max = 2000) {
 
 // ---------- Obuna: muddat, narx, to'lov (karta → chek → admin tasdiqlaydi) ----------
 const sum = n => String(n == null ? 0 : n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
+// AI esse krediti (obuna yopiq paytida): o'quvchilar essesi shundan tekshiriladi; tugasa — o'qituvchi o'zi baholaydi
+function creditCard(b) {
+  if (b.can_create === false || b.ai_credits == null || !b.ai) return "";
+  const n = b.ai_credits, low = n <= 10;
+  return `<div class="card credit-card ${low ? "low" : ""}"><div class="row between"><b>🤖 AI esse krediti</b><span class="credit-n">${n}</span></div>
+    <span class="muted small">${n ? `O'quvchilaringiz essesini AI imtihondagidek tekshiradi — har biri 1 kredit.${low ? " Kredit oz qoldi." : ""}`
+      : "Kredit yo'q — o'quvchilar essesini o'zingiz baholaysiz. AI tekshirsin desangiz, kredit oling."}</span>
+    ${b.admin_contact ? `<button type="button" class="btn ${n ? "ghost" : ""} block" data-admin="${esc(b.admin_contact)}">💳 Kredit olish — admin</button>` : ""}
+    ${b.user && b.user.id ? `<span class="muted small">Telegram ID'ingiz: <b>${b.user.id}</b> — to'lovdan keyin admin shu ID'ga kredit qo'shadi.</span>` : ""}</div>`;
+}
 
 // Obuna yopiq va o'qituvchi ruxsat ro'yxatida (Render → FREE_IDS) emas: ID'sini ko'rsatamiz — adminga yuboradi
 function lockedCard(b) {

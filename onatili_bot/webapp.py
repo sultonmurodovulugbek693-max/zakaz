@@ -188,6 +188,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "plan": await run(plans.status, user["id"]),
         "sales": SALES_ENABLED,  # obuna sotish yoqilganmi (hozircha yo'q)
         "can_create": SALES_ENABLED or plans.is_free(user["id"]),  # test yarata oladimi
+        # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
+        "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
         "plans": await run(plans.offers),
         "card": await run(plans.card),
         "payment": await run(db.open_payment, user["id"]),
@@ -541,13 +543,26 @@ async def plan_order(request: web.Request) -> web.Response:
 async def written_ai(owner_id: int) -> bool:
     """Yozma javoblarni (36–44) AI o'qiydimi: faqat FREE_IDS va adminlarga. Qolganlar rasmga qarab
     o'zi belgilaydi — «✍️ Yozmalarni tekshirish» (har savol bo'yicha, kalit bilan yonma-yon)."""
-    return plans.is_free(owner_id) and essay_ai.enabled() and await ai_allowed(owner_id, "written")
+    return plans.ai_unlimited(owner_id) and essay_ai.enabled() and await ai_allowed(owner_id, "written")
 
 
 async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatish (oylik limit bo'yicha). Limit/obuna tugagan bo'lsa — o'qituvchiga oyiga bir marta xabar."""
     if await run(plans.use_ai, owner_id, kind, amount):
         return True
+    if kind == "essays" and not SALES_ENABLED:
+        # Obuna yopiq — kredit tugadi: o'qituvchiga bir marta (kredit to'ldirilgach yana) xabar
+        await run(db.consume_usage, owner_id, plans.month_key(), kind, 0, None)  # oy qatori bo'lsin (xabar belgisi)
+        if await run(db.take_limit_notice, owner_id, plans.month_key()) and "send_text" in HOOKS:
+            contact = f" — @{ADMIN_CONTACT}" if ADMIN_CONTACT else ""
+            try:
+                await HOOKS["send_text"](
+                    owner_id, "⚠️ <b>AI esse krediti tugadi</b>\nO'quvchilaringizning yangi esselarini AI tekshirmaydi — "
+                    "«📝 Esselar»da o'zingiz baholaysiz (75 ballik).\n\nKreditni to'ldirish uchun admin bilan bog'laning"
+                    f"{contact}. Telegram ID'ingiz: <code>{owner_id}</code>")
+            except Exception:
+                logger.warning("Kredit haqida xabar yuborilmadi", exc_info=True)
+        return False
     if await run(db.take_limit_notice, owner_id, plans.month_key()) and "send_text" in HOOKS:
         status = await run(plans.status, owner_id)
         if not status["active"]:

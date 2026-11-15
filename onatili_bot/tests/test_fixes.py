@@ -606,6 +606,71 @@ class OfficialSheet(ServerBase):
         self.assertEqual(status, 409)
 
 
+class TeacherCredits(EssaySelfCheck):
+    """Obuna yopiq: o'quvchi essesini AI tekshirishi o'qituvchining kreditidan (admin /kredit bilan to'ldiradi)."""
+
+    # EssaySelfCheck sozlamasi (soxta AI) kerak, uning testlari emas — ular cheksiz AI'ni tekshiradi
+    test_student_sees_score_and_it_goes_to_teacher_and_rasch = None
+    test_paper_essay_still_needs_teacher = None
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._sales = (plans.SALES_ENABLED, webapp.SALES_ENABLED)
+        plans.SALES_ENABLED = webapp.SALES_ENABLED = False
+        plans.set_access(OWNER, True)  # botda ruxsat berilgan o'qituvchi (FREE_IDS emas)
+
+    async def asyncTearDown(self):
+        plans.SALES_ENABLED, webapp.SALES_ENABLED = self._sales
+        await super().asyncTearDown()
+
+    async def submit(self, test, uid):
+        self.user = {"id": uid, "name": "O'quvchi", "username": None}
+        status, sub = await self.post(f"/api/test/{test['code']}/submit",
+                                      {"variant": "A", "name": f"O'quvchi {uid}", "answers": {"1": "A"}, "essay": "So'z " * 80})
+        self.assertEqual(status, 200)
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        return db.get_essay(sub["attempt_id"])["status"]
+
+    async def test_essays_spend_teacher_credits(self):
+        _, r = await self.create(fmt="milliy")
+        test = db.get_test(r["id"])
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual(boot["ai_credits"], 0)
+        # Kredit yo'q — AI tekshirmaydi, o'qituvchiga xabar
+        self.bot.messages.clear()
+        self.assertEqual(await self.submit(test, 501), "manual")
+        self.assertTrue(any(c == OWNER and "krediti tugadi" in t for c, t in self.bot.messages))
+        # Admin 2 kredit qo'shadi
+        replies, sent = [], []
+
+        class Msg:
+            def __init__(self, uid):
+                self.from_user = types.SimpleNamespace(id=uid)
+                self.bot = types.SimpleNamespace(send_message=lambda chat, text, **k: asyncio.sleep(0, sent.append((chat, text))))
+
+            async def answer(self, text, **_):
+                replies.append(text)
+        bot.ADMIN_IDS.add(999)
+        try:
+            await bot.cmd_credit(Msg(999), types.SimpleNamespace(command="kredit", args=f"{OWNER} 2"))
+        finally:
+            bot.ADMIN_IDS.discard(999)
+        self.assertEqual(db.get_credits(OWNER), 2)
+        self.assertTrue(any(c == OWNER and "+2" in t for c, t in sent))
+        # Ikkita esse — AI tekshiradi, kredit yechiladi; uchinchisi — yana qo'lda
+        self.assertEqual(await self.submit(test, 502), "pending")
+        self.assertEqual(await self.submit(test, 503), "pending")
+        self.assertEqual(db.get_credits(OWNER), 0)
+        self.assertEqual(await self.submit(test, 504), "manual")
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual(boot["ai_credits"], 0)
+
+    async def test_admin_and_free_ids_unlimited(self):
+        self.assertTrue(plans.ai_unlimited(next(iter(plans.ADMIN_IDS), 0)) if plans.ADMIN_IDS else True)
+        self.assertFalse(plans.ai_unlimited(OWNER))  # /ruxsat — test yaratadi, lekin AI kreditdan
+        self.assertTrue(plans.is_free(OWNER))
+
+
 class Names(unittest.TestCase):
     def test_names_match(self):
         self.assertTrue(webapp.names_match("valiyev ali", "Ali Valiyev"))

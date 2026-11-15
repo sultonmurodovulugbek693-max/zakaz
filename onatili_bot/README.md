@@ -29,6 +29,10 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   `ADMIN_IDS` va admin botda ruxsat bergan o'qituvchilar qiladi. Admin: `/ruxsat <ID>` — berish,
   `/ruxsat_ol <ID>` — olish, `/ruxsatlar` — ro'yxat. Ruxsatsiz o'qituvchi ilovada o'z ID'sini ko'radi va adminga yuboradi.
   O'quvchilar test yechishda davom etadi. Obunani qayta yoqish: Render → `PLANS_ENABLED=1`.
+- **AI esse krediti** (obuna yopiq paytida): o'quvchi essesini AI tekshirishi testni yaratgan o'qituvchining kreditidan
+  yechiladi (1 esse = 1 kredit). O'qituvchi to'lov qiladi → admin botda `/kredit <ID> <son>` (qoldiq: `/kredit <ID>`).
+  Kredit tugasa — esse o'qituvchiga qo'lda baholashga qoladi va unga bir marta xabar boradi. Admin va `FREE_IDS` — cheksiz.
+  O'qituvchi qoldiqni ilovaning bosh sahifasida va botda `/kredit` bilan ko'radi.
 - **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
   to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.
