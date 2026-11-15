@@ -14,6 +14,7 @@ Ishga tushirish:  python bot.py
 import asyncio
 import base64
 import html
+import json
 import logging
 import os
 import secrets
@@ -331,6 +332,32 @@ async def cmd_credit(message: Message, command: CommandObject) -> None:
             "O'quvchilaringiz essesi endi AI bilan tekshiriladi (1 esse = 1 kredit).", reply_markup=app_markup())
     except Exception:
         logger.warning("Kredit haqida xabar yuborilmadi: %s", user["tg_id"])
+
+
+async def mock_request_notice(bot: Bot, test: dict, request_id: int, name: str, phone: str | None,
+                              username: str | None, photo: bytes) -> None:
+    """Pullik mockga yangi ariza: ustozga chek rasmi va «Tasdiqlash / Rad etish» tugmalari."""
+    caption = (f"🧾 <b>Mockga ariza</b> · {esc(test['title'])} (kod {test['code']})\n{LINE}\n"
+               f"👤 {esc(name)}" + (f" (@{esc(username)})" if username else "") + (f"\n📞 {esc(phone)}" if phone else "")
+               + f"\n💳 {plans.money(test.get('price') or 0)} so'm")
+    markup = inline([[("✅ Tasdiqlash", f"req:ok:{request_id}"), ("❌ Rad etish", f"req:no:{request_id}")]])
+    await bot.send_photo(test["owner_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+
+
+@dp.callback_query(F.data.startswith("req:"))
+async def decide_mock_request(callback: CallbackQuery) -> None:
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    try:
+        result = await webapp.decide_request(callback.from_user.id, int(raw), action == "ok")
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("✅ Tasdiqlandi" if action == "ok" else "❌ Rad etildi")
+    note = "✅ Tasdiqlandi — shu mock bepul" if action == "ok" else "❌ Rad etildi"
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.caption or ''}\n{LINE}\n{note}")
+    except TelegramBadRequest:
+        pass
 
 
 @dp.message(Command("ruxsatlar"))
@@ -1417,6 +1444,7 @@ async def main() -> None:
         send_text=lambda chat_id, text: bot.send_message(chat_id, text),
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,
+        mock_request_notice=lambda *a: mock_request_notice(bot, *a),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),
         send_file=lambda chat_id, content, name, caption: bot.send_document(

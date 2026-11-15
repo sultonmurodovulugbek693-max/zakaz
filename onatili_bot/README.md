@@ -40,6 +40,11 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   ustoz kreditidan (1 esse = 1 kredit; AI tekshira olmasa — kredit qaytadi). Ulash: ustoz «🤖 AI esse»da o'quvchining
   @username / Telegram ID'sini qo'shadi yoki taklif havolasini yuboradi (`t.me/<bot>?start=t_<ID>_<imzo>`).
   Ustoz har o'quvchiga oylik chegara qo'yadi (boshlang'ich 10 ta).
+- **«👥 O'quvchilarim» va onlayn mock**: ro'yxatdagi (ulangan) o'quvchilar ustozning onlayn mocklarini bepul
+  topshiradi (esse — ustoz kreditidan). Ro'yxatda yo'q o'quvchi uchun mock avtomatik pullik: narx va kartani ustoz
+  bir marta shu bo'limda kiritadi; o'quvchi ariza (ism, telefon) va chek rasmini yuboradi → ustozga botda chek
+  «✅ Tasdiqlash / ❌ Rad etish» tugmalari bilan keladi va ilovada «🧾 Mock arizalari»da ko'rinadi → tasdiqlansa
+  faqat shu mock ochiladi. Narx kiritilmagan bo'lsa — o'quvchiga «ustozingiz bilan bog'laning».
 - **Fayllar**: yangi testga kalit va titul PDF'i bot chatiga keladi; kelmasa — ilovadagi «📥» tugmalari bilan
   to'g'ridan-to'g'ri yuklab olinadi (10 daqiqalik imzolangan havola).
 - **Oflayn kursga ro'yxat**: `/start` dagi tugma — alohida ekran; o'qituvchi tuman tanlaydi, o'quvchining arizasi o'sha tumandagi o'qituvchilarga boradi.

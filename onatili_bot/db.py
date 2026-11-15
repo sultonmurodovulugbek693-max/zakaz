@@ -109,6 +109,20 @@ SCHEMA = [
         attempt_id {BIG} REFERENCES attempts(id) ON DELETE SET NULL,
         UNIQUE (test_id, number)
     )""",
+    # Pullik mockga ariza: o'quvchi (ustozning o'quvchisi emas) chek rasmini yuboradi, ustoz tasdiqlasa — shu mock bepul
+    f"""CREATE TABLE IF NOT EXISTS mock_requests (
+        id         {ID},
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        student_id {BIG} NOT NULL,
+        name       TEXT NOT NULL,
+        phone      TEXT,
+        receipt    TEXT,
+        mime       TEXT,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT,
+        decided_at TEXT,
+        UNIQUE (test_id, student_id)
+    )""",
     # Ustozga ulangan o'quvchilar: ustoz kreditidan esse tekshirtiradi (test bo'lmasa ham — «✍️ Esse tekshirish»)
     f"""CREATE TABLE IF NOT EXISTS teacher_students (
         teacher_id {BIG} NOT NULL,
@@ -311,7 +325,8 @@ MIGRATIONS = [
     ("payments", "essays", "INTEGER"),  # esse paketi (period = 'pack'): nechta esse — buyurtma paytidagi hajm
     ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
     ("tests", "sheets_sent", "INTEGER NOT NULL DEFAULT 0"),  # titul PDF'i botga yuborilgan (1-qadam bajarilgan)
-    ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
+    ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),
+    ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),  # pullik mock: o'quvchilarim bepul, boshqalar shuncha so'm to'laydi  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
     ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
 ]
 
@@ -878,6 +893,52 @@ def practice_failed(practice_id: int, error: str, give_up: bool) -> None:
     with connect() as conn:
         conn.execute("UPDATE practice_essays SET tries = tries + 1, error = ?, status = ? WHERE id = ?",
                      (error[:300], "failed" if give_up else "pending", practice_id))
+
+
+# ---------- Pullik mock: arizalar ----------
+
+def set_test_price(test_id: int, price: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET price = ? WHERE id = ?", (max(0, price), test_id))
+
+
+def save_mock_request(test_id: int, student_id: int, name: str, phone: str | None, receipt: str, mime: str) -> int:
+    """Yangi ariza yoki rad etilgan/kutilayotganini yangilash (tasdiqlangani o'zgarmaydi)."""
+    with connect() as conn:
+        return conn.execute(
+            "INSERT INTO mock_requests (test_id, student_id, name, phone, receipt, mime, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(test_id, student_id) DO UPDATE SET name = excluded.name, "
+            "phone = excluded.phone, receipt = excluded.receipt, mime = excluded.mime, status = 'pending', "
+            "created_at = excluded.created_at, decided_at = NULL WHERE mock_requests.status <> 'approved' RETURNING id",
+            (test_id, student_id, name, phone, receipt, mime, _now())).fetchone()["id"]
+
+
+def get_mock_request(request_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM mock_requests WHERE id = ?", (request_id,)).fetchone())
+
+
+def mock_request_of(test_id: int, student_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT id, status, name, created_at FROM mock_requests WHERE test_id = ? AND student_id = ?",
+                                 (test_id, student_id)).fetchone())
+
+
+def mock_requests_for_owner(owner_id: int, limit: int = 100) -> list[dict]:
+    """Ustozning barcha mocklariga kelgan arizalar: kutilayotganlar birinchi (chek rasmisiz — u alohida)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT r.id, r.test_id, r.student_id, r.name, r.phone, r.status, r.created_at, t.title, t.code, "
+            "u.username FROM mock_requests r JOIN tests t ON t.id = r.test_id LEFT JOIN users u ON u.tg_id = r.student_id "
+            "WHERE t.owner_id = ? ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT ?",
+            (owner_id, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def decide_mock_request(request_id: int, status: str) -> bool:
+    with connect() as conn:
+        return bool(conn.execute("UPDATE mock_requests SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+                                 (status, _now(), request_id)).rowcount)
 
 
 def save_written_pending(test_id: int, number: int, image_b64: str, mime: str) -> None:

@@ -192,6 +192,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
+        "my_card": await run(teacher_card, user["id"]),
+        "requests_pending": sum(1 for r in await run(db.mock_requests_for_owner, user["id"]) if r["status"] == "pending"),
         "plans": await run(plans.offers),
         "card": await run(plans.card),
         "payment": await run(db.open_payment, user["id"]),
@@ -278,6 +280,7 @@ async def test_info(request: web.Request) -> web.Response:
     previous = await run(db.find_attempt, test["id"], user["id"])
     if not previous:
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
+        await paid_gate(test, user)
     keys = await run(db.get_keys, test["id"])
     return ok({
         "code": test["code"], "title": test["title"], "fmt": test["fmt"],
@@ -286,6 +289,135 @@ async def test_info(request: web.Request) -> web.Response:
         "essay_topic": test.get("essay_topic"), "submitted": previous["id"] if previous else None,
         "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
     })
+
+
+async def paid_gate(test: dict, user: dict) -> None:
+    """Onlayn mock: ustozning o'quvchilari («👥 O'quvchilarim»dagilar) bepul; boshqalar uchun avtomatik pullik —
+    ariza va chek yuboradi, ustoz tasdiqlagach faqat shu mock bepul. Narx va karta — ustozning bitta sozlamasi.
+    To'lanmagan bo'lsa — 402 va to'lov ma'lumoti (o'quvchi ekranida ariza shakli)."""
+    if test["owner_id"] == user["id"] or user["id"] in ADMIN_IDS:
+        return
+    if await run(db.is_linked, test["owner_id"], user["id"]):
+        return
+    request = await run(db.mock_request_of, test["id"], user["id"])
+    if request and request["status"] == "approved":
+        return
+    owner = await run(db.find_user, str(test["owner_id"])) or {}
+    card = await run(teacher_card, test["owner_id"])
+    price = card["price"] if card["number"] else 0  # narx va karta kiritilmagan — faqat ustozga murojaat
+    raise ApiError(402, "Bu mock ustozning o'quvchilari uchun — boshqalarga pullik", paywall={
+        "code": test["code"], "title": test["title"], "price": price, "teacher": owner.get("full_name") or "Ustoz",
+        "teacher_username": owner.get("username"),
+        "card": card["number"], "holder": card["holder"],
+        "status": request["status"] if request else None, "last_name": await run(db.last_name_used, user["id"])})
+
+
+def teacher_card(teacher_id: int) -> dict:
+    """Ustozning mock narxi (o'quvchilaridan tashqariga) va to'lov kartasi — barcha onlayn testlariga bitta."""
+    saved = db.get_settings()
+    try:
+        price = max(0, int(saved.get(f"teacher_price:{teacher_id}", 0)))
+    except (TypeError, ValueError):
+        price = 0
+    return {"number": saved.get(f"teacher_card:{teacher_id}", ""), "holder": saved.get(f"teacher_holder:{teacher_id}", ""),
+            "price": price}
+
+
+async def mock_request_submit(request: web.Request) -> web.Response:
+    """O'quvchi pullik mockga ariza: ism, telefon va chek rasmi (multipart)."""
+    user = await auth(request)
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test or (test.get("mode") or "online") != "online":
+        raise ApiError(404, "Test topilmadi")
+    if not (await run(teacher_card, test["owner_id"]))["price"]:
+        raise ApiError(409, "Ustoz narxni hali belgilamagan — ustozingiz bilan bog'laning")
+    if test["closed"]:
+        raise ApiError(409, "Mock yopilgan — natijalar e'lon qilingan")
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Ariza yuborilmadi")
+    name = " ".join(str(form.get("name") or "").split())[:60]
+    if len(name) < 3:
+        raise ApiError(400, "Ism va familiyangizni yozing")
+    phone = " ".join(str(form.get("phone") or "").split())[:20] or None
+    field = form.get("photo")
+    if field is None or not hasattr(field, "file"):
+        raise ApiError(400, "To'lov cheki rasmini qo'shing")
+    data = field.file.read()
+    if not data or len(data) > 6 * 1024 * 1024:
+        raise ApiError(400, "Chek rasmi 6 MB dan kichik bo'lsin")
+    existing = await run(db.mock_request_of, test["id"], user["id"])
+    if existing and existing["status"] == "approved":
+        return ok({"ok": True, "status": "approved"})
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    mime = (getattr(field, "content_type", None) or "image/jpeg")[:20]
+    request_id = await run(db.save_mock_request, test["id"], user["id"], name, phone, base64.b64encode(data).decode(), mime)
+    if "mock_request_notice" in HOOKS:
+        try:
+            await HOOKS["mock_request_notice"](test, request_id, name, phone, user.get("username"), data)
+        except Exception:
+            logger.warning("Ariza haqida ustozga xabar yuborilmadi", exc_info=True)
+    return ok({"ok": True, "status": "pending"})
+
+
+async def set_mock_price(request: web.Request) -> web.Response:
+    """Ustoz bir marta: o'quvchilaridan tashqaridagilar uchun mock narxi va to'lov kartasi (barcha onlayn testlariga)."""
+    user = await auth(request)
+    payload = await body(request)
+    price = to_int(payload.get("price"), 0, "Narx")
+    if not 1000 <= price <= 5_000_000:
+        raise ApiError(400, "Narxni so'mda yozing (masalan 30000)")
+    card = " ".join(str(payload.get("card") or "").split())[:30]
+    if len(card.replace(" ", "")) < 12:
+        raise ApiError(400, "To'lov qabul qilinadigan karta raqamini yozing")
+    await run(db.set_setting, f"teacher_price:{user['id']}", price)
+    await run(db.set_setting, f"teacher_card:{user['id']}", card)
+    await run(db.set_setting, f"teacher_holder:{user['id']}", " ".join(str(payload.get("holder") or "").split())[:60])
+    return ok({"ok": True, "card": await run(teacher_card, user["id"])})
+
+
+async def requests_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    rows = await run(db.mock_requests_for_owner, user["id"])
+    return ok({"requests": rows, "card": await run(teacher_card, user["id"])})
+
+
+async def request_receipt(request: web.Request) -> web.Response:
+    user = await auth(request)
+    item = await run(db.get_mock_request, int(request.match_info["request_id"]))
+    test = item and await run(db.get_test, item["test_id"])
+    if not test or test["owner_id"] != user["id"]:
+        raise ApiError(404, "Topilmadi")
+    return ok({"image": _image_data_url(item["receipt"], item["mime"])})
+
+
+async def decide_request(owner_id: int, request_id: int, approve: bool) -> dict:
+    """Ustoz arizani tasdiqlaydi / rad etadi — o'quvchiga xabar. Bot tugmasi ham shu funksiyani chaqiradi."""
+    item = await run(db.get_mock_request, request_id)
+    test = item and await run(db.get_test, item["test_id"])
+    if not test or test["owner_id"] != owner_id:
+        raise ApiError(404, "Ariza topilmadi")
+    if not await run(db.decide_mock_request, request_id, "approved" if approve else "rejected"):
+        raise ApiError(409, "Bu ariza allaqachon ko'rib chiqilgan")
+    if "send_text" in HOOKS:
+        text = (f"✅ <b>Arizangiz tasdiqlandi</b> · {html.escape(test['title'])}\nMockni topshirishingiz mumkin — "
+                f"ilovada kod <b>{test['code']}</b> ni kiriting." if approve else
+                f"❌ <b>Arizangiz rad etildi</b> · {html.escape(test['title'])}\nChek noto'g'ri yoki summa mos emas bo'lishi "
+                "mumkin — ustozingiz bilan bog'laning yoki qayta yuboring.")
+        try:
+            await HOOKS["send_text"](item["student_id"], text)
+        except Exception:
+            logger.warning("Ariza natijasi o'quvchiga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "approved" if approve else "rejected", "name": item["name"], "title": test["title"]}
+
+
+async def request_decide(request: web.Request) -> web.Response:
+    user = await auth(request)
+    action = (await body(request)).get("action")
+    if action not in ("approve", "reject"):
+        raise ApiError(400, "Amal noto'g'ri")
+    return ok(await decide_request(user["id"], int(request.match_info["request_id"]), action == "approve"))
 
 
 def clean_answers(test: dict, raw: dict) -> dict:
@@ -314,6 +446,7 @@ async def submit(request: web.Request) -> web.Response:
     if (test.get("mode") or "online") == "offline":
         raise ApiError(409, "Bu test qog'ozda o'tkaziladi")
     await test_gate(test, user)
+    await paid_gate(test, user)
     keys = await run(db.get_keys, test["id"])
     variant = payload.get("variant") or next(iter(keys))
     if variant not in keys:
@@ -2422,6 +2555,11 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/download", download_link)
     app.router.add_get("/dl/{token}", download_file)
     app.router.add_get("/api/teacher/link", link_view)
+    app.router.add_post("/api/test/{code:\\d{5}}/request", mock_request_submit)
+    app.router.add_post("/api/teacher/mock-price", set_mock_price)
+    app.router.add_get("/api/teacher/requests", requests_list)
+    app.router.add_get("/api/teacher/request/{request_id:\\d+}/receipt", request_receipt)
+    app.router.add_post("/api/teacher/request/{request_id:\\d+}", request_decide)
     app.router.add_post("/api/teacher/link", link_add)
     app.router.add_post("/api/teacher/link/remove", link_remove)
     app.router.add_post("/api/teacher/link/limit", link_limit)

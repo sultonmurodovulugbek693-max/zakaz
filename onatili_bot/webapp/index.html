@@ -163,6 +163,8 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps li::before { content: counter(st); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
 .credit-card { display: grid; gap: 8px; }
+.switch { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 600; cursor: pointer; }
+.switch input { width: 20px; height: 20px; accent-color: var(--accent); }
 .credit-card .credit-n { font-family: var(--font-display); font-size: 26px; font-weight: 800; }
 .credit-card.low { border: 1.5px solid color-mix(in srgb, var(--warn) 55%, transparent); }
 .locked-card { display: grid; gap: 10px; border: 1.5px dashed color-mix(in srgb, var(--warn) 55%, transparent); }
@@ -673,7 +675,7 @@ function userBusy() {
 // ---------- Pastki navigatsiya ----------
 // Asosiy bo'limlar har doim bir bosishda; ichki ekranlarda (test yechish, yaratish, skaner) panel yashiriladi
 const TABS = {
-  teacher: [["home", "🏠", "Bosh"], ["results", "📊", "Natijalar"], ["classes", "👥", "Sinflar"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI esse"]],
+  teacher: [["home", "🏠", "Bosh"], ["results", "📊", "Natijalar"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
 };
 function paintTabs(view) {
@@ -681,7 +683,8 @@ function paintTabs(view) {
   // Rol tanlash va majburiy obuna ekranlarida panel chiqmaydi
   const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
-    key === "plan" ? S.boot.sales : key === "ai" ? !S.boot.sales && S.boot.can_create !== false : true) : null;
+    key === "plan" ? S.boot.sales : key === "ai" ? !S.boot.sales && S.boot.can_create !== false
+      : key === "students" ? S.boot.can_create !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return; }
   bar.setAttribute("data-on", "1");
   bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
@@ -1107,7 +1110,8 @@ function testGate(code, channels) {
 
 VIEWS.answer = async ({ code }) => {
   loading();
-  let t; try { t = await api(`/api/test/${code}`); } catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : fail(e); }
+  let t; try { t = await api(`/api/test/${code}`); }
+  catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : e.data && e.data.paywall ? paywall(code, e.data.paywall) : fail(e); }
   if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
   if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "milliy" ? t.submitted : null }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
@@ -1697,17 +1701,26 @@ function offlineEssaysHTML(list) {
 
 
 // ---------- O'qituvchi: AI esse krediti va ulangan o'quvchilar ----------
-VIEWS.ai = async () => {
+VIEWS.ai = () => aiView("ai");
+VIEWS.students = () => aiView("students");
+// mode: "ai" — kredit va sotib olish; "students" — o'quvchilarim (ulash, oylik chegara) va pullik mock arizalari
+async function aiView(mode) {
   loading();
-  let r; try { r = await api("/api/teacher/link"); } catch (e) { return fail(e); }
+  let r, q = { requests: [] };
+  try { [r, q] = await Promise.all([api("/api/teacher/link"), mode === "students" ? api("/api/teacher/requests") : Promise.resolve(q)]); }
+  catch (e) { return fail(e); }
+  const isAi = mode === "ai";
   const n = r.credits, buy = !r.unlimited && r.card_ready;
   const students = r.students.map(s => `<div class="item" style="cursor:default"><span class="ico">👤</span>
       <span><b>${esc(s.name)}</b><small>${s.username ? `@${esc(s.username)} · ` : ""}bu oy ${s.used} / ${r.limit} ta esse</small></span>
       <button type="button" class="btn plain sm" data-unlink="${s.id}" aria-label="Uzish">✕</button></div>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>AI esse</span><h1>Kredit va o'quvchilar</h1>
-      <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>
-    <div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
+    ${isAi ? `<div class="hero"><span class="brand"><i>O</i>AI esse</span><h1>Kredit</h1>
+      <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
+      : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
+      <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar ariza va chek yuboradi.</span></div>
+      ${requestsHTML(q.requests, q.card)}${mockPriceHTML(q.card || {})}`}
+    ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
       <div class="row between"><b>🤖 Kreditingiz</b><span class="credit-n">${r.unlimited ? "♾" : n}</span></div>
       <span class="muted small">${r.unlimited ? "Sizda AI cheksiz." : n ? `Yana <b>${n} ta</b> o'quvchi essesini tekshirtira olasiz.` : "Kredit yo'q — esselar AI'da tekshirilmaydi, o'zingiz baholaysiz."}</span>
       ${r.payment ? `<span class="pill-tag wait" style="justify-self:start">⏳ To'lov ko'rib chiqilmoqda · ${sum(r.payment.amount)} so'm</span>` : ""}
@@ -1717,7 +1730,8 @@ VIEWS.ai = async () => {
       <div class="chips" id="packs">${[1, 2, 5, 10].map(k => `<button type="button" class="chip ${k === 1 ? "on" : ""}" data-packs="${k}">${k * r.pack.essays} ta · ${sum(k * r.pack.price)}</button>`).join("")}</div>
       <button type="button" class="btn block" id="buy">Sotib olish</button><div id="pay-box"></div></div>`
       : !r.unlimited ? `<div class="card small muted">Kredit narxi hali belgilanmagan — admin bilan bog'laning.</div>` : ""}
-    <div class="section-title"><h2>O'quvchilaringiz</h2><span class="muted small">${r.students.length} ta</span></div>
+    <button type="button" class="item" data-goto-students><span class="ico">👥</span><span><b>O'quvchilarim</b><small>Ulash, oylik chegara va mock arizalari</small></span><span class="muted">›</span></button>`}
+    ${isAi ? "" : `<div class="section-title"><h2>Ro'yxat</h2><span class="muted small">${r.students.length} ta</span></div>
     <div class="card"><b>🔗 Ulash</b>
       <span class="muted small">Ulangan o'quvchi test bo'lmasa ham «✍️ Esse tekshirish»da esse yozib tekshirtiradi (kreditingizdan).</span>
       ${r.invite_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="share" style="flex:1">📨 Taklif havolasini yuborish</button><button type="button" class="btn plain" id="copy-invite">📋</button></div>` : ""}
@@ -1726,8 +1740,10 @@ VIEWS.ai = async () => {
       <div class="row between" style="gap:8px"><span class="small">Har o'quvchiga oyiga</span>
         <span class="row" style="gap:6px"><input class="input" id="limit" inputmode="numeric" value="${r.limit}" style="width:70px;text-align:center"><span class="small">ta esse</span></span></div>
     </div>
-    <div class="list">${students || `<div class="card empty"><div class="big">👥</div>Hali o'quvchi ulanmagan — taklif havolasini yuboring.</div>`}</div>
+    <div class="list">${students || `<div class="card empty"><div class="big">👥</div>Hali o'quvchi ulanmagan — taklif havolasini yuboring.</div>`}</div>`}
   </div>`;
+  document.querySelectorAll("[data-goto-students]").forEach(x => x.onclick = () => { haptic("light"); go("students"); });
+  bindRequests(); bindMockPrice();
   let packs = 1;
   document.querySelectorAll("[data-packs]").forEach(x => x.onclick = () => { packs = +x.dataset.packs; haptic("select");
     document.querySelectorAll("[data-packs]").forEach(y => y.classList.toggle("on", y === x)); });
@@ -1749,22 +1765,115 @@ VIEWS.ai = async () => {
   const copyInvite = document.getElementById("copy-invite");
   if (copyInvite) copyInvite.onclick = () => navigator.clipboard.writeText(r.invite_url).then(() => { toast("Havola nusxalandi"); haptic("success"); }, () => toast(r.invite_url));
   const add = document.getElementById("add"), ref = document.getElementById("add-ref");
-  add.onclick = async () => {
+  if (add) add.onclick = async () => {
     if (!ref.value.trim()) return ref.focus();
     add.disabled = true;
     try { await api("/api/teacher/link", { ref: ref.value.trim() }); haptic("success"); toast("✅ O'quvchi ulandi"); rerender(); }
     catch (e) { toast(e.message); haptic("error"); add.disabled = false; }
   };
-  ref.onkeydown = e => { if (e.key === "Enter") add.click(); };
+  if (ref) ref.onkeydown = e => { if (e.key === "Enter") add.click(); };
   const limit = document.getElementById("limit");
-  limit.onchange = async () => {
+  if (limit) limit.onchange = async () => {
     try { await api("/api/teacher/link/limit", { limit: +limit.value }); toast("✅ Saqlandi"); rerender(); } catch (e) { toast(e.message); }
   };
   document.querySelectorAll("[data-unlink]").forEach(x => x.onclick = async () => {
     if (!(await confirmBox("O'quvchini uzasizmi? U endi kreditingizdan esse tekshirtira olmaydi."))) return;
     try { await api("/api/teacher/link/remove", { student_id: +x.dataset.unlink }); rerender(); } catch (e) { toast(e.message); }
   });
-};
+}
+
+// Onlayn mock avtomatik: «👥 O'quvchilarim»dagilar bepul, boshqalar shu narxni to'lab ariza + chek yuboradi.
+// Narx va karta — ustozning bitta sozlamasi (barcha onlayn testlariga)
+function mockPriceHTML(card) {
+  return `<div class="card" id="price-box"><b>💳 Boshqa o'quvchilar uchun mock narxi</b>
+    <span class="muted small">Ro'yxatingizda yo'q o'quvchi onlayn testingizni ochsa — to'lov oynasi chiqadi: kartangizga o'tkazib, ariza va chek yuboradi. Siz tasdiqlasangiz, faqat shu mock ochiladi.</span>
+    <div class="field"><label for="price">Narx (so'm)</label><input class="input" id="price" inputmode="numeric" value="${card.price || ""}" placeholder="Masalan 30000"></div>
+    <div class="field"><label for="price-card">To'lov qabul qilinadigan kartangiz</label><input class="input" id="price-card" inputmode="numeric" value="${esc(card.number || "")}" placeholder="8600 0000 0000 0000"></div>
+    <div class="field"><label for="price-holder">Karta egasi <span class="muted">— ixtiyoriy</span></label><input class="input" id="price-holder" value="${esc(card.holder || "")}"></div>
+    ${card.price ? "" : `<span class="small" style="color:var(--warn)">⚠️ Narx kiritilmaguncha begona o'quvchilar testlaringizni ocha olmaydi — sizga murojaat qiladi.</span>`}
+    <button type="button" class="btn block" id="price-save">Saqlash</button></div>`;
+}
+function bindMockPrice() {
+  const save = document.getElementById("price-save"); if (!save) return;
+  save.onclick = async () => {
+    const price = parseInt((document.getElementById("price").value || "").replace(/\D/g, "")) || 0;
+    try {
+      await api("/api/teacher/mock-price", { price, card: document.getElementById("price-card").value.trim(), holder: document.getElementById("price-holder").value.trim() });
+      haptic("success"); toast(`✅ Saqlandi: ${sum(price)} so'm`); S.boot = null; rerender();
+    } catch (e) { toast(e.message); haptic("error"); }
+  };
+}
+
+// Pullik mock arizalari: kutilayotganlar tepada; chek rasmini ko'rish, tasdiqlash / rad etish
+function requestsHTML(list, card = {}) {
+  const pending = list.filter(x => x.status === "pending");
+  const rows = list.slice(0, 30).map(x => `<div class="item req-item ${x.status}" style="cursor:default"><span class="ico">${x.status === "pending" ? "🧾" : x.status === "approved" ? "✅" : "❌"}</span>
+    <span><b>${esc(x.name)}</b><small>${esc(x.title)}${card.price ? ` · ${sum(card.price)} so'm` : ""}${x.phone ? ` · ${esc(x.phone)}` : ""}${x.username ? ` · @${esc(x.username)}` : ""}</small></span>
+    <span class="row" style="gap:6px"><button type="button" class="btn plain sm" data-receipt="${x.id}">🧾</button>
+    ${x.status === "pending" ? `<button type="button" class="btn sm" data-req-ok="${x.id}">✅</button><button type="button" class="btn ghost sm" data-req-no="${x.id}">✕</button>` : ""}</span></div>`).join("");
+  return `<div class="section-title"><h2>🧾 Mock arizalari</h2><span class="muted small">${pending.length ? `${pending.length} ta kutilmoqda` : "yangi yo'q"}</span></div>
+    <div class="list">${rows || `<div class="card empty small">Hali ariza yo'q. Ro'yxatingizda yo'q o'quvchi onlayn testingizni ochsa, shu yerga ariza va chek yuboradi.</div>`}</div>`;
+}
+function bindRequests() {
+  document.querySelectorAll("[data-receipt]").forEach(x => x.onclick = async () => {
+    try { const r = await api(`/api/teacher/request/${x.dataset.receipt}/receipt`);
+      openModal("🧾 To'lov cheki", `<img src="${r.image}" alt="Chek" style="width:100%;border-radius:12px">`); }
+    catch (e) { toast(e.message); }
+  });
+  const decide = (id, action) => async () => {
+    try { const r = await api(`/api/teacher/request/${id}`, { action }); haptic("success");
+      toast(action === "approve" ? `✅ ${r.name} — shu mock bepul` : "❌ Rad etildi"); S.boot = null; rerender(); }
+    catch (e) { toast(e.message); haptic("error"); }
+  };
+  document.querySelectorAll("[data-req-ok]").forEach(x => x.onclick = decide(x.dataset.reqOk, "approve"));
+  document.querySelectorAll("[data-req-no]").forEach(x => x.onclick = decide(x.dataset.reqNo, "reject"));
+}
+
+// O'quvchi: pullik mock — ariza va chek
+function paywall(code, p) {
+  const sent = p.status === "pending", rejected = p.status === "rejected";
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${esc(p.code)}</span><h1>${esc(p.title)}</h1>
+      <span class="muted small">Ustoz: ${esc(p.teacher)}</span></div>
+    ${sent ? `<div class="card" style="border:1.5px solid var(--warn)"><b>⏳ Arizangiz ko'rib chiqilmoqda</b>
+      <span class="muted small">Ustoz chekni tasdiqlagach mockni topshira olasiz — bot xabar beradi.</span></div>` : ""}
+    ${rejected ? `<div class="card" style="border:1.5px solid var(--bad)"><b>❌ Arizangiz rad etilgan</b><span class="muted small">To'lovni tekshirib, qayta yuboring.</span></div>` : ""}
+    ${!p.price ? `<div class="card"><b>🔒 Bu mock ustozning o'quvchilari uchun</b>
+      <span class="muted small">Siz ustozning ro'yxatida yo'qsiz. Ustozingizdan taklif havolasini so'rang yoki u bilan bog'laning${p.teacher_username ? ` — <b>@${esc(p.teacher_username)}</b>` : ""}.</span></div>` : ""}
+    ${!p.price ? "" : `<div class="card"><b>🔒 Bu mock pullik</b>
+      <span class="muted small">Ustozning o'quvchilari bepul topshiradi. Siz to'lab, ariza yuborasiz — ustoz tasdiqlasa, shu mock siz uchun ochiladi.</span>
+      <div class="row between"><span class="muted small">Narx</span><b>${sum(p.price)} so'm</b></div>
+      ${p.card ? `<div class="row between"><span class="muted small">Karta</span><b id="pw-card">${esc(p.card)}</b></div>
+      ${p.holder ? `<div class="row between"><span class="muted small">Egasi</span><span>${esc(p.holder)}</span></div>` : ""}
+      <button type="button" class="btn ghost sm" id="pw-copy">📋 Karta raqamini nusxalash</button>` : ""}</div>
+    <div class="card"><b>📝 Ariza</b>
+      <div class="field"><label for="pw-name">Ism va familiya</label><input class="input" id="pw-name" autocomplete="name" value="${esc(p.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
+      <div class="field"><label for="pw-phone">Telefon <span class="muted">— ixtiyoriy</span></label><input class="input" id="pw-phone" inputmode="tel" placeholder="+998 90 123 45 67"></div>
+      <div class="field"><label>To'lov cheki (rasm)</label><label class="btn ghost block" for="pw-photo" id="pw-photo-label">📷 Chek rasmini tanlash</label>
+        <input type="file" id="pw-photo" accept="image/*" hidden></div>
+      <button type="button" class="btn block" id="pw-send">${sent || rejected ? "Qayta yuborish" : "Ariza yuborish"}</button></div>`}
+  </div>`;
+  if (!p.price) return;
+  const copy = document.getElementById("pw-copy");
+  if (copy) copy.onclick = () => navigator.clipboard.writeText(p.card).then(() => toast("📋 Nusxalandi"), () => toast(p.card));
+  const photo = document.getElementById("pw-photo");
+  photo.onchange = () => { if (photo.files[0]) document.getElementById("pw-photo-label").textContent = "✅ " + photo.files[0].name.slice(0, 30); };
+  const btn = document.getElementById("pw-send");
+  btn.onclick = async () => {
+    const name = document.getElementById("pw-name").value.trim();
+    if (name.length < 3) { toast("Ism va familiyangizni yozing"); return; }
+    if (!photo.files[0]) { toast("To'lov cheki rasmini tanlang"); return; }
+    btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    try {
+      const form = new FormData();
+      form.append("name", name); form.append("phone", document.getElementById("pw-phone").value.trim());
+      form.append("photo", await compressImage(photo.files[0]), "chek.jpg");
+      await apiForm(`/api/test/${code}/request`, form);
+      haptic("success"); toast("✅ Ariza yuborildi — ustoz tasdiqlashini kuting");
+      paywall(code, { ...p, status: "pending" });
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Ariza yuborish"; }
+  };
+}
 
 // ---------- O'quvchi: «✍️ Esse tekshirish» (ustoz kreditidan) ----------
 VIEWS.practice = async () => {
