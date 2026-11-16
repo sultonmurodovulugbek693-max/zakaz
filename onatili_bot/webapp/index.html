@@ -631,13 +631,16 @@ async function render(soft = false) {
   S.soft = soft; $app.classList.toggle("soft", soft);
   if (!soft) window.scrollTo(0, 0);
   const { view, params } = S.current;
-  showBack(S.stack.length > 0);
+  // Chizishdan oldin taxminan (panel bo'limlarida — yo'q), chizilgach aniq (pastki panel chiqdimi — finally'da)
+  showBack(S.stack.length > 0 || (!NO_BACK.has(view) && !(TABS[S.role] || TABS.student).some(([key]) => key === view)));
   rememberView(view, params);
   const home = APP && !(tg && tg.initData) ? VIEWS.appHome : VIEWS.home;
   try { await (view === "home" ? home : VIEWS[view] || home)(params); }
   finally {
     if (seq !== S.seq) return;  // shu orada boshqa sahifa ochildi — panel va scroll uniki
-    paintTabs(view);
+    // Orqaga: oldingi sahifa bo'lsa yoki pastki panel yo'q bo'lsa (bosh sahifadan boshqa har ekranda) — chiqish yo'li bo'lsin
+    const tabbed = paintTabs(view);
+    showBack(S.stack.length > 0 || (!tabbed && !NO_BACK.has(view)));
     if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
     S.soft = false;
   }
@@ -675,6 +678,8 @@ function userBusy() {
 
 // ---------- Pastki navigatsiya ----------
 // Asosiy bo'limlar har doim bir bosishda; ichki ekranlarda (test yechish, yaratish, skaner) panel yashiriladi
+// Bu ekranlarda «Orqaga» kerak emas: bosh sahifa va ilovaga kirish (ular — boshlang'ich nuqta)
+const NO_BACK = new Set(["home", "appHome", "appLogin"]);
 const TABS = {
   teacher: [["home", "🏠", "Bosh"], ["results", "📊", "Natijalar"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
@@ -686,7 +691,7 @@ function paintTabs(view) {
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
     key === "plan" ? S.boot.sales : key === "ai" ? !S.boot.sales && S.boot.can_create !== false
       : key === "students" ? S.boot.can_create !== false : true) : null;
-  if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return; }
+  if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
   bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
     `<button type="button" class="tab ${key === view ? "on" : ""}" data-tab-to="${key}"><i>${icon}</i>${label}</button>`).join("");
@@ -695,6 +700,7 @@ function paintTabs(view) {
     if (to === S.current.view) return window.scrollTo({ top: 0, behavior: "smooth" });
     haptic("select"); S.stack = []; go(to, {}, true);
   });
+  return true;
 }
 
 // ---------- Ilova dizaynlari (ranglar, shriftlar, burchaklar) ----------
