@@ -521,6 +521,13 @@ async def receipt_received(message: Message) -> None:
         return
     payment = await asyncio.to_thread(db.open_payment, message.from_user.id)
     if not payment:
+        if not config.SALES_ENABLED:  # obuna yopiq — rasm nima uchunligini tushuntiramiz (obunani taklif qilmaymiz)
+            await message.answer("📷 Bu rasm hech narsaga biriktirilmadi.\n"
+                                 "• Titulni tekshirish — ilovada «📷 Skanerlash»\n"
+                                 "• Qog'ozdagi esse — testdagi «📷 Qog'ozga yozdingizmi?» → «🤖 Botga yuboraman»\n"
+                                 "• To'lov cheki — avval ilovada to'lovni boshlang",
+                                 reply_markup=app_markup())
+            return
         await message.answer("🧾 Chek qabul qilinmadi: avval ilovadagi «💎 Obuna» tugmasidan muddatni tanlang.",
                              reply_markup=app_markup("💎 Obuna"))
         return
@@ -1136,16 +1143,14 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
     if not notify:  # skanerlashda o'qituvchi natijani ekranda ko'rib turadi
         return attempt
     count = len(await asyncio.to_thread(db.list_attempts, test["id"]))
-    try:
-        await bot.send_message(
+    # O'quvchi javobi darhol qabul qilinadi — o'qituvchiga xabar orqada ketadi (Telegram sekin bo'lsa ham kutmaydi)
+    webapp.in_background(bot.send_message(
             test["owner_id"],
             f"🆕 <b>{esc(test['title'])}</b> · {test['code']}\n"
             f"👤 {esc(name)}{f' · {variant} variant' if len(keys) > 1 else ''} — <b>{summary}</b>\n"
             f"👥 Jami topshirdi: <b>{count}</b> ta",
             reply_markup=app_markup("◈ Testni ochish", t=test["id"]),
-        )
-    except Exception:
-        logger.warning("O'qituvchiga natija haqida xabar yuborilmadi")
+    ), "O'qituvchiga yangi natija")
     return attempt
 
 

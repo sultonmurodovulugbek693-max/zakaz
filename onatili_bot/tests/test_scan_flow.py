@@ -261,6 +261,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         done = await (await self.client.post(f"/api/teacher/test/{self.test['id']}/scan/upload/done",
                                              json={"saved": 1, "written": 1, "essays": 0, "failed": 0})).json()
         self.assertEqual(done["written"]["pending"], 1)
+        await asyncio.sleep(0.05)  # xabar orqada ketadi (ilova kutmaydi)
         self.assertTrue(any("Qabul qilindi" in text for _, text in self.bot.messages))
         page = await (await self.client.get(f"/api/teacher/test/{self.test['id']}")).json()
         self.assertEqual(page["attempts"][0]["written_status"], "pending")

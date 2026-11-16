@@ -1017,6 +1017,35 @@ async def send_created_pdfs(chat_id: int, test: dict) -> tuple[list[str], str | 
     return sent, error
 
 
+# ---------- Botga yuborish ilovani kutdirmasin ----------
+# Xabarlar — orqada (ilova darhol javob oladi). Fayllar — DELIVER_WAIT soniyagacha kutiladi: ulgursa «yuborildi»,
+# ulgurmasa «yuborilmoqda» va orqada davom etadi (Render → Telegram yuklash sekin bo'lsa ham ilova qotmaydi).
+DELIVER_WAIT = 4.0
+_BACKGROUND: set = set()
+
+
+def in_background(coro, what: str) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _BACKGROUND.add(task)
+
+    def done(t: asyncio.Task) -> None:
+        _BACKGROUND.discard(t)
+        if not t.cancelled() and t.exception():
+            logger.warning("%s: botga yuborilmadi — %s", what, t.exception())
+    task.add_done_callback(done)
+    return task
+
+
+async def deliver(coro, what: str) -> bool:
+    """True — yuborildi; False — hali yuborilmoqda (orqada). Xato bo'lsa (vaqtida) — istisno ko'tariladi."""
+    task = in_background(coro, what)
+    done, _ = await asyncio.wait({task}, timeout=DELIVER_WAIT)
+    if task in done:
+        task.result()
+        return True
+    return False
+
+
 def send_error_text(exc: Exception) -> str:
     """Bot chatga fayl yubora olmadi — o'qituvchiga tushunarli sabab."""
     text = str(exc).lower()
@@ -1148,11 +1177,11 @@ async def send_pdf(request: web.Request) -> web.Response:
     if kind not in ("key", "results", "excel"):
         raise ApiError(400, "Noma'lum hujjat")
     try:
-        await HOOKS["send_pdf"](user["id"], test, kind)
+        sent = await deliver(HOOKS["send_pdf"](user["id"], test, kind), f"Fayl ({kind}), test {test['id']}")
     except Exception as exc:
         logger.exception("Fayl (%s) yuborilmadi: test %s", kind, test["id"])
         raise ApiError(502, send_error_text(exc))
-    return ok({"ok": True})
+    return ok({"ok": True, "pending": not sent})
 
 
 # ---------- Ustoz — o'quvchi: ulash va «✍️ Esse tekshirish» (ustoz kreditidan) ----------
@@ -2030,10 +2059,10 @@ async def send_certificates(request: web.Request) -> web.Response:
     single = len(rows) == 1
     name = f"sertifikat_{_file_slug(rows[0]['name']) if single else test['code']}.pdf"
     who = html.escape(rows[0]["name"]) if single else f"{len(rows)} ta o'quvchi" + (f" · {html.escape(cls['name'])}" if cls else "")
-    await HOOKS["send_file"](user["id"], content, name,
+    sent = await deliver(HOOKS["send_file"](user["id"], content, name,
                              f"🎓 <b>Mock sertifikat</b> · {html.escape(test['title'])}\n{who}\n"
-                             "Chop etish uchun — A4, yotiq. Rasmiy sertifikat emas.")
-    return ok({"ok": True, "count": len(rows)})
+                             "Chop etish uchun — A4, yotiq. Rasmiy sertifikat emas."), "Sertifikat")
+    return ok({"ok": True, "count": len(rows), "pending": not sent})
 
 
 async def send_class_report(request: web.Request) -> web.Response:
@@ -2044,10 +2073,11 @@ async def send_class_report(request: web.Request) -> web.Response:
     if not report["tests"]:
         raise ApiError(400, "Bu sinf hali titulli testda qatnashmagan")
     content = await run(pdfs.class_report_pdf, report)
-    await HOOKS["send_file"](user["id"], content, f"sinf_{_file_slug(cls['name'])}.pdf",
+    sent = await deliver(HOOKS["send_file"](user["id"], content, f"sinf_{_file_slug(cls['name'])}.pdf",
                              f"📄 <b>{html.escape(cls['name'])}</b> — natijalar jadvali\n"
-                             f"{report['class']['students']} ta o'quvchi · {len(report['tests'])} ta test")
-    return ok({"ok": True})
+                             f"{report['class']['students']} ta o'quvchi · {len(report['tests'])} ta test"),
+                         "Sinf jadvali")
+    return ok({"ok": True, "pending": not sent})
 
 
 async def students_from_class(request: web.Request) -> web.Response:
@@ -2187,12 +2217,12 @@ async def sheets(request: web.Request) -> web.Response:
     if not students and not blanks:
         raise ApiError(400, "Titul tanlanmadi")
     try:
-        await HOOKS["send_sheets"](user["id"], test, students, blanks)
+        sent = await deliver(HOOKS["send_sheets"](user["id"], test, students, blanks), f"Titullar, test {test['id']}")
     except Exception as exc:
         logger.exception("Titullar yuborilmadi: test %s", test["id"])
         raise ApiError(502, send_error_text(exc))
     await run(db.mark_sheets_sent, test["id"])
-    return ok({"ok": True, "pages": len(students) + blanks})
+    return ok({"ok": True, "pages": len(students) + blanks, "pending": not sent})
 
 
 async def read_photo(request: web.Request) -> bytes:
@@ -2560,13 +2590,10 @@ async def scan_save(request: web.Request) -> web.Response:
         return ok(await save_written_page(test, payload, data, head[5:head.index(";")][:20]))
     attempt, student = await save_scanned(test, payload)
     await store_written_image(test, attempt, payload.get("written_image"))
-    if from_app(request) and "scan_notice" in HOOKS:
-        try:  # APK'dan skanerlandi — natija bot chatiga ham boradi
-            await HOOKS["scan_notice"](user["id"], test, student["name"],
-                                       None if essay_pending(test, attempt) else total_points(attempt),
-                                       max_points(test["items"], test["fmt"]))
-        except Exception:
-            logger.warning("Skaner xabarini botga yuborib bo'lmadi", exc_info=True)
+    if from_app(request) and "scan_notice" in HOOKS:  # APK'dan skanerlandi — natija bot chatiga ham (orqada)
+        in_background(HOOKS["scan_notice"](user["id"], test, student["name"],
+                                           None if essay_pending(test, attempt) else total_points(attempt),
+                                           max_points(test["items"], test["fmt"])), "Skaner xabari")
     hidden = essay_pending(test, attempt)  # qog'ozdagi esse bahosi kiritilmaguncha natija chiqmaydi
     return ok({"ok": True, "attempt_id": attempt["id"], "name": student["name"], "essay_pending": hidden,
                "points": None if hidden else total_points(attempt), "max_points": max_points(test["items"], test["fmt"]),
@@ -2680,11 +2707,8 @@ async def scan_upload_done(request: web.Request) -> web.Response:
     count = lambda key: max(0, min(10000, to_int(payload.get(key))))
     status = await run(db.written_status, test["id"])
     if "scan_batch_notice" in HOOKS and count("saved"):
-        try:
-            await HOOKS["scan_batch_notice"](user["id"], test, count("saved"), count("written"), count("essays"),
-                                             count("failed"))
-        except Exception:
-            logger.warning("Skaner xabarini botga yuborib bo'lmadi", exc_info=True)
+        in_background(HOOKS["scan_batch_notice"](user["id"], test, count("saved"), count("written"), count("essays"),
+                                                 count("failed")), "Skaner xabari (to'plam)")
     return ok({"ok": True, "written": status, "ai": essay_ai.enabled()})
 
 

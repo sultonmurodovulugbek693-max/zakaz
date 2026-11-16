@@ -536,6 +536,8 @@ const THEMES = {
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = n => n == null ? "—" : (Math.round(n * 10) / 10).toString().replace(".", ",");
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Botga fayl yuborish: bosilishi bilan «yuborilmoqda» ko'rinadi; server ulgurmasa (pending) — orqada davom etadi
+function sentToast(r, what) { toast(r && r.pending ? `📨 ${what} yuborilmoqda — bir necha soniyada chatda bo'ladi` : `✅ ${what} chatga yuborildi`); }
 function haptic(kind = "light") { try { kind === "select" ? tg.HapticFeedback.selectionChanged() : ["success", "error", "warning"].includes(kind) ? tg.HapticFeedback.notificationOccurred(kind) : tg.HapticFeedback.impactOccurred(kind); } catch (e) {} }
 let toastTimer;
 function toast(text) { const t = document.getElementById("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
@@ -1697,7 +1699,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   document.querySelectorAll("#written-review, #written-review-open").forEach(x => x.onclick = () => { haptic("light"); go("written", { id }); });
   const tr = document.getElementById("to-results"); if (tr) tr.onclick = () => { haptic("light"); go("testResults", { id }); };
   const ca2 = document.getElementById("certs-all"); if (ca2) ca2.onclick = () => sendCerts(t.id, {}, ca2);
-  document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); } });
+  document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => { toast("📨 Yuborilmoqda…"); try { const r = await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); sentToast(r, "Fayl"); haptic("success"); } catch (e) { toast(e.message); } });
   const an = document.getElementById("announce");
   if (an) an.onclick = async () => {
     const waiting = d.attempts.filter(a => a.essay == null && a.essay_status && a.essay_status !== "none").length;
@@ -2446,7 +2448,7 @@ async function sendCerts(testId, payload, btn) {
   if (btn) btn.disabled = true;
   try {
     const r = await api(`/api/teacher/test/${testId}/certificates`, payload);
-    haptic("success"); toast(`🎓 ${r.count > 1 ? `${r.count} ta sertifikat` : "Sertifikat"} chatga yuborildi`);
+    haptic("success"); sentToast(r, `🎓 ${r.count > 1 ? `${r.count} ta sertifikat` : "Sertifikat"}`);
   } catch (e) { toast(e.message); haptic("error"); }
   if (btn) btn.disabled = false;
 }
@@ -2505,7 +2507,7 @@ VIEWS.classResults = async ({ id }) => {
   const pdf = document.getElementById("class-pdf");
   if (pdf) pdf.onclick = async () => {
     pdf.disabled = true;
-    try { await api(`/api/teacher/class/${id}/report`, {}); haptic("success"); toast("📨 Jadval chatga yuborildi"); } catch (e) { toast(e.message); }
+    toast("📨 Yuborilmoqda…"); try { const r = await api(`/api/teacher/class/${id}/report`, {}); haptic("success"); sentToast(r, "Jadval"); } catch (e) { toast(e.message); }
     pdf.disabled = false;
   };
   document.querySelectorAll("[data-tr]").forEach(x => x.onclick = () => go("testResults", { id: x.dataset.tr, cls: c.id }));
@@ -2598,7 +2600,7 @@ VIEWS.testResults = async ({ id, cls }) => {
   const certs = document.getElementById("certs");
   if (certs) certs.onclick = () => sendCerts(t.id, { class: r.class ? r.class.id : null }, certs);
   document.querySelectorAll("[data-send]").forEach(x => x.onclick = async () => {
-    try { await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); toast("📨 Chatga yuborildi"); haptic("success"); } catch (e) { toast(e.message); }
+    toast("📨 Yuborilmoqda…"); try { const r = await api(`/api/teacher/test/${t.id}/send`, { kind: x.dataset.send }); sentToast(r, "Fayl"); haptic("success"); } catch (e) { toast(e.message); }
   });
   document.getElementById("open-test").onclick = () => go("teacher", { id: t.id });
   document.querySelectorAll("[data-row]").forEach(x => x.onclick = () => {
@@ -2914,7 +2916,7 @@ function sheetsModal(t, students) {
   });
   modal.querySelector("#make").onclick = async () => {
     const btn = modal.querySelector("#make"); btn.disabled = true; btn.textContent = "Tayyorlanmoqda…";
-    try { await api(`/api/teacher/test/${t.id}/sheets`, { blanks: students.length ? 0 : 1, style }); t.sheet_style = style; haptic("success"); toast("📨 Titul PDF chatga yuborildi"); modal.remove();
+    toast("📨 Yuborilmoqda…"); try { const r = await api(`/api/teacher/test/${t.id}/sheets`, { blanks: students.length ? 0 : 1, style }); t.sheet_style = style; haptic("success"); sentToast(r, "Titul PDF"); modal.remove();
       if (!t.sheets_sent) { t.sheets_sent = true; if (S.current.view === "teacher") { S.useCache = true; rerender(); } } }
     catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "📄 PDF'ni chatga yuborish"; }
   };

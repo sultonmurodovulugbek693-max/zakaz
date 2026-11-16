@@ -1423,5 +1423,54 @@ class AiRoutes(ServerBase):
         self.assertIn("admin", replies[0].lower())
 
 
+class FastSend(ServerBase):
+    """Botga yuborish ilovani kutdirmaydi: fayl sekin ketsa — «yuborilmoqda» va orqada davom etadi."""
+
+    async def test_slow_pdf_returns_pending_then_finishes(self):
+        _, r = await self.create()
+        finished = []
+
+        async def slow_pdf(chat_id, test, kind):
+            await asyncio.sleep(0.3)
+            finished.append(kind)
+        webapp.HOOKS["send_pdf"] = slow_pdf
+        wait, webapp.DELIVER_WAIT = webapp.DELIVER_WAIT, 0.05
+        try:
+            status, res = await self.post(f"/api/teacher/test/{r['id']}/send", {"kind": "results"})
+            self.assertEqual((status, res["pending"], finished), (200, True, []))  # ilova darhol javob oldi
+            await asyncio.sleep(0.4)
+            self.assertEqual(finished, ["results"])  # orqada yuborildi
+            webapp.DELIVER_WAIT = 2
+            status, res = await self.post(f"/api/teacher/test/{r['id']}/send", {"kind": "key"})
+            self.assertEqual((status, res["pending"]), (200, False))  # ulgurdi — «yuborildi»
+        finally:
+            webapp.DELIVER_WAIT = wait
+
+    async def test_fast_failure_is_reported(self):
+        _, r = await self.create()
+
+        async def broken(chat_id, test, kind):
+            raise RuntimeError("Forbidden: bot was blocked by the user")
+        webapp.HOOKS["send_pdf"] = broken
+        status, res = await self.post(f"/api/teacher/test/{r['id']}/send", {"kind": "results"})
+        self.assertEqual(status, 502)
+        self.assertIn("/start", res["error"])
+
+    async def test_stray_photo_without_sales_does_not_offer_subscription(self):
+        answers = []
+
+        async def answer(text, **_):
+            answers.append(text)
+        message = types.SimpleNamespace(from_user=types.SimpleNamespace(id=STUDENT), photo=[types.SimpleNamespace(file_id="F")],
+                                        document=None, answer=answer)
+        sales, bot.config.SALES_ENABLED = bot.config.SALES_ENABLED, False
+        try:
+            await bot.receipt_received(message)
+        finally:
+            bot.config.SALES_ENABLED = sales
+        self.assertNotIn("Obuna", answers[0])
+        self.assertIn("Skanerlash", answers[0])
+
+
 if __name__ == "__main__":
     unittest.main()
