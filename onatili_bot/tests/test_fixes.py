@@ -1245,5 +1245,23 @@ class PaidCheck(ServerBase):
         self.assertEqual({r["model"] for r in db.ai_usage_since("2000-01-01")}, {"claude-haiku-5-5", "claude-sonnet-5-5"})
 
 
+
+class OnlineOfficialTitul(ServerBase):
+    """Har milliy mockka rasmiy titul (onlayn ham); onlayn mockda esse ilovada — natija yashirilmaydi."""
+
+    async def test_online_milliy_gets_official_but_result_open(self):
+        from scoring import essay_on_paper, essay_pending
+        _, r = await self.create(mode="online", fmt="milliy")
+        test = db.get_test(r["id"])
+        self.assertEqual(test["sheet_style"], "official")
+        self.assertFalse(essay_on_paper(test))
+        self.assertFalse(essay_pending(test, {"essay": None}))
+        _, off = await self.create(mode="offline", fmt="milliy")
+        self.assertTrue(essay_on_paper(db.get_test(off["id"])))
+        status, copy = await self.post(f"/api/teacher/test/{r['id']}/copy", {})
+        self.assertEqual(status, 200, copy)
+        self.assertEqual(db.get_test(copy["id"])["sheet_style"], "official")
+
+
 if __name__ == "__main__":
     unittest.main()

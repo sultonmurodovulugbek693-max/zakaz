@@ -887,7 +887,7 @@ async def create_test(request: web.Request) -> web.Response:
     if channels:
         await run(db.set_test_channels, test["id"], channels)
     await run(db.set_mode, test["id"], mode)
-    if fmt == "milliy" and mode == "offline":  # imtihon varaqasi: 2 varaq + qog'ozdagi esse
+    if fmt == "milliy":  # imtihon varaqasi (namunadagidek): 1–35, 36–44 va esse varaqlari; onlayn mockning tituli ham
         await run(db.set_sheet_style, test["id"], "official")
     test = await run(db.get_test, test["id"])
     sent, pdf_error = await send_created_pdfs(user["id"], test)
@@ -933,6 +933,12 @@ async def copy_test(request: web.Request) -> web.Response:
     if test.get("channels") and (test.get("mode") or "online") == "online":
         await run(db.set_test_channels, copy["id"], test["channels"])
     await run(db.set_mode, copy["id"], test.get("mode") or "online")
+    if test.get("sheet_style"):  # titul ko'rinishi, tekshiruv turi va begonalar uchun esse narxi ham nusxaga
+        await run(db.set_sheet_style, copy["id"], test["sheet_style"])
+    if test.get("check_mode") == "paid":
+        await run(db.set_check_mode, copy["id"], "paid")
+    if test.get("price"):
+        await run(db.set_test_price, copy["id"], int(test["price"]))
     return ok({"ok": True, "id": copy["id"], "code": copy["code"]})
 
 
@@ -2254,11 +2260,6 @@ def two_pages(test: dict) -> bool:
     """Imtihon varaqasi (rasmiy titul): 1-varaq — 1–35, 2-varaq — 36–44 alohida skanerlanadi."""
     return sheet_styles.style_of(test) == "official"
 
-
-def essay_on_paper(test: dict) -> bool:
-    """Esse qog'ozda (rasmiy titulning 3–4-varag'i): o'qituvchi 75 ballik shkalada kiritadi, botda yozilmaydi.
-    Esse bahosi kiritilmaguncha o'quvchi natijasi chiqmaydi."""
-    return test["fmt"] == "milliy" and two_pages(test)
 
 
 async def attach_written(test: dict, attempt: dict, image_b64: str, mime: str) -> bool:

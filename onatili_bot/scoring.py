@@ -16,9 +16,11 @@ from structure import essay_to_75
 
 
 def essay_on_paper(test: dict) -> bool:
-    """Esse qog'ozda (imtihon varaqasining 3–4-varag'i): bahoni o'qituvchi kiritmaguncha natija chiqmaydi."""
+    """Esse qog'ozda (imtihon varaqasining 3–4-varag'i): bahoni o'qituvchi kiritmaguncha natija chiqmaydi.
+    Faqat oflayn testda — onlayn mockda esse ilovada yoziladi (titul chop etilsa ham)."""
     import sheet_styles
-    return test["fmt"] == "milliy" and sheet_styles.style_of(test) == "official"
+    return (test["fmt"] == "milliy" and sheet_styles.style_of(test) == "official"
+            and (test.get("mode") or "online") == "offline")
 
 
 def essay_pending(test: dict, attempt: dict) -> bool:
