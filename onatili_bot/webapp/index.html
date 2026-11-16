@@ -323,7 +323,11 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .cam.got { box-shadow: 0 0 0 3px var(--good); }
 .cam video, .cam img, .cam svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
 .cam svg polygon { fill: color-mix(in srgb, var(--good) 18%, transparent); stroke: var(--good); stroke-width: 3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.cam-guide { position: absolute; left: 50%; top: 50%; height: 86%; aspect-ratio: 210 / 297; max-width: 92%; transform: translate(-50%, -50%); border: 2px dashed rgba(255,255,255,.55); border-radius: 10px; pointer-events: none; }
+.cam-guide { position: absolute; left: 50%; top: 50%; height: 86%; aspect-ratio: 210 / 297; max-width: 92%; transform: translate(-50%, -50%); border: 2px dashed rgba(255,255,255,.3); border-radius: 10px; pointer-events: none; }
+.cam .marked { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #111; z-index: 3; }
+.mark-score { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 4; padding: 8px 12px; border-radius: 12px; background: rgba(0,0,0,.72); color: #fff; font-weight: 800; text-align: center; }
+.last-scan { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: center; cursor: pointer; }
+.last-scan canvas { width: 84px; border-radius: 8px; background: #eee; }
 .cam.got .cam-guide { display: none; }
 .cam-status { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: rgba(0,0,0,.62); color: #fff; font-size: 13.5px; font-weight: 600; padding: 7px 12px; border-radius: 99px; white-space: nowrap; max-width: 92%; overflow: hidden; text-overflow: ellipsis; }
 .cam-status.ok { background: var(--good); }
@@ -3069,6 +3073,7 @@ VIEWS.scan = async ({ id }) => {
       <img id="still" alt="" hidden>
       <svg id="quad" viewBox="0 0 1 1" preserveAspectRatio="none"><polygon points=""/></svg>
       <div class="cam-guide"></div>
+      <canvas class="marked" id="marked" hidden></canvas><div class="mark-score" id="mark-score" hidden></div>
       <div class="cam-status" id="cam-status">Kamera yoqilmoqda…</div>
       <button type="button" class="cam-torch" id="torch" hidden aria-label="Chiroq">🔦</button>
     </div>
@@ -3078,7 +3083,8 @@ VIEWS.scan = async ({ id }) => {
       <label class="btn block" for="photo" style="padding:18px">📷 Titulni suratga olish</label>
     </div>
     <input type="file" id="photo" accept="image/*" capture="environment" hidden>
-    <span class="muted small" id="cam-tip">Titulni tekis joyga qo'ying va telefonni tepasida ushlang: 4 burchakdagi qora kvadrat ramka ichida ko'rinsin. Topilishi bilan o'zi ushlaydi${local ? " va telefonga saqlaydi. Keyingi titulni ustiga qo'yavering" : ""}.</span>
+    <span class="muted small" id="cam-tip">Titul kameraga to'liq ko'rinsa bo'ldi — 4 burchakdagi qora kvadrat kadrda bo'lsin. Ko'rishi bilan o'zi ushlaydi${local ? ", to'g'ri javoblarni 🟢, xatolarni 🔴 belgilab ko'rsatadi va telefonga saqlaydi. Keyingi titulni ustiga qo'yavering" : ""}.</span>
+    <div class="card last-scan" id="last-scan" hidden><canvas id="last-canvas"></canvas><span id="last-text"></span></div>
     <div id="review"></div>
     ${local ? `<div class="card" id="q-card">
       <div class="row between"><b>📦 Telefonda: <span id="q-count">0</span> ta titul</b></div>
@@ -3156,7 +3162,7 @@ VIEWS.scan = async ({ id }) => {
     const size = Math.max(a.width, a.height);
     return Math.max(...a.corners.map((c, i) => Math.hypot(c.x - b.corners[i].x, c.y - b.corners[i].y))) / size;
   };
-  const STILL = 0.012;  // ~9 px 720 px kadrda — qo'l titrashi; undan ko'pi — varaq qimirlayapti
+  const MOVING = 0.035;  // ~25 px 720 px kadrda — telefon tez harakatda (xira kadr): o'qimaymiz, keyingisini kutamiz
   const doubtful = r => r.questions.some(q => q.status === "multiple" || q.status === "unsure") || r.sheet_number_status === "unclear";
 
   let swapSig = null, savedText = "", queue = [];
@@ -3179,8 +3185,9 @@ VIEWS.scan = async ({ id }) => {
       drawQuad(corners ? corners.map(c => [c.x / probe.width, c.y / probe.height]) : null);
       if (!corners) { waitSwap = false; prev = confirm = null; movedSinceRead = true; setStatus(idleText(), savedText ? "ok" : ""); }
       else {
-        const still = cornerShift(probe, prev) < STILL;
-        if (!still) { movedSinceRead = true; confirm = null; if (!waitSwap) setStatus("Telefonni qimirlatmang…"); }
+        // Chittak/EvalBee kabi: titul ko'rinishi bilan o'qiladi (qimirlamay turishini kutmaymiz) — faqat tez harakatda emas
+        const still = !prev || cornerShift(probe, prev) < MOVING;
+        if (!still) { movedSinceRead = true; confirm = null; if (!waitSwap) setStatus("Titul ko'rindi — o'qilmoqda…"); }
         // Qimirlamayapti: to'liq o'qiymiz (o'sha varaq turgan bo'lsa — ko'pi bilan 1,5 soniyada bir)
         else if (!waitSwap || movedSinceRead || performance.now() - lastReadAt > 1500) {
           const a = await analyze(true);
@@ -3189,7 +3196,7 @@ VIEWS.scan = async ({ id }) => {
           if (a && a.read) {
             const sig = signature(a.read.result);
             if (waitSwap && !isNewSheet(sig, swapSig)) confirm = null;  // hali o'sha varaq turibdi
-            else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("Telefonni qimirlatmang…"); }
+            else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("Bir lahza — aniqlashtirilmoqda…"); }
             else {
               swapSig = sig;
               try { await keep(a); }
@@ -3251,9 +3258,64 @@ VIEWS.scan = async ({ id }) => {
     cam.classList.add("got"); setTimeout(() => cam.classList.remove("got"), 500);
     const warn = recWarnings(rec);
     const who = student || pupil;
+    showMarked(a.read, variant, who);
     savedText = `✅ ${twoPages ? "1-varaq · " : ""}${who ? `№ ${pad3(who.number)} ${who.name}${(who.class_name) ? ` · ${who.class_name}` : ""}` : "Titul"} saqlandi${replaced ? " (yangilandi)" : ""}${warn ? ` · ⚠️ ${warn}` : ""}${twoPages && !rec.written ? " · endi 2-varaqni qo'ying" : ""}`;
     setStatus(savedText, "ok");
     await refreshQueue();
+  }
+
+  // Ushlangan titul ustida: to'g'ri belgilangan — yashil, xato belgilangan — qizil va to'g'risi yashil (Chittak kabi).
+  // Kamerada ~1,8 soniya ko'rinadi, pastda «oxirgi titul» bo'lib qoladi (bosilsa — katta)
+  const markedEl = document.getElementById("marked"), markScore = document.getElementById("mark-score");
+  let markTimer = null;
+  function drawMarked(canvas, read, variant) {
+    const keys = (layout && layout.keys) || {};
+    const key = keys[variant] || keys[Object.keys(keys)[0]] || {};
+    const { W, H, warped } = read.sheet, pos = read.result.positions || {}, k = W / SHEET_PAGE.width;
+    canvas.width = W; canvas.height = H;
+    const g = canvas.getContext("2d"), img = g.createImageData(W, H);
+    for (let i = 0, p = 0; i < warped.length; i++, p += 4) { img.data[p] = img.data[p + 1] = img.data[p + 2] = warped[i]; img.data[p + 3] = 255; }
+    g.putImageData(img, 0, 0);
+    let right = 0, total = 0;
+    const ring = (xy, color, fill) => {
+      if (!xy) return;
+      const [x, y, r] = xy;
+      g.beginPath(); g.arc(x * k, y * k, (r + 1.6) * k, 0, Math.PI * 2);
+      g.lineWidth = Math.max(2.5, 1.4 * k); g.strokeStyle = color; g.stroke();
+      if (fill) { g.fillStyle = fill; g.fill(); }
+    };
+    for (const q of read.result.questions) {
+      const correct = String(key[q.label] || "").toUpperCase();
+      const row = pos[q.label] || {};
+      if (!correct) continue;
+      total++;
+      const chosen = q.chosen ? String(q.chosen) : "";
+      if (chosen && correct.includes(chosen)) { right++; ring(row[chosen], "#16a34a", "rgba(22,163,74,.28)"); }
+      else {
+        if (chosen) ring(row[chosen], "#dc2626", "rgba(220,38,38,.28)");
+        for (const letter of correct) ring(row[letter], "#16a34a", null);
+      }
+    }
+    return { right, total };
+  }
+  function showMarked(read, variant, who) {
+    if (!read || !read.sheet || twoPages && read.result.page === 2) return;
+    try {
+      const { right, total } = drawMarked(markedEl, read, variant);
+      const name = who ? ` · ${who.name}` : "";
+      markScore.textContent = total ? `${right} / ${total} to'g'ri${name}` : `Titul o'qildi${name}`;
+      markedEl.hidden = markScore.hidden = false;
+      clearTimeout(markTimer);
+      markTimer = setTimeout(() => { markedEl.hidden = markScore.hidden = true; }, 1800);
+      const last = document.getElementById("last-scan"), lc = document.getElementById("last-canvas");
+      lc.width = markedEl.width; lc.height = markedEl.height; lc.getContext("2d").drawImage(markedEl, 0, 0);
+      document.getElementById("last-text").innerHTML = `<b>${esc(markScore.textContent)}</b><br><span class="muted small">🟢 to'g'ri · 🔴 xato · bosing — kattalashtirish</span>`;
+      last.hidden = false;
+      last.onclick = () => {
+        const m = openModal("🧾 Tekshirilgan titul", `<canvas id="big-mark" style="width:100%;border-radius:10px"></canvas>`);
+        const big = m.querySelector("#big-mark"); big.width = lc.width; big.height = lc.height; big.getContext("2d").drawImage(lc, 0, 0);
+      };
+    } catch (e) { /* belgilash chiqmasa ham titul saqlangan */ }
   }
 
   // 2-varaq (36–44): yozma kataklar rasmi. O'quvchi ID'si shart — u bilan 1-varaqqa qo'shiladi

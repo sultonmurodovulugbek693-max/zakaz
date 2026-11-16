@@ -2247,10 +2247,14 @@ async def scan_layout(request: web.Request) -> web.Response:
     """Titul tuzilishi (doirachalar, chet belgilari joyi) — jonli skaner kadrlarni telefonning o'zida o'qiydi."""
     user = await auth(request)
     test = await own_test(request, user)
-    variants = list(await run(db.get_keys, test["id"]))
+    all_keys = await run(db.get_keys, test["id"])
+    variants = list(all_keys)
     spec = sheet.layout(test, variants)
-    # written_area / name_area — telefon tekislangan varaqdan shu qismlarni kesib oladi (oflayn skaner)
+    choice = {item["label"] for item in test["items"] if item["kind"] == "choice"}
+    # written_area / name_area — telefon tekislangan varaqdan shu qismlarni kesib oladi (oflayn skaner).
+    # keys — test savollari kaliti: ushlangan titul ustida to'g'ri (yashil) / xato (qizil) belgilash uchun
     return ok({"bubbles": spec["bubbles"], "variants": variants, "sheet_page": spec["page"],
+               "keys": {v: {k: a for k, a in key.items() if k in choice} for v, key in all_keys.items()},
                "style": sheet_styles.style_of(test), "written_area": spec.get("written_area"),
                "name_area": spec.get("name_area"), "written_labels": [i["label"] for i in text_items(test["items"])],
                "pages": spec.get("pages", 1), "ai": essay_ai.enabled()})
