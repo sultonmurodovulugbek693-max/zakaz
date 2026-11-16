@@ -1472,5 +1472,27 @@ class FastSend(ServerBase):
         self.assertIn("Skanerlash", answers[0])
 
 
+
+class ResultsPdfClarity(ServerBase):
+    """Natijalar PDF: tekshirilmagan yozma javoblar xato emas, xatolar qisqa oraliqda, esse kutilganda «—»."""
+
+    def test_compact_ranges(self):
+        import pdfs
+        order = [str(i) for i in range(1, 36)] + ["36", "37", "38", "39", "40a", "40b"]
+        self.assertEqual(pdfs._compact(["1", "2", "4", "6", "7", "8", "9", "35", "36", "37"], order), "1, 2, 4, 6–9, 35–37")
+        self.assertEqual(pdfs._compact([], order), "—")
+
+    async def test_unchecked_written_not_counted_wrong(self):
+        import pdfs
+        _, r = await self.create(mode="offline", fmt="milliy")
+        test = db.get_test(r["id"])
+        empty = await bot.record_attempt(self.bot, test, 9001, "Ali", "A", {"1": "A"}, None, [], 0.0, notify=False)
+        read = await bot.record_attempt(self.bot, test, 9002, "Vali", "A", {"1": "A", "36": "kitob"}, None, [], 0.0, notify=False)
+        db.create_written_job(read["id"], test["id"], "aGk=", "image/png", "done")
+        self.assertEqual(pdfs._unchecked_written(test, db.list_attempts(test["id"])), {empty["id"]})
+        pdf = pdfs.results_pdf(test, db.list_attempts(test["id"]))
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+
 if __name__ == "__main__":
     unittest.main()

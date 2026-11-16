@@ -164,6 +164,7 @@ html.dark .quick-action i { background: #20302a; }
 .scan-steps b { font-size: 14.5px; } .scan-steps span { font-size: 12.5px; color: var(--muted); }
 .credit-card { display: grid; gap: 8px; }
 .course-card { display: grid; gap: 10px; }
+.chip.off { opacity: .55; }
 .switch { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 600; cursor: pointer; }
 .switch input { width: 20px; height: 20px; accent-color: var(--accent); }
 .credit-card .credit-n { font-family: var(--font-display); font-size: 26px; font-weight: 800; }
@@ -1461,7 +1462,9 @@ VIEWS.create = async () => {
       del.closest(".syn-row").remove(); haptic("select"); refresh();
     });
   });
-  document.querySelectorAll("[data-check]").forEach(x => x.onclick = () => { collect(); st.checkMode = x.dataset.check; haptic("select"); saveDraft(); rerender(); });
+  document.querySelectorAll("[data-check]").forEach(x => x.onclick = () => {
+    if (x.dataset.check === "paid" && !(S.boot || {}).paid_ai) { toast("💎 Pullik tekshiruv hali ulanmagan — admin Render'ga ANTHROPIC_API_KEY qo'shishi kerak"); haptic("error"); return; }
+    collect(); st.checkMode = x.dataset.check; haptic("select"); saveDraft(); rerender(); });
   document.querySelectorAll("[data-mode]").forEach(x => x.onclick = () => { collect(); st.mode = x.dataset.mode; haptic("select"); rerender(); });
   document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; haptic("select"); rerender(); });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
@@ -1846,12 +1849,11 @@ async function aiView(mode) {
 // Oflayn test: yozma javoblarni kim o'qiydi — bepul (Gemini: FREE_IDS; boshqalar — o'zi rasmga qarab) yoki pullik AI (Claude, kreditdan)
 function checkModeHTML(st) {
   const b = S.boot || {};
-  if (!b.paid_ai) return "";
-  const free = b.free_ai ? "🆓 Bepul AI (Gemini)" : "✋ O'zim tekshiraman";
-  const mode = st.checkMode || "free";
+  const free = b.free_ai ? "🆓 Gemini — bepul" : "✋ O'zim tekshiraman — bepul";
+  const mode = b.paid_ai ? (st.checkMode || "free") : "free";
   return `<div class="card"><b>✍️ Yozma javoblarni tekshirish</b>
     <div class="chips"><button type="button" class="chip ${mode === "free" ? "on" : ""}" data-check="free">${free}</button>
-      <button type="button" class="chip ${mode === "paid" ? "on" : ""}" data-check="paid">💎 AI tekshiruvi (Claude)</button></div>
+      <button type="button" class="chip ${mode === "paid" ? "on" : ""} ${b.paid_ai ? "" : "off"}" data-check="paid">💎 Claude — pullik${b.paid_ai ? "" : " 🔒"}</button></div>
     <span class="muted small">${mode === "paid" ? `Skanerlangan titullarning yozma javoblarini Claude o'qiydi — aniqroq. ${b.ai_credits == null ? "Siz uchun bepul." : `Har 10 ta titul = 1 kredit (qoldi: <b>${b.ai_credits}</b>). Kredit tugasa — rasmga qarab o'zingiz belgilaysiz.`}`
       : b.free_ai ? "Yozma javoblarni bepul Gemini o'qiydi, keyin tekshirib tasdiqlaysiz." : "Skanerdan keyin «✍️ Yozmalarni tekshirish»da har titul rasmiga qarab ✅ / ❌ belgilaysiz."}</span></div>`;
 }

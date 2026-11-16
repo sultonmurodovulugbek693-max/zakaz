@@ -192,20 +192,71 @@ def results_pdf(test: dict, attempts: list[dict]) -> bytes:
     milliy = test["fmt"] == "milliy"
     rasch = rasch_results(test, attempts) if milliy and attempts else {}
 
+    unchecked = _unchecked_written(test, attempts)
+    pending = [a for a in attempts if milliy and essay_pending(test, a)]
     story = [_banner(test, width), Spacer(1, 4 * mm), _summary_cards(test, attempts, rasch, width)]
-    if milliy and rasch:
+    if milliy and rasch and len(pending) < len(attempts):
         story += [Spacer(1, 3 * mm), _grade_strip(rasch, width)]
+    notes = []
+    if pending:
+        notes.append(f"<b>{len(pending)} ta o'quvchining esse bahosi kiritilmagan</b> — ball, umumiy ball va daraja "
+                     "esse bahosi kiritilgach chiqadi (ilovada «Esselar»).")
+    if unchecked:
+        notes.append(f"<b>{len(unchecked)} ta titulning yozma javoblari (36–44) tekshirilmagan</b> — 2-varaq "
+                     "skanerlanmagan yoki «Yozmalarni tekshirish»da belgilanmagan; ular xato hisoblanmadi.")
+    if notes:
+        story += [Spacer(1, 3 * mm), _notice("<br/>".join(notes), width)]
     story.append(Spacer(1, 5 * mm))
-    story.append(_milliy_table(test, attempts, rasch, width) if milliy else _simple_table(test, attempts, width))
+    story.append(_milliy_table(test, attempts, rasch, width, unchecked) if milliy else _simple_table(test, attempts, width))
     if milliy:
         story += [Spacer(1, 4 * mm), Paragraph(_milliy_note(attempts), STYLES["small"])]
-    if attempts:
+    if len(attempts) >= ANALYSIS_MIN:
         story += [PageBreak(), Paragraph("Savollar tahlili", STYLES["h1"]),
                   Paragraph("Har bir savolni necha foiz qatnashchi to'g'ri yechgani. "
                             "Qizil — qiyin (40% dan kam), sariq — o'rtacha, yashil — oson (70% va ko'p).", STYLES["small"]),
                   Spacer(1, 3 * mm), _analysis_table(test, attempts, width)]
     doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
     return buffer.getvalue()
+
+
+ANALYSIS_MIN = 3  # savollar tahlili — kamida shuncha qatnashchida (1–2 kishida faqat 0% / 100% chiqadi)
+
+
+def _unchecked_written(test: dict, attempts: list[dict]) -> set[int]:
+    """Oflayn milliy testda yozma javoblari hali tekshirilmagan natijalar: 36–44 hammasi bo'sh va AI o'qib
+    bo'lmagan (2-varaq skanerlanmagan / «o'zim tekshiraman» rejimida belgilanmagan). Ular xato deb sanalmaydi."""
+    if test["fmt"] != "milliy" or (test.get("mode") or "online") != "offline":
+        return set()
+    try:
+        import db
+        jobs = db.written_jobs_for_test(test["id"])
+    except Exception:
+        return set()
+    labels = [item["label"] for item in text_items(test["items"])]
+    return {a["id"] for a in attempts
+            if jobs.get(a["id"]) != "done" and all(not str(a["answers"].get(label) or "").strip() for label in labels)}
+
+
+def _compact(labels: list[str], order: list[str]) -> str:
+    """Xato savollar qisqa: 1, 3, 5–9, 36–40b (ketma-ket kelganlari oraliq bilan)."""
+    position = {label: index for index, label in enumerate(order)}
+    runs: list[list[int]] = []
+    for index in sorted(position[label] for label in labels if label in position):
+        if runs and index == runs[-1][1] + 1:
+            runs[-1][1] = index
+        else:
+            runs.append([index, index])
+    parts = [order[a] if a == b else f"{order[a]}, {order[b]}" if b == a + 1 else f"{order[a]}–{order[b]}" for a, b in runs]
+    return ", ".join(parts) or "—"
+
+
+def _notice(text: str, width: float) -> Table:
+    table = Table([[Paragraph(text, STYLES["small"])]], colWidths=[width])
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff7e6")),
+                               ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor("#f0a020")),
+                               ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    return table
 
 
 def _page_footer(c: canvas.Canvas, doc) -> None:
@@ -234,14 +285,16 @@ def _summary_cards(test: dict, attempts: list[dict], rasch: dict, width: float) 
     count = len(attempts)
     if test["fmt"] == "milliy":
         top = max_points(test["items"], test["fmt"])
-        totals = [total_points(a) for a in attempts if not essay_pending(test, a)] or [0]
-        certified = sum(1 for _, grade in rasch.values() if grade != "NC")
+        ready = [a for a in attempts if not essay_pending(test, a)]  # esse bahosi kiritilganlar (yakuniy natija)
+        totals = [total_points(a) for a in ready]
+        scores = [rasch[a["id"]] for a in ready if a["id"] in rasch]
+        certified = sum(1 for _, grade in scores if grade != "NC")
         cards = [
             ("Qatnashchilar", str(count)),
-            ("O'rtacha ball", f"{fmt_num(sum(totals) / max(count, 1))} / {fmt_num(top)}"),
-            ("Eng yuqori ball", fmt_num(max(totals))),
-            ("O'rtacha Rasch", fmt_num(sum(s for s, _ in rasch.values()) / len(rasch)) if rasch else "—"),
-            ("Sertifikat (C va yuqori)", f"{certified} ta" if rasch else "—"),
+            ("O'rtacha ball", f"{fmt_num(sum(totals) / len(totals))} / {fmt_num(top)}" if totals else "—"),
+            ("Eng yuqori ball", fmt_num(max(totals)) if totals else "—"),
+            ("O'rtacha umumiy (75)", fmt_num(sum(s for s, _ in scores) / len(scores)) if scores else "—"),
+            ("Sertifikat (C va yuqori)", f"{certified} ta" if scores else "—"),
         ]
     else:
         shares = [percent(a["test_correct"] + a["written_correct"], a["auto_total"]) for a in attempts] or [0]
@@ -280,8 +333,10 @@ def _grade_strip(rasch: dict, width: float) -> Table:
     return table
 
 
-def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float) -> Table:
+def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float, unchecked: set[int] = frozenset()) -> Table:
     choices, texts = choice_items(test["items"]), text_items(test["items"])
+    order = [item["label"] for item in test["items"]]
+    text_labels = {item["label"] for item in texts}
     top = max_points(test["items"], test["fmt"])
     header = ["№", "F.I.Sh.", "Var.", "Test\n(1–35)", "Yozma\n(36–44)", f"Esse\n({ESSAY_SCALE})",
               f"Ball\n({fmt_num(top)})", "Umumiy\n(75)", "Daraja", "Xato savollar"]
@@ -290,14 +345,19 @@ def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float) -
     for place, attempt in enumerate(ranked(attempts, rasch), start=1):
         score, grade = rasch.get(attempt["id"], (0.0, "—"))
         pending = essay_pending(test, attempt)  # qog'ozdagi esse bahosi kiritilmagan — natija chiqmaydi
+        written_open = attempt["id"] in unchecked  # 36–44 hali tekshirilmagan — xato emas
+        wrong = [label for label in attempt["wrong"] if not (written_open and label in text_labels)]
         rows.append([
             str(place), Paragraph(_esc(attempt["student_name"]), STYLES["cell"]), attempt["variant"],
-            f"{attempt['test_correct']}/{len(choices)}", f"{attempt['written_correct']}/{len(texts)}",
-            "kutilmoqda" if pending else ("—" if attempt["essay"] is None else fmt_num(essay_to_75(attempt["essay"]))),
+            f"{attempt['test_correct']}/{len(choices)}",
+            Paragraph("<font size=7>tekshi-<br/>rilmagan</font>", STYLES["cell"]) if written_open
+            else f"{attempt['written_correct']}/{len(texts)}",
+            Paragraph("<font size=7>kutil-<br/>moqda</font>", STYLES["cell"]) if pending
+            else ("—" if attempt["essay"] is None else fmt_num(essay_to_75(attempt["essay"]))),
             "—" if pending else fmt_num(total_points(attempt)), "—" if pending else fmt_num(score), "—" if pending else grade,
-            Paragraph(", ".join(attempt["wrong"]) or "—", STYLES["cell_small"]),
+            Paragraph(f"<b>{len(wrong)} ta:</b> {_compact(wrong, order)}" if wrong else "—", STYLES["cell_small"]),
         ])
-        if grade in GRADE_COLORS:
+        if grade in GRADE_COLORS and not pending:
             style.add("BACKGROUND", (8, place), (8, place), colors.HexColor(GRADE_COLORS[grade]))
             style.add("TEXTCOLOR", (8, place), (8, place), colors.white)
             style.add("FONT", (8, place), (8, place), "Sans-Bold", 9)
@@ -318,7 +378,8 @@ def _simple_table(test: dict, attempts: list[dict], width: float) -> Table:
         share = percent(correct, attempt["auto_total"])
         rows.append([str(place), Paragraph(_esc(attempt["student_name"]), STYLES["cell"]), attempt["variant"],
                      f"{correct}/{attempt['auto_total']}", f"{fmt_num(share)}%",
-                     Paragraph(", ".join(attempt["wrong"]) or "—", STYLES["cell_small"])])
+                     Paragraph(f"<b>{len(attempt['wrong'])} ta:</b> {_compact(attempt['wrong'], [i['label'] for i in test['items']])}"
+                               if attempt["wrong"] else "—", STYLES["cell_small"])])
         style.add("BACKGROUND", (4, place), (4, place), GOOD if share >= 70 else MID if share >= 40 else BAD)
     if len(rows) == 1:
         rows.append(["", "Hali hech kim javob yubormagan"] + [""] * (len(header) - 2))
