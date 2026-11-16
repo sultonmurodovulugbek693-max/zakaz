@@ -558,7 +558,30 @@ function relogin(json) {
 // Eskirgan ekranning javobi: hech qachon tugamaydigan va'da — kech kelgan ma'lumot yangi ekran ustiga chizilmaydi
 const STALE = () => new Promise(() => {});
 
+// Tez ekranlar: oldin ochilgan sahifaning ma'lumoti darhol ko'rsatiladi, serverdan yangisi orqada olinadi
+// (o'zgargan bo'lsa — ekran jimgina yangilanadi). Har amal (POST) keshni tozalaydi. Kuzatuv/holat so'rovlari keshlanmaydi
+const MEM = new Map();
+const MEM_TTL = 10 * 60 * 1000, MEM_FRESH = 3000;
+const NO_MEM = /\/live$|\/api\/my-essay\/|\/api\/practice\/\d|\/api\/app\/|\/essay-scan|\/scan\/|\/written|\/download|^\/api\/test\/\d+(\?|$)|\/api\/courses/;
+function memRevalidate(path, hit) {
+  hit.refreshing = true;
+  const view = S.current;
+  fetch(path, { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(json => {
+    if (!json) { MEM.delete(path); return; }
+    const text = JSON.stringify(json);
+    MEM.set(path, { text, at: Date.now() });
+    const busy = document.querySelector(".sheet-modal") || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+    if (text !== hit.text && S.current === view && !busy) rerender();
+  }).catch(() => {}).finally(() => { hit.refreshing = false; });
+}
 async function api(path, data) {
+  if (data === undefined && !NO_MEM.test(path)) {
+    const hit = MEM.get(path);
+    if (hit && Date.now() - hit.at < MEM_TTL) {
+      if (Date.now() - hit.at > MEM_FRESH && !hit.refreshing) memRevalidate(path, hit);
+      return JSON.parse(hit.text);
+    }
+  } else if (data !== undefined) MEM.clear();
   const opts = { headers: authHeaders() };
   if (data !== undefined) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(data); }
   // GET — ekran uchun ma'lumot. Javob kelguncha foydalanuvchi boshqa sahifaga o'tgan bo'lsa (yangi render),
@@ -575,6 +598,8 @@ async function api(path, data) {
   }
   if (res.status === 401) relogin(json);
   if (!res.ok) { const err = new Error(json.error || "Xatolik yuz berdi"); err.data = json; throw err; }
+  if (view && !NO_MEM.test(path)) MEM.set(path, { text: JSON.stringify(json), at: Date.now() });
+  else if (!view) MEM.clear();  // amal bajarildi — ma'lumot o'zgargan bo'lishi mumkin
   return json;
 }
 
@@ -2153,6 +2178,7 @@ function copyTestModal(t) {
 
 // ---------- Oflayn test: ro'yxat, titullar, skaner ----------
 async function apiForm(path, form) {
+  MEM.clear();  // fayl yuborildi (rasm, chek, skaner) — ekran ma'lumotlari yangidan olinsin
   let res;
   try { res = await fetch(path, { method: "POST", headers: authHeaders(), body: form }); }
   catch (e) { throw new Error("Internet aloqasi yo'q"); }
