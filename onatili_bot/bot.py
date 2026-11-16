@@ -510,6 +510,10 @@ async def cmd_myid(message: Message) -> None:
 @dp.message(StateFilter(None), F.photo | F.document)
 async def receipt_received(message: Message) -> None:
     """Chek rasmi: ochiq to'lov so'rovi bo'lsa — adminlarga tasdiqlash uchun yuboriladi."""
+    scan = await asyncio.to_thread(db.collecting_essay_scan, message.from_user.id)
+    if scan:  # o'quvchi ilovada «Botga yuboraman» ni bosgan — bu esse sahifasi
+        await essay_page_received(message, scan)
+        return
     essay_pay = await asyncio.to_thread(db.open_essay_payment, message.from_user.id)
     if essay_pay:
         await essay_receipt_received(message, essay_pay)
@@ -529,6 +533,64 @@ async def receipt_received(message: Message) -> None:
                          f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, "
                          + ("esselarni qo'shadi." if payment["period"] == plans.PACK else "obunangizni yoqadi."))
     await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo))
+
+
+READER_NAMES = {"gemini": "Gemini (bepul)", "claude": "Claude (aniqroq)"}
+
+
+async def essay_scan_start(bot: Bot, student_id: int, test: dict, ai: str) -> None:
+    await bot.send_message(student_id, f"📷 <b>Esse rasmi</b> · {esc(test['title'])} (kod {test['code']})\n"
+                           f"Qog'ozga yozgan essengiz sahifalarini (1–{db.ESSAY_SCAN_PAGES} ta) rasmga olib, shu yerga yuboring "
+                           f"va «✅ Tayyor» ni bosing.\nO'qiydi: <b>{READER_NAMES.get(ai, ai)}</b>\n\n"
+                           "Maslahat: yorug' joyda, varaqni tekis qo'yib, butun sahifa ko'rinadigan qilib oling.",
+                           reply_markup=inline([[("✅ Tayyor — o'qish", f"es:{test['id']}")]]))
+
+
+async def essay_page_received(message: Message, scan: dict) -> None:
+    if message.document and not (message.document.mime_type or "").startswith("image/"):
+        await message.answer("📷 Esse sahifasini rasm ko'rinishida yuboring.")
+        return
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    mime = "image/jpeg" if message.photo else message.document.mime_type
+    data = (await message.bot.download(file_id)).read()
+    count = await asyncio.to_thread(db.add_essay_scan_page, message.from_user.id, scan["test_id"],
+                                    base64.b64encode(data).decode(), mime)
+    full = count >= db.ESSAY_SCAN_PAGES
+    await message.answer(f"📄 {count}-bet qabul qilindi." + (" Ko'pi bilan shuncha." if full else " Yana yuboring yoki")
+                         + " «✅ Tayyor» ni bosing.", reply_markup=inline([[("✅ Tayyor — o'qish", f"es:{scan['test_id']}")]]))
+
+
+@dp.callback_query(F.data.startswith("es:"))
+async def essay_scan_done(callback: CallbackQuery) -> None:
+    test_id = int(callback.data.split(":")[1])
+    scan = await asyncio.to_thread(db.get_essay_scan, callback.from_user.id, test_id)
+    if not scan or scan["status"] != "collecting":
+        await callback.answer("Bu esse allaqachon o'qilgan yoki boshlanmagan", show_alert=True)
+        return
+    if not scan["pages"]:
+        await callback.answer("Avval esse sahifasi rasmini yuboring", show_alert=True)
+        return
+    await callback.answer("O'qilmoqda…")
+    wait = await callback.message.answer(f"🔎 {len(scan['pages'])} ta sahifa o'qilmoqda — 20–60 soniya…")
+    try:
+        await webapp.read_essay_scan(callback.from_user.id, test_id, notify=True)
+    finally:
+        try:
+            await wait.delete()
+        except TelegramBadRequest:
+            pass
+
+
+async def essay_scan_notice(bot: Bot, student_id: int, test_id: int, text: str, model: str) -> None:
+    """AI o'qigan esse matni — chatga (uzun bo'lsa bo'lib) va ilovaga qaytish tugmasi."""
+    test = await asyncio.to_thread(db.get_test, test_id)
+    chunks = [text[i:i + 3500] for i in range(0, len(text), 3500)] or [""]
+    await bot.send_message(student_id, f"📝 <b>Essengiz matni</b> · o'qidi: {esc(model)}\n"
+                           "Xato o'qilgan so'zlarni ilovada tuzating.")
+    for chunk in chunks:
+        await bot.send_message(student_id, esc(chunk))
+    await bot.send_message(student_id, "Ilovada «⬇️ Botdan olish» ni bosing — matn esse maydoniga tushadi.",
+                           reply_markup=app_markup("📝 Testga qaytish", c=test["code"]) if test else None)
 
 
 async def essay_receipt_received(message: Message, pay: dict) -> None:
@@ -1592,6 +1654,8 @@ async def main() -> None:
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,
         essay_receipt_notice=lambda *a: essay_receipt_notice(bot, *a),
+        essay_scan_start=lambda *a: essay_scan_start(bot, *a),
+        essay_scan_notice=lambda *a: essay_scan_notice(bot, *a),
         join_notice=lambda *a: join_notice(bot, *a),
         announce=lambda test, owner: announce_test(bot, test, owner),
         send_pdf=lambda chat_id, test, kind: send_pdf(bot, chat_id, test, kind),

@@ -293,6 +293,7 @@ async def test_info(request: web.Request) -> web.Response:
         "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
         "essay_pay": None if previous else await essay_pay_info(test, user),
         "essay_warning": None if previous else await essay_warning(test, user),
+        "readers": essay_ai.readers() if test["fmt"] == "milliy" else [],  # esse rasmini o'qiydigan AI'lar
     })
 
 
@@ -336,6 +337,109 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
     return {"price": price, "card": card["number"], "holder": card["holder"], "status": pay["status"] if pay else None,
             "note": pay["note"] if pay and pay["status"] == "rejected" else None,
             "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
+
+
+# ---------- Qog'ozdagi esse rasmi → matn (onlayn mock): ilovada yoki botda; qaysi AI o'qishini o'quvchi tanlaydi ----------
+
+async def _scan_test(request: web.Request, user: dict) -> dict:
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test or test["fmt"] != "milliy" or (test.get("mode") or "online") != "online":
+        raise ApiError(404, "Test topilmadi")
+    if test["closed"]:
+        raise ApiError(409, "Natijalar e'lon qilingan — javob qabul qilinmaydi")
+    if await run(db.find_attempt, test["id"], user["id"]):
+        raise ApiError(409, "Siz bu testga javob yuborgansiz")
+    pay = await essay_pay_info(test, user)
+    if pay:
+        raise ApiError(402, "Esseni yuklashdan oldin esse tekshiruvini to'lang", essay_pay=pay)
+    return test
+
+
+def _reader(raw) -> str:
+    keys = [r["key"] for r in essay_ai.readers()]
+    if not keys:
+        raise ApiError(409, "Esse rasmini o'qiydigan AI hozir ulanmagan — esseni yozib kiriting")
+    return raw if raw in keys else keys[0]
+
+
+def _scan_view(scan: dict | None) -> dict:
+    if not scan:
+        return {"status": None}
+    return {"status": scan["status"], "ai": scan["ai"], "text": scan["text"] if scan["status"] == "done" else None,
+            "model": scan["model"], "pages": len(scan["pages"] or []), "error": scan["error"]}
+
+
+async def read_essay_scan(student_id: int, test_id: int, notify: bool) -> dict:
+    """Yig'ilgan sahifalarni AI o'qiydi → matn saqlanadi; notify — botga ham (matn chatga)."""
+    scan = await run(db.get_essay_scan, student_id, test_id)
+    if not scan or not scan["pages"]:
+        raise ApiError(400, "Avval esse rasmini yuboring")
+    await run(db.set_essay_scan, student_id, test_id, "reading", None, None, None, True)
+    images = [(base64.b64decode(b64), mime) for b64, mime in scan["pages"]]
+    try:
+        text, model = await asyncio.wait_for(essay_ai.transcribe(images, scan["ai"]), ESSAY_SCAN_TIMEOUT)
+    except Exception as error:
+        logger.warning("Esse rasmi o'qilmadi: %s", error)
+        await run(db.set_essay_scan, student_id, test_id, "failed", None, None, "AI rasmni o'qiy olmadi", True)
+        if notify and "send_text" in HOOKS:
+            await HOOKS["send_text"](student_id, "⚠️ AI rasmni o'qiy olmadi. Rasmni yorug' joyda, tekis qilib qayta oling "
+                                                 "yoki esseni ilovada yozib kiriting.")
+        return _scan_view(await run(db.get_essay_scan, student_id, test_id))
+    await run(db.set_essay_scan, student_id, test_id, "done", text, model)
+    if notify and "essay_scan_notice" in HOOKS:
+        try:
+            await HOOKS["essay_scan_notice"](student_id, test_id, text, model)
+        except Exception:
+            logger.warning("Esse matni botga yuborilmadi", exc_info=True)
+    return _scan_view(await run(db.get_essay_scan, student_id, test_id))
+
+
+ESSAY_SCAN_TIMEOUT = 150
+
+
+async def essay_scan_get(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test:
+        raise ApiError(404, "Test topilmadi")
+    return ok(_scan_view(await run(db.get_essay_scan, user["id"], test["id"])))
+
+
+async def essay_scan_start(request: web.Request) -> web.Response:
+    """«Botga yuboraman»: bot esse sahifalarini kutadi, o'quvchi yuborib «✅ Tayyor» ni bosadi."""
+    user = await auth(request)
+    test = await _scan_test(request, user)
+    ai = _reader((await body(request)).get("ai"))
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    await run(db.start_essay_scan, user["id"], test["id"], ai)
+    if "essay_scan_start" in HOOKS:
+        try:
+            await HOOKS["essay_scan_start"](user["id"], test, ai)
+        except Exception:
+            logger.warning("Esse rasmi ko'rsatmasi yuborilmadi", exc_info=True)
+    return ok({"ok": True, "status": "collecting", "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""})
+
+
+async def essay_scan_upload(request: web.Request) -> web.Response:
+    """Ilovaning o'zida: esse sahifalari rasmi (1–4) → AI darhol o'qiydi → matn."""
+    user = await auth(request)
+    test = await _scan_test(request, user)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Rasm yuborilmadi")
+    ai = _reader(form.get("ai"))
+    files = [f for f in form.getall("photo", []) if hasattr(f, "file")][:db.ESSAY_SCAN_PAGES]
+    if not files:
+        raise ApiError(400, "Esse rasmini tanlang")
+    await run(db.start_essay_scan, user["id"], test["id"], ai)
+    for field in files:
+        data = field.file.read()
+        if not data or len(data) > 8 * 1024 * 1024:
+            raise ApiError(400, "Har rasm 8 MB dan kichik bo'lsin")
+        await run(db.add_essay_scan_page, user["id"], test["id"], base64.b64encode(data).decode(),
+                  (getattr(field, "content_type", None) or "image/jpeg")[:30])
+    return ok(await read_essay_scan(user["id"], test["id"], notify=False))
 
 
 async def essay_ai_ok(test: dict, student_id: int) -> bool:
@@ -2779,6 +2883,9 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/join/{request_id:\\d+}/photo", join_photo)
     app.router.add_post("/api/teacher/join/{request_id:\\d+}", join_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/essay-pay", essay_pay_start)
+    app.router.add_get("/api/test/{code:\\d{5}}/essay-scan", essay_scan_get)
+    app.router.add_post("/api/test/{code:\\d{5}}/essay-scan/start", essay_scan_start)
+    app.router.add_post("/api/test/{code:\\d{5}}/essay-scan/photo", essay_scan_upload)
     app.router.add_get("/api/teacher/essay-payments", essay_payments_list)
     app.router.add_get("/api/teacher/essay-payment/{payment_id:\\d+}/receipt", essay_payment_receipt)
     app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)

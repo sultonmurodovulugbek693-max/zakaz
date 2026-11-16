@@ -153,6 +153,19 @@ SCHEMA = [
         cost       REAL NOT NULL DEFAULT 0,
         PRIMARY KEY (day, kind, model)
     )""",
+    # O'quvchi qog'ozga yozgan essesi rasmi (onlayn mock): AI o'qib matnga aylantiradi, o'quvchi tuzatib yuboradi
+    f"""CREATE TABLE IF NOT EXISTS essay_scans (
+        student_id {BIG} NOT NULL,
+        test_id    {BIG} NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'collecting',
+        ai         TEXT NOT NULL DEFAULT 'gemini',
+        pages      TEXT,
+        text       TEXT,
+        model      TEXT,
+        error      TEXT,
+        updated_at TEXT,
+        PRIMARY KEY (student_id, test_id)
+    )""",
     # Eski: ustozga mock arizasi (endi ishlatilmaydi — ma'lumot saqlanib qoladi)
     f"""CREATE TABLE IF NOT EXISTS mock_requests (
         id         {ID},
@@ -1044,6 +1057,57 @@ def receipt_used(receipt_hash: str, txn: str | None, payment_id: int) -> bool:
             "SELECT 1 FROM essay_payments WHERE id <> ? AND status IN ('paid', 'review') AND "
             "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
             (payment_id, receipt_hash, txn or "", txn or "")).fetchone())
+
+
+ESSAY_SCAN_PAGES = 4
+
+
+def start_essay_scan(student_id: int, test_id: int, ai: str) -> None:
+    """Esse rasmlarini yig'ish boshlanadi (oldingisi tozalanadi)."""
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO essay_scans (student_id, test_id, status, ai, pages, text, model, error, updated_at) "
+            "VALUES (?, ?, 'collecting', ?, '[]', NULL, NULL, NULL, ?) ON CONFLICT(student_id, test_id) DO UPDATE SET "
+            "status = 'collecting', ai = excluded.ai, pages = '[]', text = NULL, model = NULL, error = NULL, "
+            "updated_at = excluded.updated_at", (student_id, test_id, ai, _now()))
+
+
+def collecting_essay_scan(student_id: int) -> dict | None:
+    """Botga yuborilgan rasm — esse sahifasimi: o'quvchining rasm yig'ilayotgan essesi (eng oxirgisi)."""
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT s.student_id, s.test_id, s.ai, s.pages, t.title, t.code FROM essay_scans s JOIN tests t ON t.id = s.test_id "
+            "WHERE s.student_id = ? AND s.status = 'collecting' ORDER BY s.updated_at DESC LIMIT 1", (student_id,)).fetchone())
+
+
+def add_essay_scan_page(student_id: int, test_id: int, image_b64: str, mime: str) -> int:
+    """Sahifa qo'shiladi — jami nechta (ESSAY_SCAN_PAGES dan oshmaydi)."""
+    with connect() as conn:
+        row = conn.execute("SELECT pages FROM essay_scans WHERE student_id = ? AND test_id = ?", (student_id, test_id)).fetchone()
+        pages = json.loads(row["pages"] or "[]") if row else []
+        if len(pages) < ESSAY_SCAN_PAGES:
+            pages.append([image_b64, mime])
+            conn.execute("UPDATE essay_scans SET pages = ?, updated_at = ? WHERE student_id = ? AND test_id = ?",
+                         (json.dumps(pages), _now(), student_id, test_id))
+    return len(pages)
+
+
+def get_essay_scan(student_id: int, test_id: int) -> dict | None:
+    with connect() as conn:
+        row = _row(conn.execute("SELECT * FROM essay_scans WHERE student_id = ? AND test_id = ?",
+                                (student_id, test_id)).fetchone())
+    if row:
+        row["pages"] = json.loads(row["pages"] or "[]")
+    return row
+
+
+def set_essay_scan(student_id: int, test_id: int, status: str, text: str | None = None, model: str | None = None,
+                   error: str | None = None, keep_pages: bool = False) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE essay_scans SET status = ?, text = ?, model = ?, error = ?, updated_at = ?"
+            + ("" if keep_pages else ", pages = '[]'") + " WHERE student_id = ? AND test_id = ?",
+            (status, text, model, error, _now(), student_id, test_id))
 
 
 def essay_payments_for_owner(owner_id: int, limit: int = 30) -> list[dict]:

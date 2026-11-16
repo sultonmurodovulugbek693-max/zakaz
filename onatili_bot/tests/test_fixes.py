@@ -1263,5 +1263,112 @@ class OnlineOfficialTitul(ServerBase):
         self.assertEqual(db.get_test(copy["id"])["sheet_style"], "official")
 
 
+class EssayScan(ServerBase):
+    """Qog'ozdagi esse rasmi → matn: ilovada yuklash yoki botga yuborish; AI'ni o'quvchi tanlaydi; zaxira AI."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._saved = (essay_ai.ANTHROPIC_API_KEY, essay_ai._call)
+        essay_ai.ANTHROPIC_API_KEY = "test-key"
+        self.calls = []
+
+        async def fake_call(system, text, images, schema, provider=None, effort="medium", kind="other", model=None):
+            self.calls.append(provider)
+            if provider in self.broken:
+                raise essay_ai.AIError("limit 429", retry=True)
+            return "Vatan — bu ona.\nUni sevamiz.", {"model": model or "gemini-flash-latest", "cost": 0}
+        self.broken = set()
+        essay_ai._call = fake_call
+        notices = self.notices = []
+
+        async def notice(*a):
+            notices.append(a)
+        webapp.HOOKS.update(essay_scan_notice=notice, essay_scan_start=notice,
+                            bot_username=lambda: asyncio.sleep(0, "test_bot"))
+        _, r = await self.create(mode="online", fmt="milliy")
+        self.test = db.get_test(r["id"])
+        db.link_student(OWNER, STUDENT)
+        self.user = {"id": STUDENT, "name": "O'quvchi", "username": "s"}
+
+    async def asyncTearDown(self):
+        essay_ai.ANTHROPIC_API_KEY, essay_ai._call = self._saved
+        await super().asyncTearDown()
+
+    async def upload(self, ai, n=2):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("ai", ai)
+        for i in range(n):
+            form.add_field("photo", f"bet{i}".encode(), filename=f"{i}.jpg", content_type="image/jpeg")
+        response = await self.client.post(f"/api/test/{self.test['code']}/essay-scan/photo", data=form)
+        return response.status, await response.json()
+
+    async def test_readers_listed_and_upload_reads(self):
+        info = await (await self.client.get(f"/api/test/{self.test['code']}")).json()
+        self.assertEqual([r["key"] for r in info["readers"]], ["gemini", "claude"])
+        status, r = await self.upload("claude")
+        self.assertEqual((status, r["status"], r["model"]), (200, "done", essay_ai.PAID_MODEL))
+        self.assertIn("Vatan", r["text"])
+        self.assertEqual(self.calls, ["claude"])
+        got = await (await self.client.get(f"/api/test/{self.test['code']}/essay-scan")).json()
+        self.assertEqual(got["text"], r["text"])
+        self.assertEqual(db.get_essay_scan(STUDENT, self.test["id"])["pages"], [])  # rasmlar saqlanib qolmaydi
+
+    async def test_fallback_to_other_ai(self):
+        self.broken = {"gemini"}
+        status, r = await self.upload("gemini")
+        self.assertEqual((r["status"], r["model"]), ("done", essay_ai.PAID_MODEL))
+        self.assertEqual(self.calls, ["gemini", "claude"])
+        self.broken = {"gemini", "claude"}
+        status, r = await self.upload("gemini")
+        self.assertEqual((status, r["status"]), (200, "failed"))
+
+    async def test_outsider_must_pay_first_and_submitted_blocked(self):
+        db.set_test_price(self.test["id"], 15000)
+        db.set_setting(f"teacher_card:{OWNER}", "8600123412341234")
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertEqual((await self.upload("gemini"))[0], 402)
+        self.user = {"id": STUDENT, "name": "O'quvchi", "username": "s"}
+        await self.post(f"/api/test/{self.test['code']}/submit", {"variant": "A", "name": "Ali Valiyev", "answers": {}})
+        self.assertEqual((await self.upload("gemini"))[0], 409)
+
+    async def test_bot_route(self):
+        import io
+        status, r = await self.post(f"/api/test/{self.test['code']}/essay-scan/start", {"ai": "gemini"})
+        self.assertEqual((status, r["bot"]), (200, "test_bot"))
+        self.assertEqual(self.notices[-1][2], "gemini")
+        answers = []
+
+        class Sent:
+            async def delete(self):
+                pass
+
+        async def answer(text, **_):
+            answers.append(text)
+            return Sent()
+
+        async def download(file_id):
+            return io.BytesIO(b"bet")
+        message = types.SimpleNamespace(from_user=types.SimpleNamespace(id=STUDENT), photo=[types.SimpleNamespace(file_id="F")],
+                                        document=None, answer=answer, bot=types.SimpleNamespace(download=download))
+        await bot.receipt_received(message)  # chek emas — esse sahifasi
+        await bot.receipt_received(message)
+        self.assertIn("2-bet", answers[-1])
+        replies = []
+
+        async def cb_answer(text=None, **_):
+            replies.append(text)
+        callback = types.SimpleNamespace(data=f"es:{self.test['id']}", from_user=types.SimpleNamespace(id=STUDENT),
+                                         answer=cb_answer, message=types.SimpleNamespace(answer=answer))
+        await bot.essay_scan_done(callback)
+        scan = db.get_essay_scan(STUDENT, self.test["id"])
+        self.assertEqual(scan["status"], "done")
+        self.assertIn("Vatan", self.notices[-1][2])  # matn chatga
+        await bot.essay_scan_done(callback)  # qayta bosish
+        self.assertIn("allaqachon", replies[-1])
+        await bot.receipt_received(message)  # endi esse yig'ilmayapti — oddiy chek oqimi
+        self.assertIn("Chek qabul qilinmadi", answers[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

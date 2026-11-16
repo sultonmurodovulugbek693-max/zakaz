@@ -1151,7 +1151,8 @@ VIEWS.answer = async ({ code }) => {
       ${t.essay_warning ? `<div class="card" style="border:1.5px solid var(--warn)"><span class="small">⚠️ ${esc(t.essay_warning)}</span></div>` : ""}
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
         <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
-        <div class="counter" id="essay-count"></div></div>` : ""}
+        <div class="counter" id="essay-count"></div></div>
+      ${(t.readers || []).length ? essayScanHTML(t.readers, store("essay-reader")) : ""}` : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="submit">Javoblarni yuborish</button></div></div>
   </div>`;
   const nameEl = document.getElementById("name"), essayEl = document.getElementById("essay");
@@ -1181,6 +1182,8 @@ VIEWS.answer = async ({ code }) => {
   nameEl.oninput = save; if (essayEl) essayEl.oninput = progress;
   progress();
   if (t.essay_pay) bindEssayPay(t.code, t.essay_pay, () => { save(); rerender(); });
+  if (essayEl && (t.readers || []).length) bindEssayScan(t.code, essayEl, () => { progress(); },
+    key => store("essay-reader", key));
   document.getElementById("submit").onclick = async () => {
     const name = nameEl.value.trim();
     if (name.length < 3) { toast("Ism va familiyangizni yozing"); nameEl.focus(); haptic("error"); return; }
@@ -1820,6 +1823,63 @@ function checkModeHTML(st) {
       <button type="button" class="chip ${mode === "paid" ? "on" : ""}" data-check="paid">💎 AI tekshiruvi (Claude)</button></div>
     <span class="muted small">${mode === "paid" ? `Skanerlangan titullarning yozma javoblarini Claude o'qiydi — aniqroq. ${b.ai_credits == null ? "Siz uchun bepul." : `Har 10 ta titul = 1 kredit (qoldi: <b>${b.ai_credits}</b>). Kredit tugasa — rasmga qarab o'zingiz belgilaysiz.`}`
       : b.free_ai ? "Yozma javoblarni bepul Gemini o'qiydi, keyin tekshirib tasdiqlaysiz." : "Skanerdan keyin «✍️ Yozmalarni tekshirish»da har titul rasmiga qarab ✅ / ❌ belgilaysiz."}</span></div>`;
+}
+
+// Qog'ozga yozilgan esse: rasmini AI o'qib matnga aylantiradi — ilovada yuklash yoki botga yuborish; qaysi AI — o'quvchi tanlaydi
+function essayScanHTML(readers, chosen) {
+  const pick = readers.some(r => r.key === chosen) ? chosen : readers[0].key;
+  return `<div class="card" id="essay-scan"><b>📷 Qog'ozga yozdingizmi?</b>
+    <span class="muted small">Esse sahifalari rasmini AI o'qib, matnga aylantiradi — keyin xatolarini tuzatib yuborasiz.</span>
+    <div class="field"><label>Qaysi AI o'qisin</label><div class="chips">${readers.map(r =>
+      `<button type="button" class="chip ${r.key === pick ? "on" : ""}" data-reader="${r.key}">${r.key === "gemini" ? "🆓" : "💎"} ${esc(r.name)} · ${esc(r.note)}</button>`).join("")}</div></div>
+    <label class="btn block" for="es-files" id="es-upload">📷 Rasmni yuklash (1–4 bet)</label><input type="file" id="es-files" accept="image/*" multiple hidden>
+    <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="es-bot" style="flex:1">🤖 Botga yuboraman</button>
+      <button type="button" class="btn ghost" id="es-pull" style="flex:1">⬇️ Botdan olish</button></div>
+    <span class="small" id="es-note"></span></div>`;
+}
+function bindEssayScan(code, essayEl, changed, remember) {
+  const box = document.getElementById("essay-scan"); if (!box) return;
+  let reader = (box.querySelector("[data-reader].on") || {}).dataset?.reader;
+  const note = document.getElementById("es-note");
+  box.querySelectorAll("[data-reader]").forEach(x => x.onclick = () => {
+    reader = x.dataset.reader; remember(reader); haptic("select");
+    box.querySelectorAll("[data-reader]").forEach(y => y.classList.toggle("on", y === x));
+  });
+  const fill = async r => {
+    if (!r.text) return false;
+    if (essayEl.value.trim() && essayEl.value.trim() !== r.text.trim() && !(await confirmBox("Esse maydonidagi matn AI o'qigan matn bilan almashtirilsinmi?"))) return true;
+    essayEl.value = r.text; changed();
+    note.innerHTML = `✅ AI o'qidi: <b>${esc(r.model || "")}</b> — matnni o'qib, xato so'zlarni tuzating.`;
+    essayEl.scrollIntoView({ behavior: "smooth", block: "center" }); haptic("success");
+    return true;
+  };
+  const files = document.getElementById("es-files"), upload = document.getElementById("es-upload");
+  files.onchange = async () => {
+    if (!files.files.length) return;
+    upload.textContent = "🔎 O'qilmoqda… (20–60 soniya)"; upload.style.pointerEvents = "none";
+    try {
+      const form = new FormData(); form.append("ai", reader || "");
+      for (const f of [...files.files].slice(0, 4)) form.append("photo", await compressImage(f, 2000), "esse.jpg");
+      const r = await apiForm(`/api/test/${code}/essay-scan/photo`, form);
+      if (!(await fill(r))) { note.textContent = "⚠️ " + (r.error || "AI rasmni o'qiy olmadi") + " — rasmni tekisroq qayta oling yoki boshqa AI'ni tanlang."; haptic("error"); }
+    } catch (e) { toast(e.message); haptic("error"); }
+    upload.textContent = "📷 Rasmni yuklash (1–4 bet)"; upload.style.pointerEvents = ""; files.value = "";
+  };
+  document.getElementById("es-bot").onclick = async () => {
+    try {
+      const r = await api(`/api/test/${code}/essay-scan/start`, { ai: reader }); haptic("success");
+      note.textContent = "Botga sahifalar rasmini yuboring va «✅ Tayyor» ni bosing, keyin shu yerda «⬇️ Botdan olish».";
+      if (r.bot) { try { tg.openTelegramLink(`https://t.me/${r.bot}`); } catch (e) { window.open(`https://t.me/${r.bot}`, "_blank"); } }
+    } catch (e) { toast(e.message); haptic("error"); }
+  };
+  document.getElementById("es-pull").onclick = async () => {
+    try {
+      const r = await api(`/api/test/${code}/essay-scan`);
+      if (await fill(r)) return;
+      toast(r.status === "collecting" ? `Botda ${r.pages} ta bet — «✅ Tayyor» ni bosing` : r.status === "reading" ? "AI o'qimoqda — biroz kuting"
+        : r.status === "failed" ? "AI rasmni o'qiy olmadi — qayta yuboring" : "Hali rasm yuborilmagan");
+    } catch (e) { toast(e.message); }
+  };
 }
 
 // Mock yaratish: begonalar uchun esse tekshiruvi narxi va ustoz kartasi; o'z o'quvchilari — kreditdan (tugasa ogohlantirish)

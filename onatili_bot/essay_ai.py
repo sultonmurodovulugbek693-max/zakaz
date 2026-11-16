@@ -397,10 +397,34 @@ async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, st
     return result
 
 
-async def transcribe(images: list[tuple[bytes, str]]) -> tuple[str, float]:
-    """Qo'lyozma rasmlarini matnga aylantiradi (o'quvchi tasdiqlashi uchun)."""
-    out, usage = await _call(TRANSCRIBE_PROMPT, "Transcribe the essay.", images, None, kind="essay")
-    return out.strip(), usage["cost"]
+def readers() -> list[dict]:
+    """Esse rasmini o'qiydigan AI'lar (ilovada tanlanadi): bepul Gemini va aniqroq Claude — ulanganlari."""
+    out = []
+    if _ready("gemini"):
+        out.append({"key": "gemini", "name": "Gemini", "note": "bepul"})
+    if paid_enabled():
+        out.append({"key": "claude", "name": "Claude", "note": "aniqroq"})
+    return out
+
+
+async def transcribe(images: list[tuple[bytes, str]], ai: str = "gemini") -> tuple[str, str]:
+    """Qo'lyozma esse rasmlari → matn (o'quvchi tekshirib tuzatadi). ai: "gemini" | "claude" (PAID_MODEL).
+    Tanlangan AI ishlamasa — ikkinchisi (bor bo'lsa). Qaytaradi: (matn, o'qigan model)."""
+    order = [ai] + [k["key"] for k in readers() if k["key"] != ai]
+    error = None
+    for key in order:
+        if key == "claude" and not paid_enabled() or key == "gemini" and not _ready("gemini"):
+            continue
+        extra = {"provider": "claude", "model": PAID_MODEL, "effort": "low"} if key == "claude" else {"provider": "gemini"}
+        try:
+            out, usage = await _call(TRANSCRIBE_PROMPT, "Transcribe the essay.", images, None, kind="transcribe", **extra)
+        except AIError as exc:
+            error = exc
+            continue
+        text = out.strip()
+        if text:
+            return text, usage.get("model") or (PAID_MODEL if key == "claude" else GEMINI_MODEL)
+    raise error or AIError("Esse rasmini o'qiydigan AI ulanmagan", retry=False)
 
 
 # ---------- Tituldagi qo'lda yozilgan javoblar (36–44) ----------

@@ -117,6 +117,12 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   o'zi oshadi. Darhol Google Cloud → Billing → «Budgets & alerts»da oylik byudjet va ogohlantirish qo'ying (masalan 5 $).
   Narxni hisobotda ko'rish uchun Render'ga `GEMINI_PRICE_IN` / `GEMINI_PRICE_OUT` (USD, 1 mln token — Google narx
   sahifasidagi modelingiz narxi) yozing.
+- **Qog'ozdagi esse rasmi → matn (onlayn mock)**: «45. Esse» ostida «📷 Qog'ozga yozdingizmi?» — o'quvchi qaysi AI
+  o'qishini tanlaydi (🆓 Gemini — bepul, 💎 Claude `PAID_MODEL` — aniqroq; faqat ulanganlari ko'rinadi), keyin rasmni
+  ilovada yuklaydi (1–4 bet) yoki «🤖 Botga yuboraman» — sahifalarni botga yuborib «✅ Tayyor» bosadi, bot matnni chatga
+  yozadi, ilovada «⬇️ Botdan olish». Matn esse maydoniga tushadi, qaysi model o'qigani ko'rsatiladi; o'quvchi xatolarni
+  tuzatib yuboradi. Tanlangan AI ishlamasa — ikkinchisi. Begona o'quvchi avval esse tekshiruvini to'laydi. Rasmlar
+  o'qilgach saqlanmaydi.
 - **Oflayn testda ikki xil tekshiruv** (yozma javoblar 36–44): ustoz oflayn test yaratishda «✍️ Yozmalarni
   tekshirish»da tanlaydi. 🆓 Bepul — FREE_IDS/adminlarda Gemini o'qiydi, boshqalar «✍️ Yozmalarni tekshirish»da rasmga
   qarab o'zi belgilaydi (avvalgidek). 💎 AI tekshiruvi — Claude (`PAID_MODEL`, standart `claude-haiku-5-5`) o'qiydi,
