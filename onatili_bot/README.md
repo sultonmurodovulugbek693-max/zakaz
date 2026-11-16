@@ -129,6 +129,9 @@ to'ldiradi, o'qituvchi titullarni telefon kamerasida skanerlaydi. Natijalar DTM 
   ustoz kreditidan: har 10 ta titul = 1 kredit (FREE_IDS uchun bepul); kredit tugasa titul qo'lda tekshirishga o'tadi.
   Yoqish: Render'ga `ANTHROPIC_API_KEY` (console.anthropic.com → API Keys, balans to'ldiriladi). Kalit bo'lmasa tanlov
   ko'rinmaydi.
+- **«🤖 AI sozlamalari» (admin: `/ai_sozlama` yoki /admin → tugma)**: har ish uchun tugma — Gemini / Claude Sonnet /
+  Claude Haiku: 📝 esse baholash, ✍️ titul yozma javoblari (bepul variant), 💎 pullik variant, 🧾 chek. Kaliti yo'q AI 🔒;
+  tanlangan AI kaliti olib tashlansa — bor kalitdagisi ishlaydi. Env (`AI_PROVIDER`, `ESSAY_PROVIDER`) — faqat standart.
 - **`/ai` (admin)**: bugun va 30 kun — yozma javoblar, cheklar, esselar bo'yicha so'rovlar, xatolar (shundan limit),
   tokenlar, narx va qaysi modellar ishlagani. «Limitga urildi» ko'p bo'lsa — billingni yoqish vaqti.
 - **AI ishlamasa — qo'lda zaxira**: AI 30 daqiqadan beri ishlamasa, navbatda ishi bor ustozlarga bir marta xabar

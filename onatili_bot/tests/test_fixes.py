@@ -1370,5 +1370,58 @@ class EssayScan(ServerBase):
         self.assertIn("Chek qabul qilinmadi", answers[-1])
 
 
+
+class AiRoutes(ServerBase):
+    """Admin botda tugmalar bilan tanlaydi: qaysi ishni qaysi AI (Gemini / Claude Sonnet / Claude Haiku) bajaradi."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._key = essay_ai.ANTHROPIC_API_KEY
+        essay_ai.forget_choices()
+
+    async def asyncTearDown(self):
+        essay_ai.ANTHROPIC_API_KEY = self._key
+        essay_ai.forget_choices()
+        await super().asyncTearDown()
+
+    async def press(self, data, admin=999):
+        replies, edits = [], []
+
+        async def answer(text=None, **_):
+            replies.append(text)
+
+        async def edit_text(text, **_):
+            edits.append(text)
+        cb = types.SimpleNamespace(data=data, from_user=types.SimpleNamespace(id=admin), answer=answer,
+                                   message=types.SimpleNamespace(edit_text=edit_text, html_text="", text=""))
+        admins, bot.ADMIN_IDS = bot.ADMIN_IDS, {999}
+        try:
+            await bot.ai_settings_button(cb)
+        finally:
+            bot.ADMIN_IDS = admins
+        return replies, edits
+
+    async def test_buttons_choose_ai_per_task(self):
+        essay_ai.ANTHROPIC_API_KEY = ""
+        self.assertEqual(essay_ai.route("essay"), ("gemini", None))
+        replies, _ = await self.press("aiset:essay:sonnet")  # Claude kaliti yo'q — tanlanmaydi
+        self.assertIn("ANTHROPIC_API_KEY", replies[0])
+        self.assertEqual(essay_ai.choice_of("essay"), "gemini")
+        essay_ai.ANTHROPIC_API_KEY = "test-key"
+        await self.press("aiset:essay:sonnet")
+        await self.press("aiset:receipt:haiku")
+        await self.press("aiset:paid:sonnet")
+        self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.CLAUDE_MODEL))
+        self.assertEqual(essay_ai.route("receipt"), ("claude", essay_ai.PAID_MODEL))
+        self.assertEqual(essay_ai._paid(True)["model"], essay_ai.CLAUDE_MODEL)
+        self.assertEqual(essay_ai.route("written"), ("gemini", None))  # tegilmagan — standart
+        essay_ai.ANTHROPIC_API_KEY = ""  # kalit olib tashlandi — bor AI'ga o'tadi
+        self.assertEqual(essay_ai.route("essay"), ("gemini", None))
+        text, _ = bot.ai_settings_panel()
+        self.assertIn("kalit yo'q", text)
+        replies, _ = await self.press("aiset:essay:gemini", admin=123)  # admin emas
+        self.assertIn("admin", replies[0].lower())
+
+
 if __name__ == "__main__":
     unittest.main()

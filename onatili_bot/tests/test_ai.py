@@ -52,7 +52,7 @@ class EssayOnClaude(unittest.IsolatedAsyncioTestCase):
 
     def test_providers_are_separate(self):
         self.assertTrue(essay_ai.enabled() and essay_ai.essay_enabled())
-        self.assertEqual((essay_ai.provider_name(), essay_ai.essay_provider_name()), ("Gemini", "Claude"))
+        self.assertEqual((essay_ai.provider_name(), essay_ai.essay_provider_name()), ("Gemini", "Claude (claude-sonnet-5-5)"))
 
     async def test_text_essay_graded_by_claude_sonnet(self):
         essay = "Ijtimoiy tarmoqlar haqida esse. " * 20
@@ -65,7 +65,7 @@ class EssayOnClaude(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["fallbacks"], "default")
         self.assertNotIn("thinking", params)  # Sonnet 5.5: adaptive (standart)
         self.assertEqual(result["score"], sum(c["score"] for c in ANSWER["criteria"]))
-        self.assertEqual(result["provider"], "Claude")
+        self.assertEqual(result["provider"], "Claude (claude-sonnet-5-5)")
         self.assertEqual(result["transcription"], essay.strip())
         self.assertAlmostEqual(result["cost"], 2000 * 2 / 1e6 + 3000 * 10 / 1e6, places=5)  # Sonnet narxi
 

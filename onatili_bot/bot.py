@@ -15,6 +15,7 @@ import asyncio
 import base64
 import html
 import json
+import types
 import logging
 import os
 import secrets
@@ -857,6 +858,7 @@ async def admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     rows = [[(f"❌ {c['title'][:30]}", f"chdel:{c['chat_id']}")] for c in channels]
     rows.append([("➕ Kanal qo'shish", "chadd")])
     rows.append([("💎 Obuna sozlamalari", "settings")])
+    rows.append([("🤖 AI sozlamalari", "aiset")])
     rows.append([("🔄 Yangilash", "admin")])
     return "\n".join(lines), inline(rows)
 
@@ -1383,6 +1385,66 @@ async def ai_down_notice(bot: Bot, error: str) -> None:
             logger.warning("AI haqida adminga xabar yuborilmadi: %s", admin_id)
 
 
+def ai_settings_panel() -> tuple[str, InlineKeyboardMarkup]:
+    """Qaysi ishni qaysi AI bajaradi — tugmalar bilan; kaliti yo'q AI — 🔒."""
+    keys = {"gemini": essay_ai._ready("gemini"), "claude": essay_ai._ready("claude")}
+    lines = ["🤖 <b>AI sozlamalari</b> — qaysi ishni qaysi AI bajaradi", LINE,
+             f"Kalitlar (Render): Gemini {'✅' if keys['gemini'] else '❌'} · Claude {'✅' if keys['claude'] else '❌'}",
+             f"<i>Claude Sonnet — {esc(essay_ai.CLAUDE_MODEL)} (aniq, qimmatroq) · Claude Haiku — "
+             f"{esc(essay_ai.PAID_MODEL)} (arzon) · Gemini — bepul tarif</i>", ""]
+    rows = []
+    for task, (title, _default) in essay_ai.TASKS.items():
+        chosen = essay_ai.choice_of(task)
+        working = essay_ai.route_name(task)
+        warn = "" if essay_ai.CHOICES[chosen][0] and keys[essay_ai.CHOICES[chosen][0]] else " ⚠️ kalit yo'q"
+        lines.append(f"{title}: <b>{essay_ai.CHOICE_NAMES[chosen]}</b>{warn} → ishlayapti: {esc(working)}")
+        rows.append([(("✅ " if key == chosen else "🔒 " if not keys[essay_ai.CHOICES[key][0]] else "")
+                      + f"{title.split()[0]} {name}", f"aiset:{task}:{key}") for key, name in essay_ai.CHOICE_NAMES.items()])
+    lines += ["", "Tugma: birinchi belgi — ish (📝 esse, ✍️ bepul yozma, 💎 pullik yozma, 🧾 chek)."]
+    rows.append([("📊 AI hisoboti", "aiusage"), ("↩️ Admin paneli", "admin")])
+    return "\n".join(lines), inline(rows)
+
+
+@dp.message(Command("ai_sozlama"))
+async def cmd_ai_settings(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("⛔️ Bu bo'lim faqat admin uchun.")
+        return
+    essay_ai.forget_choices()
+    text, markup = await asyncio.to_thread(ai_settings_panel)
+    await message.answer(text, reply_markup=markup)
+
+
+@dp.callback_query(F.data.startswith("aiset"))
+async def ai_settings_button(callback: CallbackQuery) -> None:
+    if not is_admin(callback):
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    parts = callback.data.split(":")
+    if len(parts) == 3 and parts[1] in essay_ai.TASKS and parts[2] in essay_ai.CHOICES:
+        provider = essay_ai.CHOICES[parts[2]][0]
+        if not essay_ai._ready(provider):
+            await callback.answer("Bu AI'ning kaliti yo'q — Render'da " + ("GEMINI_API_KEY" if provider == "gemini"
+                                  else "ANTHROPIC_API_KEY") + " ni qo'shing", show_alert=True)
+            return
+        await asyncio.to_thread(db.set_setting, f"ai:{parts[1]}", parts[2])
+        await callback.answer(f"✅ {essay_ai.TASKS[parts[1]][0]}: {essay_ai.CHOICE_NAMES[parts[2]]}")
+    else:
+        await callback.answer()
+    essay_ai.forget_choices()
+    text, markup = await asyncio.to_thread(ai_settings_panel)
+    await safe_edit(callback.message, text, markup)
+
+
+@dp.callback_query(F.data == "aiusage")
+async def ai_usage_button(callback: CallbackQuery) -> None:
+    if not is_admin(callback):
+        await callback.answer("Faqat admin uchun", show_alert=True)
+        return
+    await callback.answer()
+    await cmd_ai_usage(types.SimpleNamespace(from_user=callback.from_user, answer=callback.message.answer))
+
+
 @dp.message(Command("ai"))
 async def cmd_ai_usage(message: Message) -> None:
     """Admin: AI ishlatilishi — bugun va 30 kun: tur bo'yicha so'rovlar, limit xatolari, tokenlar, narx."""
@@ -1413,7 +1475,8 @@ async def cmd_ai_usage(message: Message) -> None:
     rows_month = await asyncio.to_thread(db.ai_usage_since, month)
     limited = sum(r["limited"] or 0 for r in rows_month)
     await message.answer(
-        f"🤖 <b>AI ishlatilishi</b>\nYozma va chek: {esc(essay_ai.provider_name())} · esse: {esc(essay_ai.essay_provider_name())}"
+        f"🤖 <b>AI ishlatilishi</b>\nEsse: {esc(essay_ai.route_name('essay'))} · yozma: {esc(essay_ai.route_name('written'))} · "
+        f"pullik yozma: {esc(essay_ai.route_name('paid'))} · chek: {esc(essay_ai.route_name('receipt'))}\nO'zgartirish: /ai_sozlama"
         f"\n{LINE}\n<b>Bugun</b>\n{block(rows_today)}\n\n<b>30 kun</b>\n{block(rows_month)}"
         + (f"\n\n⚠️ 30 kunda {limited} marta limitga urildi — Google AI Studio'da billingni yoqish tavsiya etiladi."
            if limited else "")

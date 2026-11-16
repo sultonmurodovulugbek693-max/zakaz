@@ -183,9 +183,70 @@ def _ready(provider: str) -> bool:
     return False
 
 
+# ---------- Qaysi ishni qaysi AI bajaradi (admin botda tugmalar bilan tanlaydi: «🤖 AI sozlamalari») ----------
+
+CHOICES = {"gemini": ("gemini", None), "sonnet": ("claude", None), "haiku": ("claude", None)}  # model — pastda
+CHOICE_NAMES = {"gemini": "Gemini", "sonnet": "Claude Sonnet", "haiku": "Claude Haiku"}
+TASKS = {  # ish: (nomi, standart tanlov)
+    "essay": ("📝 Esse baholash", None),
+    "written": ("✍️ Titul yozma javoblari — bepul variant", None),
+    "paid": ("💎 Titul yozma javoblari — pullik variant", "haiku"),
+    "receipt": ("🧾 Chek tekshirish", None),
+}
+_ROUTE_CACHE: dict = {"at": 0.0, "saved": {}}
+
+
+def _model_of(choice: str) -> str | None:
+    return {"sonnet": CLAUDE_MODEL, "haiku": PAID_MODEL}.get(choice)
+
+
+def _default_choice(task: str) -> str:
+    env = ESSAY_PROVIDER if task == "essay" else AI_PROVIDER
+    return TASKS[task][1] or ("sonnet" if env == "claude" else "gemini")
+
+
+def _saved_choices() -> dict:
+    """Admin tanlovlari (settings: ai:<ish>) — 20 soniya keshda (har so'rovda bazaga bormaslik uchun)."""
+    import time as _time
+    if _time.time() - _ROUTE_CACHE["at"] > 20:
+        try:
+            import db
+            settings = db.get_settings()
+            _ROUTE_CACHE["saved"] = {k[3:]: v for k, v in settings.items() if k.startswith("ai:")}
+        except Exception:
+            pass
+        _ROUTE_CACHE["at"] = _time.time()
+    return _ROUTE_CACHE["saved"]
+
+
+def forget_choices() -> None:
+    _ROUTE_CACHE["at"] = 0.0
+
+
+def choice_of(task: str) -> str:
+    saved = _saved_choices().get(task)
+    return saved if saved in CHOICES else _default_choice(task)
+
+
+def route(task: str) -> tuple[str | None, str | None]:
+    """Ish → (provider, model). Tanlangan AI kaliti yo'q bo'lsa — bor kalitdagisi; hech biri yo'q — (None, None)."""
+    for choice in (choice_of(task), "gemini", "haiku" if task in ("paid", "written", "receipt") else "sonnet"):
+        provider = CHOICES[choice][0]
+        if _ready(provider):
+            return provider, _model_of(choice)
+    return None, None
+
+
+def route_name(task: str) -> str:
+    provider, model = route(task)
+    if not provider:
+        return "o'chiq"
+    return "Gemini" if provider == "gemini" else f"Claude ({model or CLAUDE_MODEL})"
+
+
 def enabled() -> bool:
     """Titulning yozma javoblarini AI o'qiydimi."""
-    return _ready(AI_PROVIDER)
+    return route("written")[0] is not None
 
 
 def paid_enabled() -> bool:
@@ -195,15 +256,17 @@ def paid_enabled() -> bool:
 
 def essay_enabled() -> bool:
     """Esseni AI baholaydimi."""
-    return _ready(ESSAY_PROVIDER)
+    return route("essay")[0] is not None
 
 
 def provider_name(provider: str | None = None) -> str:
-    return {"gemini": "Gemini", "claude": "Claude"}.get(provider or AI_PROVIDER, "—")
+    if provider:
+        return {"gemini": "Gemini", "claude": "Claude"}.get(provider, "—")
+    return route_name("written")
 
 
 def essay_provider_name() -> str:
-    return provider_name(ESSAY_PROVIDER)
+    return route_name("essay")
 
 
 def _user_text(topic: str, essay_text: str | None) -> str:
@@ -361,7 +424,12 @@ def _record(kind: str, model: str, usage: dict | None, limited: bool = False) ->
 async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
                 provider: str | None = None, effort: str = "medium", kind: str = "other",
                 model: str | None = None) -> tuple[str, dict]:
-    provider = provider or AI_PROVIDER
+    if not provider:  # ish turiga qarab — admin tanlovi
+        provider, routed_model = route({"essay": "essay", "receipt": "receipt"}.get(kind, "written"))
+        model = model or routed_model
+        if not provider:
+            raise AIError("AI sozlanmagan — Render'da GEMINI_API_KEY yoki ANTHROPIC_API_KEY, botda «🤖 AI sozlamalari»",
+                          retry=False)
     if not _ready(provider):
         raise AIError("AI sozlanmagan (AI_PROVIDER / ESSAY_PROVIDER va API kalit)", retry=False)
     model = model or (CLAUDE_MODEL if provider == "claude" else GEMINI_MODEL)
@@ -385,8 +453,9 @@ async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, st
     """Esseni baholaydi: {"score", "criteria", "comment", "outline", "transcription", "cost", "provider"}."""
     # Esse — ESSAY_PROVIDER'da, chuqurroq tahlil bilan (effort "high"); matnli esse qayta ko'chirilmaydi
     schema = RESULT_SCHEMA_TEXT if essay_text else RESULT_SCHEMA
+    provider, model = route("essay")
     out, usage = await _call(SYSTEM_PROMPT, _user_text(topic, essay_text), images or [], schema,
-                             provider=ESSAY_PROVIDER, effort="high", kind="essay")
+                             provider=provider, effort="high", kind="essay", model=model)
     try:
         result = finalize(json.loads(out))
     except (json.JSONDecodeError, ValueError, TypeError) as error:
@@ -470,7 +539,10 @@ def _clean_written(items, labels: list[str]) -> dict[str, str]:
 
 def _paid(paid: bool) -> dict:
     """Pullik tekshiruv: Claude PAID_MODEL (kam o'ylab — matnni o'qish oddiy ish)."""
-    return {"provider": "claude", "model": PAID_MODEL, "effort": "low"} if paid and paid_enabled() else {}
+    if not paid or not paid_enabled():
+        return {}
+    provider, model = route("paid")
+    return {"provider": provider, "model": model, "effort": "low"} if provider else {}
 
 
 async def read_written(image: bytes, labels: list[str], mime: str = "image/png",
