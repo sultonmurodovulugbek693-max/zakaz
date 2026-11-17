@@ -424,6 +424,27 @@ function warpArea(gray, width, height, corners, area, scale) {
       data[y * W + x] = top + (bottom - top) * fy;
     }
   }
+  // Kontrast: qog'oz oq, siyoh to'q bo'lsin (xira yorug'likda ham AI harflarni aniq o'qisin).
+  // 2% eng to'q va 2% eng och nuqtalar chegara — bitta soya yoki dog' natijani buzmaydi
+  const histogram = new Uint32Array(256);
+  for (let i = 0; i < data.length; i += 1) histogram[data[i]] += 1;
+  const percentile = (share) => {
+    let seen = 0;
+    for (let level = 0; level < 256; level += 1) {
+      seen += histogram[level];
+      if (seen >= data.length * share) return level;
+    }
+    return 255;
+  };
+  const low = percentile(0.02);
+  const high = percentile(0.98);
+  if (high - low > 30) {
+    const span = high - low;
+    for (let i = 0; i < data.length; i += 1) {
+      const t = Math.min(1, Math.max(0, (data[i] - low) / span));
+      data[i] = 255 * t ** 1.4; // siyohni biroz quyuqlashtiradi, qog'oz oqligicha qoladi
+    }
+  }
   return { W, H, data };
 }
 
@@ -913,8 +934,9 @@ function analyzeFrame(source, sourceWidth, sourceHeight, options) {
     return draw.getImageData(0, 0, width, height).data;
   };
 
-  // Kadr kichraytiriladi (uzun tomoni 720 px) — chet belgilari ko'rinadigan darajada
-  const factor = 720 / Math.max(sourceWidth, sourceHeight);
+  // Kadr kichraytiriladi (uzun tomoni 720 px) — chet belgilari ko'rinadigan darajada.
+  // Titul uzoqda (kadrda kichik) bo'lsa, ilova kattaroq probeSize bilan ham urinib ko'radi
+  const factor = (options.probeSize || 720) / Math.max(sourceWidth, sourceHeight);
   const width = Math.round(sourceWidth * factor);
   const height = Math.round(sourceHeight * factor);
   const corners = findSheetCorners(context("probe", width, height), width, height, options.edgeMarks);
@@ -923,7 +945,14 @@ function analyzeFrame(source, sourceWidth, sourceHeight, options) {
 
   // To'liq o'lchamda faqat titul turgan qism olinadi (burchaklar atrofi) — kadrning qolgani
   // (stol, boshqa titullar) o'qilmaydi; ixcham titulda bu kadrning uchdan biri
-  const scale = Math.min(1, 1600 / Math.max(sourceWidth, sourceHeight));
+  // Titul kadrda qancha kichik bo'lsa, shuncha to'liqroq o'lchamda o'qiladi (kameraning asl sifatigacha) —
+  // uzoqdan tutilgan titulning doirachalari va yozma harflari ham aniq chiqadi
+  const extent =
+    Math.max(
+      Math.max(...corners.map((corner) => corner.x)) - Math.min(...corners.map((corner) => corner.x)),
+      Math.max(...corners.map((corner) => corner.y)) - Math.min(...corners.map((corner) => corner.y))
+    ) / factor;
+  const scale = Math.min(1, Math.max(1600 / Math.max(sourceWidth, sourceHeight), 1900 / Math.max(1, extent)));
   const k = (sourceWidth * scale) / width; // kichik kadr pikseli → to'liq o'lcham pikseli
   const margin = Math.max(...corners.map((corner) => corner.size)) * k * 1.5 + 4;
   const xs = corners.map((corner) => corner.x * k);
@@ -1008,10 +1037,10 @@ function createScanWorker() {
         READ_SCALE = SHEET_PAGE.readScale || 2;
         return;
       }
-      const { bitmap, edgeMarks, skipRead, areas, areaScale } = data;
+      const { bitmap, edgeMarks, skipRead, areas, areaScale, probeSize } = data;
       let answer;
       try {
-        answer = analyzeFrame(bitmap, bitmap.width, bitmap.height, { edgeMarks, skipRead, layout, page, areas, areaScale });
+        answer = analyzeFrame(bitmap, bitmap.width, bitmap.height, { edgeMarks, skipRead, layout, page, areas, areaScale, probeSize });
       } catch (error) {
         answer = { error: String(error) };
       }
