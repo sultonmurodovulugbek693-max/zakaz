@@ -48,11 +48,12 @@ import places as places_data
 import plans
 import pdfs
 import sheet
+import sheet_styles
 import subscription
 import webapp
 import config
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
-from scoring import essay_pending, rasch_results, total_points
+from scoring import essay_on_paper, essay_pending, rasch_results, total_points
 from structure import ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, grade, max_points, percent, text_items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -1085,17 +1086,33 @@ async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
 
 
 async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], blanks: int) -> None:
-    """Oflayn test: har o'quvchiga shaxsiy titul (ismi, raqami, varianti) + bo'sh titullar — bitta PDF."""
-    keys = await asyncio.to_thread(db.get_keys, test["id"])
-    content = await asyncio.to_thread(sheet.sheets_pdf, test, list(keys), students, blanks)
+    """Oflayn test: har o'quvchiga shaxsiy titul (ismi, raqami, varianti) + bo'sh titullar. Imtihon varaqasida
+    test titullari va esse varaqlari ikki alohida PDF bo'lib keladi (esse qog'ozda bo'lsa)."""
+    keys = list(await asyncio.to_thread(db.get_keys, test["id"]))
+    official = sheet_styles.style_of(test) == "official"
+    paper_essay = essay_on_paper(test)
+    part = "test" if official else "all"
+    content = await asyncio.to_thread(sheet.sheets_pdf, test, keys, students, blanks, part)
     parts = ([f"👥 {len(students)} ta shaxsiy"] if students else []) + ([f"{blanks} ta bo'sh"] if blanks else [])
-    caption = (f"📄 <b>Titullar</b> · {esc(test['title'])}\n" + " + ".join(parts) + "\n"
-               + ("🖨 Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi.\n"
-                  if blanks else "")
-               + (f"📝 Esse qog'ozda emas: o'quvchilar botga kod <b>{test['code']}</b> ni kiritib, tituldagi ID'si "
-                  "bilan yozadi — titul skanerlanganda natijaga o'zi qo'shiladi.\n" if test["fmt"] == "milliy" else "")
-               + "Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
+    copy_hint = ("🖨 Bo'sh titulni printerda kerakli sonda nusxa qilib chiqaring — o'quvchi ID'sini o'zi bo'yaydi.\n"
+                 if blanks else "")
+    if paper_essay:
+        essay_hint = "📝 Esse alohida faylda — keyingi xabarda.\n"
+    elif test["fmt"] == "milliy":
+        essay_hint = (f"📝 Esse qog'ozda emas: o'quvchilar botga kod <b>{test['code']}</b> ni kiritib, tituldagi ID'si "
+                      "bilan yozadi — titul skanerlanganda natijaga o'zi qo'shiladi.\n")
+    else:
+        essay_hint = ""
+    caption = (f"📄 <b>Titullar{' (test)' if official else ''}</b> · {esc(test['title'])}\n" + " + ".join(parts) + "\n"
+               + copy_hint + essay_hint + "Bo'yalgan titullarni ilovada «📷 Skanerlash» orqali tekshiring.")
     await bot.send_document(chat_id, BufferedInputFile(content, filename=f"titullar_{test['code']}.pdf"), caption=caption)
+    if not paper_essay:
+        return
+    essay = await asyncio.to_thread(sheet.sheets_pdf, test, keys, students, blanks, "essay")
+    caption = (f"📝 <b>Esse varaqlari</b> · {esc(test['title'])}\n" + " + ".join(parts) + "\n"
+               + ("🖨 Bo'sh esse varag'ini ham kerakli sonda nusxa qiling.\n" if blanks else "")
+               + "Esse skanerlanmaydi: o'qib, ilovada 75 ballik shkalada baho qo'ying (yoki rasmini yuklang).")
+    await bot.send_document(chat_id, BufferedInputFile(essay, filename=f"esse_{test['code']}.pdf"), caption=caption)
 
 
 async def scan_notice(bot: Bot, chat_id: int, test: dict, name: str, points: float | None, max_points: float) -> None:

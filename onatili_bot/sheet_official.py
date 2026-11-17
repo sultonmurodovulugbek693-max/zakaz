@@ -426,12 +426,15 @@ def draw_essay_pages(c: canvas.Canvas, test: dict, student: dict | None) -> None
     _rules(c, x1, x2, y2 - 32, y1 + 14)
 
 
-def draw_sheets(c: canvas.Canvas, test: dict, pages: list[dict | None]) -> None:
+def draw_sheets(c: canvas.Canvas, test: dict, pages: list[dict | None], part: str = "all") -> None:
+    """part: "test" — faqat 1–2-varaq (skanerlanadi), "essay" — faqat esse varaqlari, "all" — hammasi."""
     spec = layout(test)
     for student in pages:
-        draw_page1(c, test, spec, student)
-        c.showPage()
-        draw_page2(c, test, spec, student)
-        c.showPage()
-        draw_essay_pages(c, test, student)
-        c.showPage()
+        if part in ("all", "test"):
+            draw_page1(c, test, spec, student)
+            c.showPage()
+            draw_page2(c, test, spec, student)
+            c.showPage()
+        if part in ("all", "essay"):
+            draw_essay_pages(c, test, student)
+            c.showPage()

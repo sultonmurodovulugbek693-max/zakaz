@@ -552,6 +552,17 @@ class OfficialSheet(ServerBase):
         self.assertEqual(len(re.findall(rb"/Type /Page[^s]", pdf)), 8)  # 2 o'quvchi × 4 varaq
         self.assertEqual(sheet.layout(test, ["A"])["pages"], 2)
 
+    async def test_test_and_essay_sheets_sent_as_separate_files(self):
+        test = await self.make()
+        fake = FakeBot()
+        await bot.send_sheets(fake, OWNER, test, db.list_students(test["id"]), 0)
+        self.assertEqual([name for _, name in fake.documents],
+                         [f"titullar_{test['code']}.pdf", f"esse_{test['code']}.pdf"])
+        status, res = await self.post(f"/api/teacher/test/{test['id']}/download", {"kind": "essay"})
+        self.assertEqual(status, 200)
+        response = await self.client.get("/dl/" + res["url"].split("/dl/")[1])
+        self.assertIn(f"esse_{test['code']}.pdf", response.headers["Content-Disposition"])
+
     async def test_page2_before_and_after_page1(self):
         test = await self.make()
         answers = {str(i): "A" for i in range(1, 36)}

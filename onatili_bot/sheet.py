@@ -345,21 +345,23 @@ def _bubble(c: canvas.Canvas, x: float, y: float, r: float, letter: str, filled:
         c.drawCentredString(x, y - 2.4, letter)
 
 
-def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blanks: int = 0) -> bytes:
+def sheets_pdf(test: dict, variant_names: list[str], students: list[dict], blanks: int = 0,
+               part: str = "all") -> bytes:
     """
-    Har o'quvchiga shaxsiy titul va kerak bo'lsa bo'sh titullar. Esse qog'ozda emas — o'quvchi uni botda
-    test kodi va ID'si bilan yozadi (titul skanerlanganda natijaga ID bo'yicha biriktiriladi).
+    Har o'quvchiga shaxsiy titul va kerak bo'lsa bo'sh titullar. Standart titulda esse qog'ozda emas — o'quvchi
+    uni botda test kodi va ID'si bilan yozadi (titul skanerlanganda natijaga ID bo'yicha biriktiriladi).
+    Imtihon varaqasida (official) part="test" — faqat test varaqlari, part="essay" — faqat esse varaqlari.
     """
     import pdfs  # noqa: F401 — shriftlar ro'yxatdan o'tgan bo'lsin
 
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    c.setTitle(f"Titullar — {test['title']}")
+    c.setTitle(f"{'Esse varaqlari' if part == 'essay' else 'Titullar'} — {test['title']}")
     pages = [*students, *([None] * blanks)] or [None]
     import sheet_styles
     if sheet_styles.style_of(test) == "official":
         import sheet_official
-        sheet_official.draw_sheets(c, test, pages)
+        sheet_official.draw_sheets(c, test, pages, part)
         c.save()
         return buffer.getvalue()
     if sheet_styles.style_of(test) != "standard":

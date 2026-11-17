@@ -1437,7 +1437,7 @@ async def join_decide(request: web.Request) -> web.Response:
 # sarlavha (initData) yubora olmaydi — shuning uchun ruxsat havolaning o'zida
 
 DOWNLOAD_TTL = 600
-FILE_KINDS = ("key", "results", "excel", "sheets")
+FILE_KINDS = ("key", "results", "excel", "sheets", "essay")
 
 
 def _sign(payload: str) -> str:
@@ -1454,10 +1454,12 @@ def build_file(test: dict, kind: str) -> tuple[bytes, str, str]:
     keys = db.get_keys(test["id"])
     if kind == "key":
         return pdfs.answer_key_pdf(test, keys), f"kalit_{test['code']}.pdf", "application/pdf"
-    if kind == "sheets":
+    if kind in ("sheets", "essay"):  # imtihon varaqasida test titullari va esse varaqlari — alohida fayllar
         students = db.list_students(test["id"])
-        return (sheet.sheets_pdf(test, list(keys), students, 0 if students else 1), f"titullar_{test['code']}.pdf",
-                "application/pdf")
+        official = sheet_styles.style_of(test) == "official"
+        part = kind if kind == "essay" else ("test" if official else "all")
+        name = f"{'esse' if kind == 'essay' else 'titullar'}_{test['code']}.pdf"
+        return sheet.sheets_pdf(test, list(keys), students, 0 if students else 1, part), name, "application/pdf"
     attempts = db.list_attempts(test["id"])
     if kind == "excel":
         import excel
@@ -1472,6 +1474,8 @@ async def download_link(request: web.Request) -> web.Response:
     kind = (await body(request)).get("kind")
     if kind not in FILE_KINDS:
         raise ApiError(400, "Noma'lum fayl")
+    if kind == "essay" and sheet_styles.style_of(test) != "official":
+        raise ApiError(400, "Esse varaqlari faqat imtihon varaqasida")
     return ok({"url": f"{site_url(request)}/dl/{download_token(test['id'], kind)}"})
 
 

@@ -1657,7 +1657,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
       ${n && milliy ? `<button class="btn ghost sm" id="certs-all">🎓 Sertifikatlar</button>` : ""}</div>
       <span class="muted small">Fayllar Telegram chatga yuboriladi. Kelmasa — to'g'ridan-to'g'ri yuklab oling:</span>
-      <div class="files-dl"><button type="button" class="btn plain sm" data-dl="${t.id}:sheets">📥 Titul</button><button type="button" class="btn plain sm" data-dl="${t.id}:key">📥 Kalit</button>
+      <div class="files-dl"><button type="button" class="btn plain sm" data-dl="${t.id}:sheets">📥 Titul</button>${t.sheet_style === "official" ? `<button type="button" class="btn plain sm" data-dl="${t.id}:essay">📥 Esse varaqlari</button>` : ""}<button type="button" class="btn plain sm" data-dl="${t.id}:key">📥 Kalit</button>
       ${n ? `<button type="button" class="btn plain sm" data-dl="${t.id}:results">📥 Natijalar PDF</button><button type="button" class="btn plain sm" data-dl="${t.id}:excel">📥 Excel</button>` : ""}</div></div>
     <div class="card"><h2>Foydali</h2><div class="list">
       ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}

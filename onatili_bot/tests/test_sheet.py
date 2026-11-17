@@ -36,6 +36,16 @@ class Layout(unittest.TestCase):
         pdf = sheet.sheets_pdf(milliy_test(), ["A", "B"], students, blanks=1)
         self.assertEqual(len(re.findall(rb"/Type /Page[^s]", pdf)), 3)
 
+    def test_official_test_and_essay_are_separate_pdfs(self):
+        """Imtihon varaqasi: test titullari (2 varaq) va esse varaqlari (2 varaq) — alohida fayllar."""
+        import re
+        test = {**milliy_test(), "sheet_style": "official"}
+        students = [{"number": 7, "name": "Ali", "variant": "A"}]
+        pages = lambda part: len(re.findall(rb"/Type /Page[^s]", sheet.sheets_pdf(test, ["A"], students, 1, part)))
+        self.assertEqual(pages("test"), 4)   # 2 kishi × 2 varaq
+        self.assertEqual(pages("essay"), 4)  # 2 kishi × 2 esse varag'i
+        self.assertEqual(pages("all"), 8)
+
     def test_pdf_builds_for_students_and_blanks(self):
         pdf = sheet.sheets_pdf(milliy_test(), ["A", "B"], [{"number": 7, "name": "Ali Valiyev", "variant": "B"}], blanks=2)
         self.assertTrue(pdf.startswith(b"%PDF"))
