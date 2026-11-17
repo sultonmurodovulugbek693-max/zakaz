@@ -3,12 +3,12 @@
   Sahifa va skript: avval internetdan (yangi versiya), bo'lmasa saqlangan nusxa.
   API so'rovlariga tegmaydi — test ma'lumotlarini ilovaning o'zi saqlaydi (localStorage).
 */
-const CACHE = "onatili-v2";
+const CACHE = "onatili-v3";
 const SHELL = "/app";
 const NETWORK_WAIT = 6000;  // sekin internetda shuncha kutiladi, keyin saqlangan nusxa
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([SHELL, "/static/omr.js?v=3"]).catch(() => {})));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([SHELL, "/static/omr.js?v=4"]).catch(() => {})));
   self.skipWaiting();
 });
 

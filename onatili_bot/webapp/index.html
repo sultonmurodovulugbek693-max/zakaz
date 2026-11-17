@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Ona tili · Test</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="/static/omr.js?v=3"></script>
+<script src="/static/omr.js?v=4"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@500;700&family=Russo+One&family=Archivo+Black&family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap" rel="stylesheet">
@@ -3074,7 +3074,6 @@ VIEWS.scan = async ({ id }) => {
       <video id="video" playsinline muted autoplay></video>
       <img id="still" alt="" hidden>
       <svg id="quad" viewBox="0 0 1 1" preserveAspectRatio="none"><polygon points=""/></svg>
-      <div class="cam-guide"></div>
       <canvas class="marked" id="marked" hidden></canvas><div class="mark-score" id="mark-score" hidden></div>
       <div class="cam-status" id="cam-status">Kamera yoqilmoqda…</div>
       <button type="button" class="cam-torch" id="torch" hidden aria-label="Chiroq">🔦</button>
@@ -3149,26 +3148,28 @@ VIEWS.scan = async ({ id }) => {
   // Kadrni o'qish. full=false — faqat burchaklar (tez: varaq qimirlamay turganini bilish uchun);
   // full=true — butun varaq + ushlanadigan titul uchun yozma kataklar va ism katagi (2 px/pt) rasmi
   const AREAS = { written: (layout && (layout.written_labels || []).length) ? layout.written_area : null, name: layout && layout.name_area };
-  const analyze = (full = true) => new Promise(resolve => {
-    const options = { edgeMarks: true, layout, page: 1, skipRead: !full, areas: full ? AREAS : null, areaScale: 2 };
+  // probeSize — burchaklar qidiriladigan kichik kadr o'lchami: 720 (tez) yoki 1120 (titul uzoqda, kadrda kichik)
+  const analyze = (full = true, probeSize = 720) => new Promise(resolve => {
+    const options = { edgeMarks: true, layout, page: 1, skipRead: !full, areas: full ? AREAS : null, areaScale: 3, probeSize };
     const direct = () => { try { resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, options)); } catch (e) { resolve(null); } };
     if (!worker) return direct();
     const w = worker;
     w.onmessage = ({ data }) => resolve(data.error ? null : data);
-    createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: !full, areas: options.areas, areaScale: 2 }, [bitmap]))
+    createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: !full, areas: options.areas, areaScale: 3, probeSize }, [bitmap]))
       .catch(() => { stopWorker(); direct(); });
   });
   // Ikki kadr orasida burchaklar qancha siljigan (kadr uzun tomonining ulushi)
   const cornerShift = (a, b) => {
     if (!a || !b || a.corners.length !== b.corners.length) return Infinity;
-    const size = Math.max(a.width, a.height);
-    return Math.max(...a.corners.map((c, i) => Math.hypot(c.x - b.corners[i].x, c.y - b.corners[i].y))) / size;
+    // Har kadr o'z o'lchamiga nisbatan (kichik kadr 720 yoki 1120 px bo'lishi mumkin)
+    const sa = Math.max(a.width, a.height), sb = Math.max(b.width, b.height);
+    return Math.max(...a.corners.map((c, i) => Math.hypot(c.x / sa - b.corners[i].x / sb, c.y / sa - b.corners[i].y / sb)));
   };
   const MOVING = 0.035;  // ~25 px 720 px kadrda — telefon tez harakatda (xira kadr): o'qimaymiz, keyingisini kutamiz
   const doubtful = r => r.questions.some(q => q.status === "multiple" || q.status === "unsure") || r.sheet_number_status === "unclear";
 
   let swapSig = null, savedText = "", queue = [];
-  const idleText = () => savedText ? `${savedText} · keyingisini qo'ying` : "Titulni ramkaga to'liq sig'diring";
+  const idleText = () => savedText ? `${savedText} · keyingisini qo'ying` : "Titulni kameraga ko'rsating";
 
   // Tez sikl: har kadrda faqat burchaklar (~0,1–0,3 s). Ikki kadr ketma-ket qimirlamasa — bitta to'liq
   // o'qish va darhol saqlash. Shubhali doiracha bo'lsa — ishonch uchun yana bir marta o'qiladi.
@@ -3177,22 +3178,27 @@ VIEWS.scan = async ({ id }) => {
     if (!local) return startServerLoop(waitSwap);
     const my = ++loopToken; S.scanLoop = my;
     let prev = null, confirm = null, movedSinceRead = true, lastReadAt = 0;
+    // Titul topilmasa, har ikkinchi kadr kattaroq o'lchamda qidiriladi — uzoqdagi (kichik ko'ringan) titul ham ushlanadi
+    let probeSize = 720, misses = 0;
     setStatus(idleText(), savedText ? "ok" : "");
     while (my === loopToken && S.camera && document.body.contains(video)) {
       if (!video.videoWidth) { await new Promise(r => setTimeout(r, 200)); continue; }
       const started = performance.now();
-      const probe = await analyze(false);
+      const probe = await analyze(false, probeSize);
       if (my !== loopToken) return;
       const corners = probe && probe.corners;
       drawQuad(corners ? corners.map(c => [c.x / probe.width, c.y / probe.height]) : null);
-      if (!corners) { waitSwap = false; prev = confirm = null; movedSinceRead = true; setStatus(idleText(), savedText ? "ok" : ""); }
+      if (!corners) {
+        waitSwap = false; prev = confirm = null; movedSinceRead = true; setStatus(idleText(), savedText ? "ok" : "");
+        misses++; probeSize = misses % 2 ? 1120 : 720;
+      }
       else {
         // Chittak/EvalBee kabi: titul ko'rinishi bilan o'qiladi (qimirlamay turishini kutmaymiz) — faqat tez harakatda emas
         const still = !prev || cornerShift(probe, prev) < MOVING;
         if (!still) { movedSinceRead = true; confirm = null; if (!waitSwap) setStatus("Titul ko'rindi — o'qilmoqda…"); }
         // Qimirlamayapti: to'liq o'qiymiz (o'sha varaq turgan bo'lsa — ko'pi bilan 1,5 soniyada bir)
         else if (!waitSwap || movedSinceRead || performance.now() - lastReadAt > 1500) {
-          const a = await analyze(true);
+          const a = await analyze(true, probeSize);
           if (my !== loopToken) return;
           movedSinceRead = false; lastReadAt = performance.now();
           if (a && a.read) {
@@ -3456,7 +3462,7 @@ VIEWS.scan = async ({ id }) => {
   // waitSwap — «Keyingi titul»dan keyin: kamera oldida hali eski varaq turadi, u kadrdan chiqmaguncha qayta ushlanmaydi
   async function startServerLoop(waitSwap = false) {
     const my = ++loopToken; S.scanLoop = my;
-    setStatus(waitSwap ? "Keyingi titulni qo'ying" : "Titulni ramkaga to'liq sig'diring");
+    setStatus(waitSwap ? "Keyingi titulni qo'ying" : "Titulni kameraga ko'rsating");
     while (my === loopToken && S.camera && document.body.contains(video)) {
       if (!video.videoWidth) { await new Promise(r => setTimeout(r, 200)); continue; }
       const frame = await frameBlob(video);
@@ -3467,7 +3473,7 @@ VIEWS.scan = async ({ id }) => {
         if (r.found && waitSwap) { drawQuad(r.corners); setStatus("Keyingi titulni qo'ying"); continue; }
         if (r.found) { drawQuad(r.corners); return captured(r, frame); }
         waitSwap = false;
-        drawQuad(null); setStatus(r.hint && r.hint.includes("kichik") ? "Yaqinroq keling" : "Titulni ramkaga to'liq sig'diring");
+        drawQuad(null); setStatus(r.hint && r.hint.includes("kichik") ? "Yaqinroq keling" : "Titulni kameraga ko'rsating");
       } catch (e) {
         if (my !== loopToken) return;
         setStatus(e.message, "bad"); await new Promise(r => setTimeout(r, 1500));
