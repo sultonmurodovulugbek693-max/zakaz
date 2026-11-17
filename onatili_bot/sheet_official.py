@@ -50,10 +50,10 @@ ID_BOX = 16
 ID_TOP = {1: (106, 132), 2: (182, 208)}  # varaq: (kataklar tepasi, 0-qator doirachalari markazi)
 
 # 2-varaq: yozma javoblar
-W_LABEL, W_CELL, W_H, W_CELLS = 40, 21.5, 22, 15
+W_LABEL, W_CELL, W_H, W_CELLS = 32, 15.6, 22, 25  # 25 katak: 32 + 25·15,6 = 422 pt
 W_TOPS = {"36": 324, "37": 356, "38": 388, "39": 420, "40a": 454, "40b": 478, "41a": 510, "41b": 534,
           "42a": 566, "42b": 590, "43a": 622, "43b": 646, "44a": 678, "44b": 702}
-W_COLUMN = (440, RIGHT)  # «DIQQAT! YOZILMASIN»
+W_COLUMN = (484, RIGHT)  # «DIQQAT! YOZILMASIN» (tor ustun — 25 katak sig'sin)
 
 
 def _y(top: float) -> float:
@@ -359,7 +359,7 @@ def draw_page2(c: canvas.Canvas, test: dict, spec: dict, student: dict | None) -
         c.setLineWidth(0.5)
         for box in spec["written"]:
             y = _y(box["top"] + W_H - 3)
-            c.line(W_COLUMN[0] + 40, y, W_COLUMN[1] - 8, y)
+            c.line(W_COLUMN[0] + 12, y, W_COLUMN[1] - 6, y)
         c.setDash()
     c.setFillColor(MUTED)
     c.setFont("Sans", 7)
