@@ -26,13 +26,19 @@ OWNER, OTHER = 111, 222
 
 class FakeBot:
     def __init__(self):
-        self.messages, self.documents = [], []
+        self.messages, self.documents, self.photos = [], [], []
 
     async def send_message(self, chat_id, text, **_):
         self.messages.append((chat_id, text))
 
     async def send_document(self, chat_id, document, **_):
         self.documents.append((chat_id, document))
+
+    async def send_photo(self, chat_id, photo, caption=None, **_):
+        self.photos.append((chat_id, caption))
+
+    async def send_media_group(self, chat_id, media, **_):
+        self.photos.extend((chat_id, m.caption) for m in media)
 
 
 class ScanFlow(unittest.IsolatedAsyncioTestCase):
@@ -61,6 +67,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
             record_attempt=lambda *a, **k: bot.record_attempt(self.bot, *a, **k),
             store_photo=lambda chat_id, data, caption: asyncio.sleep(0, result=f"file-{len(data)}"),
             scan_batch_notice=lambda chat_id, *args: bot.scan_batch_notice(self.bot, chat_id, *args),
+            scan_photos=lambda chat_id, *args: bot.send_scan_photos(self.bot, chat_id, *args),
         )
         self.client = TestClient(TestServer(webapp.create_app()))
         await self.client.start_server()
@@ -72,15 +79,30 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         plans.FREE_IDS.update(self.saved_free)
         await self.client.close()
 
-    async def upload(self, payload, written=b"\xff\xd8 yozma", essays=()):
+    async def upload(self, payload, written=b"\xff\xd8 yozma", essays=(), photos=()):
         form = FormData()
         form.add_field("data", json.dumps(payload))
+        for data in photos:
+            form.add_field("photo", data, filename="t.jpg", content_type="image/jpeg")
         if written:
             form.add_field("written", written, filename="y.jpg", content_type="image/jpeg")
         for data in essays:
             form.add_field("essay", data, filename="e.jpg", content_type="image/jpeg")
         response = await self.client.post(f"/api/teacher/test/{self.test['id']}/scan/upload", data=form)
         return response.status, await response.json()
+
+    async def test_sheet_photo_forwarded_to_bot_after_batch(self):
+        """Titul surati (telefon tayyorlagan JPEG) serverda ochilmaydi — «yuborish tugadi»da botga albom bo'lib boradi."""
+        payload = {"uid": "p1", "student_id": self.student["id"], "variant": "A", "answers": self.answers}
+        status, _ = await self.upload(payload, photos=[b"\xff\xd8 surat", b"JPEG emas"])
+        self.assertEqual(status, 200)
+        self.assertEqual(self.bot.photos, [])  # hali yig'ilmoqda
+        response = await self.client.post(f"/api/teacher/test/{self.test['id']}/scan/upload/done", json={"saved": 1})
+        self.assertEqual(response.status, 200)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(self.bot.photos), 1)  # faqat JPEG o'tdi
+        self.assertIn("Ali Valiyev", self.bot.photos[0][1])
+        self.assertIn("test 35/35", self.bot.photos[0][1])
 
     async def test_upload_is_idempotent_and_queues_ai(self):
         payload = {"uid": "u1", "student_id": self.student["id"], "variant": "A", "answers": self.answers}

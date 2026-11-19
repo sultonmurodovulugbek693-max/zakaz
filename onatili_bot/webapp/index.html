@@ -3011,6 +3011,23 @@ function cropSheet(sheet, area, scale, quality = 0.85) {
   return new Promise(resolve => c.toBlob(b => resolve(b), "image/jpeg", quality));
 }
 
+// Ushlangan varaqning surati — botga yuboriladi (o'qituvchida qog'oz nusxasi qolsin). Tekislangan kulrang varaq,
+// uzun tomoni ko'pi bilan 1200 px, JPEG 0,6: ~80–150 KB. Telefonda tayyorlanadi — server uni ochmaydi ham
+function sheetPhoto(sheet, maxSide = 1200, quality = 0.6) {
+  if (!sheet || !sheet.W) return Promise.resolve(null);
+  const full = document.createElement("canvas"); full.width = sheet.W; full.height = sheet.H;
+  const ctx = full.getContext("2d"), img = ctx.createImageData(sheet.W, sheet.H), px = img.data;
+  for (let i = 0, j = 0; i < sheet.warped.length; i++, j += 4) { px[j] = px[j + 1] = px[j + 2] = sheet.warped[i]; px[j + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  const k = Math.min(1, maxSide / Math.max(sheet.W, sheet.H));
+  let out = full;
+  if (k < 1) {
+    out = document.createElement("canvas"); out.width = Math.round(sheet.W * k); out.height = Math.round(sheet.H * k);
+    out.getContext("2d").drawImage(full, 0, 0, out.width, out.height);
+  }
+  return new Promise(resolve => out.toBlob(b => resolve(b), "image/jpeg", quality));
+}
+
 // Kulrang rasm ({W, H, data}) → JPEG (yozma kataklar va ism katagi — telefon alohida tekislagan)
 function grayJpeg(img, quality = 0.85) {
   if (!img || img.W < 8 || img.H < 8) return Promise.resolve(null);
@@ -3148,9 +3165,10 @@ VIEWS.scan = async ({ id }) => {
   // Kadrni o'qish. full=false — faqat burchaklar (tez: varaq qimirlamay turganini bilish uchun);
   // full=true — butun varaq + ushlanadigan titul uchun yozma kataklar va ism katagi (2 px/pt) rasmi
   const AREAS = { written: (layout && (layout.written_labels || []).length) ? layout.written_area : null, name: layout && layout.name_area };
-  // probeSize — burchaklar qidiriladigan kichik kadr o'lchami: 720 (tez) yoki 1120 (titul uzoqda, kadrda kichik)
-  const analyze = (full = true, probeSize = 720) => new Promise(resolve => {
-    const options = { edgeMarks: true, layout, page: 1, skipRead: !full, areas: full ? AREAS : null, areaScale: 3, probeSize };
+  // probeSize — burchaklar qidiriladigan kichik kadr o'lchami: 720 (tez) yoki 1120 (titul uzoqda, kadrda kichik);
+  // crops — yozma kataklar va ism katagi rasmini ham olish (faqat ushlangan titul uchun — sekinroq)
+  const analyze = (full = true, probeSize = 720, crops = false) => new Promise(resolve => {
+    const options = { edgeMarks: true, layout, page: 1, skipRead: !full, areas: crops ? AREAS : null, areaScale: 3, probeSize };
     const direct = () => { try { resolve(analyzeFrame(video, video.videoWidth, video.videoHeight, options)); } catch (e) { resolve(null); } };
     if (!worker) return direct();
     const w = worker;
@@ -3158,66 +3176,52 @@ VIEWS.scan = async ({ id }) => {
     createImageBitmap(video).then(bitmap => w.postMessage({ bitmap, edgeMarks: true, skipRead: !full, areas: options.areas, areaScale: 3, probeSize }, [bitmap]))
       .catch(() => { stopWorker(); direct(); });
   });
-  // Ikki kadr orasida burchaklar qancha siljigan (kadr uzun tomonining ulushi)
-  const cornerShift = (a, b) => {
-    if (!a || !b || a.corners.length !== b.corners.length) return Infinity;
-    // Har kadr o'z o'lchamiga nisbatan (kichik kadr 720 yoki 1120 px bo'lishi mumkin)
-    const sa = Math.max(a.width, a.height), sb = Math.max(b.width, b.height);
-    return Math.max(...a.corners.map((c, i) => Math.hypot(c.x / sa - b.corners[i].x / sb, c.y / sa - b.corners[i].y / sb)));
-  };
-  const MOVING = 0.035;  // ~25 px 720 px kadrda — telefon tez harakatda (xira kadr): o'qimaymiz, keyingisini kutamiz
   const doubtful = r => r.questions.some(q => q.status === "multiple" || q.status === "unsure") || r.sheet_number_status === "unclear";
+  const LIVE_GAP = 150;  // kadrlar orasi (ms), Chittak'dagidek: 30 kadr/s da har 5-kadr — telefon qizib ketmasin
 
   let swapSig = null, savedText = "", queue = [];
   const idleText = () => savedText ? `${savedText} · keyingisini qo'ying` : "Titulni kameraga ko'rsating";
 
-  // Tez sikl: har kadrda faqat burchaklar (~0,1–0,3 s). Ikki kadr ketma-ket qimirlamasa — bitta to'liq
-  // o'qish va darhol saqlash. Shubhali doiracha bo'lsa — ishonch uchun yana bir marta o'qiladi.
+  // Chittak'dagi sikl: har kadrda burchaklar topiladi va varaq shu zahoti o'qiladi (bitta o'tish).
+  // Ishonchli o'qilsa (shubhali doiracha va noaniq ID yo'q) — birinchi kadrning o'zi saqlanadi;
+  // aks holda ikkinchi kadr ham xuddi shuni berishi kutiladi. Yozma kataklar va ism katagi rasmi
+  // faqat ushlangan titul uchun, kameraning to'liq sifatida, bir marta olinadi.
   // waitSwap — saqlangan varaq hali turibdi: yangisi ustiga qo'yilsa (imzo o'zgarsa) — u ham ushlanadi
   async function startLoop(waitSwap = false) {
     if (!local) return startServerLoop(waitSwap);
     const my = ++loopToken; S.scanLoop = my;
-    let prev = null, confirm = null, movedSinceRead = true, lastReadAt = 0;
+    let confirm = null;
     // Titul topilmasa, har ikkinchi kadr kattaroq o'lchamda qidiriladi — uzoqdagi (kichik ko'ringan) titul ham ushlanadi
     let probeSize = 720, misses = 0;
     setStatus(idleText(), savedText ? "ok" : "");
     while (my === loopToken && S.camera && document.body.contains(video)) {
       if (!video.videoWidth) { await new Promise(r => setTimeout(r, 200)); continue; }
       const started = performance.now();
-      const probe = await analyze(false, probeSize);
+      const a = await analyze(true, probeSize);
       if (my !== loopToken) return;
-      const corners = probe && probe.corners;
-      drawQuad(corners ? corners.map(c => [c.x / probe.width, c.y / probe.height]) : null);
+      const corners = a && a.corners;
+      drawQuad(corners ? corners.map(c => [c.x / a.width, c.y / a.height]) : null);
       if (!corners) {
-        waitSwap = false; prev = confirm = null; movedSinceRead = true; setStatus(idleText(), savedText ? "ok" : "");
+        waitSwap = false; confirm = null; setStatus(idleText(), savedText ? "ok" : "");
         misses++; probeSize = misses % 2 ? 1120 : 720;
-      }
-      else {
-        // Chittak/EvalBee kabi: titul ko'rinishi bilan o'qiladi (qimirlamay turishini kutmaymiz) — faqat tez harakatda emas
-        const still = !prev || cornerShift(probe, prev) < MOVING;
-        if (!still) { movedSinceRead = true; confirm = null; if (!waitSwap) setStatus("Titul ko'rindi — o'qilmoqda…"); }
-        // Qimirlamayapti: to'liq o'qiymiz (o'sha varaq turgan bo'lsa — ko'pi bilan 1,5 soniyada bir)
-        else if (!waitSwap || movedSinceRead || performance.now() - lastReadAt > 1500) {
-          const a = await analyze(true, probeSize);
-          if (my !== loopToken) return;
-          movedSinceRead = false; lastReadAt = performance.now();
-          if (a && a.read) {
-            const sig = signature(a.read.result);
-            if (waitSwap && !isNewSheet(sig, swapSig)) confirm = null;  // hali o'sha varaq turibdi
-            else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("Bir lahza — aniqlashtirilmoqda…"); }
-            else {
-              swapSig = sig;
-              try { await keep(a); }
-              catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); confirm = null; continue; }
-              if (my !== loopToken) return;
-              waitSwap = true; confirm = null;
-            }
+      } else if (a.read) {
+        const sig = signature(a.read.result);
+        if (waitSwap && !isNewSheet(sig, swapSig)) confirm = null;  // saqlangan varaq hali turibdi
+        else if (doubtful(a.read.result) && confirm !== sig) { waitSwap = false; confirm = sig; setStatus("🔎 O'qilmoqda…"); }
+        else {
+          if (AREAS.written || AREAS.name) {
+            const sharp = await analyze(true, probeSize, true);
+            if (my !== loopToken) return;
+            if (sharp && sharp.read && sharp.crops) a.crops = sharp.crops;
           }
+          swapSig = sig;
+          try { await keep(a); }
+          catch (e) { setStatus("Saqlab bo'lmadi: " + e.message, "bad"); await new Promise(r => setTimeout(r, 1200)); confirm = null; continue; }
+          if (my !== loopToken) return;
+          waitSwap = true; confirm = null;
         }
       }
-      prev = probe && probe.corners ? probe : null;
-      // Telefon qizib ketmasin: kadr vaqtining bir qismicha dam (titul tez ushlanishi uchun qisqa)
-      await new Promise(r => setTimeout(r, Math.max(30, (performance.now() - started) * 0.3)));
+      await new Promise(r => setTimeout(r, Math.max(40, LIVE_GAP - (performance.now() - started))));
     }
   }
 
@@ -3236,7 +3240,8 @@ VIEWS.scan = async ({ id }) => {
     if (number && !student && !pupil) idSource = "unknown";
     const variant = res.variant || (student && student.variant) || (t.variants.length === 1 ? t.variants[0] : null);
     const crops = a.crops || {};
-    if (page === 2) return keepPage2(a, number, student, pupil, crops);
+    const photo = await sheetPhoto(a.read.sheet);
+    if (page === 2) return keepPage2(a, number, student, pupil, crops, photo);
     const needWritten = !twoPages && (layout.written_labels || []).length > 0;  // ikki varaqli titulda — 2-varaqda
     const [written, name] = await Promise.all([
       needWritten ? (crops.written ? grayJpeg(crops.written) : cropSheet(a.read.sheet, layout.written_area, READ_SCALE)) : null,
@@ -3244,6 +3249,7 @@ VIEWS.scan = async ({ id }) => {
     ]);
     const rec = {
       uid: newUid(), testId: testKey, created: Date.now(), payload: null, written, name, essays: [], error: null,
+      photos: photo ? [photo] : [],
       r: {
         student: student ? { ...student } : null, pupil, id_source: idSource, id_read: number, id_status: res.sheet_number_status,
         code_status: student ? "ok" : (res.sheet_code === 0 ? "blank" : "unclear"), variant, variant_read: res.variant,
@@ -3255,6 +3261,7 @@ VIEWS.scan = async ({ id }) => {
       for (const old of queue) {
         if (recNumber(old, d.students) !== number) continue;
         if (isPage2(old) || (!rec.written && old.written)) rec.written = rec.written || old.written;
+        if (isPage2(old)) rec.photos = [...rec.photos, ...(old.photos || [])];
         if (isPage2(old)) await scanDB.del(old.uid);
       }
     }
@@ -3327,17 +3334,20 @@ VIEWS.scan = async ({ id }) => {
   }
 
   // 2-varaq (36–44): yozma kataklar rasmi. O'quvchi ID'si shart — u bilan 1-varaqqa qo'shiladi
-  async function keepPage2(a, number, student, pupil, crops) {
+  async function keepPage2(a, number, student, pupil, crops, photo) {
     if (!number) { setStatus("2-varaq: ID o'qilmadi — ID'ni 2-varaqqa ham yozib bo'yang va qayta qo'ying", "bad"); haptic("error"); return; }
     const written = crops.written ? await grayJpeg(crops.written) : await cropSheet(a.read.sheet, layout.written_area, READ_SCALE);
     const who = student || pupil;
     const label = `№ ${pad3(number)}${who ? ` ${who.name}` : ""}`;
     const host = queue.find(r => !isPage2(r) && recNumber(r, d.students) === number);
-    if (host) { host.written = written; await scanDB.put(host); savedText = `✅ 2-varaq · ${label} — 1-varaqqa qo'shildi`; }
+    if (host) {
+      host.written = written; host.photos = [...(host.photos || []).slice(0, 1), ...(photo ? [photo] : [])];
+      await scanDB.put(host); savedText = `✅ 2-varaq · ${label} — 1-varaqqa qo'shildi`;
+    }
     else {
       for (const old of queue) if (isPage2(old) && old.number === number) await scanDB.del(old.uid);
       await scanDB.put({ uid: newUid(), testId: testKey, created: Date.now(), page: 2, number, student: student ? { ...student } : null,
-        pupil, written, name: null, essays: [], error: null, payload: null, r: { questions: [] } });
+        pupil, written, name: null, essays: [], error: null, payload: null, r: { questions: [] }, photos: photo ? [photo] : [] });
       savedText = `✅ 2-varaq · ${label} saqlandi`;
     }
     haptic("success");
@@ -3430,6 +3440,7 @@ VIEWS.scan = async ({ id }) => {
         form.append("data", JSON.stringify({ ...recPayload(rec), uid: rec.uid, written_mime: "image/jpeg" }));
         if (rec.written) form.append("written", rec.written, "yozma.jpg");
         rec.essays.forEach((blob, i) => form.append("essay", blob, `esse-${i + 1}.jpg`));
+        (rec.photos || []).forEach((blob, i) => form.append("photo", blob, `titul-${i + 1}.jpg`));
         const res = await apiForm(`/api/teacher/test/${id}/scan/upload`, form);
         saved++; if (res.written_queued) written++; if (rec.essays.length) essays++;
         await scanDB.del(rec.uid);

@@ -1627,6 +1627,21 @@ async def written_notice(bot: Bot, test: dict) -> None:
         logger.warning("Yozma javoblar haqida xabar yuborilmadi")
 
 
+async def send_scan_photos(bot: Bot, chat_id: int, test: dict, items: list[tuple[bytes, str]]) -> None:
+    """Skanerlangan titullarning suratlari (telefon tayyorlagan JPEG) — 10 tadan albom, har birining izohi bilan."""
+    for start in range(0, len(items), 10):
+        chunk = items[start:start + 10]
+        files = [(BufferedInputFile(photo, filename=f"titul_{test['code']}_{start + k + 1}.jpg"), caption)
+                 for k, (photo, caption) in enumerate(chunk)]
+        head = f"📷 <b>{esc(test['title'])}</b> · titullar\n"
+        if len(files) == 1:
+            await bot.send_photo(chat_id, files[0][0], caption=head + esc(files[0][1]))
+        else:
+            await bot.send_media_group(chat_id, [InputMediaPhoto(media=f, caption=(head if k == 0 else "") + esc(c))
+                                                 for k, (f, c) in enumerate(files)])
+        await asyncio.sleep(1)  # Telegram cheklovi: bitta chatga ketma-ket albomlar orasida tanaffus
+
+
 async def scan_batch_notice(bot: Bot, chat_id: int, test: dict, saved: int, written: int, essays: int,
                             failed: int) -> None:
     """Oflayn skaner telefondagi titullarni yubordi — bot chatiga umumiy xabar."""
@@ -1765,6 +1780,7 @@ async def main() -> None:
         store_photo=lambda chat_id, data, caption: store_photo(bot, chat_id, data, caption),
         scan_notice=lambda chat_id, *args: scan_notice(bot, chat_id, *args),
         scan_batch_notice=lambda chat_id, *args: scan_batch_notice(bot, chat_id, *args),
+        scan_photos=lambda chat_id, *args: send_scan_photos(bot, chat_id, *args),
         send_text=lambda chat_id, text: bot.send_message(chat_id, text),
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,

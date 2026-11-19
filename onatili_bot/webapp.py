@@ -2644,6 +2644,26 @@ _UPLOADED: dict[str, dict] = {}
 _STUDENT_OF: dict[str, int] = {}
 UPLOAD_PART_MAX = 6 * 1024 * 1024
 
+# Titul suratlari: telefon tayyorlagan kichik JPEG'lar xotirada yig'iladi va 10 tadan albom bo'lib botga
+# uzatiladi (server rasmni ochmaydi ham — protsessorga yuk yo'q). Qolgani «yuborish tugadi»da jo'natiladi
+SHEET_PHOTO_MAX = 1_500_000
+_SHEET_PHOTOS: dict[tuple[int, int], list[tuple[bytes, str]]] = {}
+
+
+def queue_sheet_photos(user_id: int, test: dict, photos: list[bytes], caption: str) -> None:
+    items = _SHEET_PHOTOS.setdefault((user_id, test["id"]), [])
+    for photo in photos:
+        if photo[:2] == b"\xff\xd8" and len(photo) <= SHEET_PHOTO_MAX:  # faqat JPEG
+            items.append((photo, caption[:900]))
+    if len(items) >= 10:
+        flush_sheet_photos(user_id, test)
+
+
+def flush_sheet_photos(user_id: int, test: dict) -> None:
+    items = _SHEET_PHOTOS.pop((user_id, test["id"]), None)
+    if items and "scan_photos" in HOOKS:
+        in_background(HOOKS["scan_photos"](user_id, test, items), "Titul suratlari")
+
 
 async def scan_upload(request: web.Request) -> web.Response:
     """
@@ -2679,11 +2699,14 @@ async def scan_upload(request: web.Request) -> web.Response:
 
     written = part(form.get("written"))
     essays = [data for data in (part(f) for f in form.getall("essay", [])) if data]
+    photos = [data for data in (part(f) for f in form.getall("photo", [])) if data]
     if str(payload.get("page") or "1") == "2":  # ikki varaqli titulning 2-varag'i — faqat yozma kataklar rasmi
         if not written:
             raise ApiError(400, "2-varaq rasmi yuborilmadi")
         response = await save_written_page(test, payload, base64.b64encode(written).decode(),
                                            str(payload.get("written_mime") or "image/jpeg"))
+        if photos:
+            queue_sheet_photos(user["id"], test, photos, f"2-varaq · ID {to_int(payload.get('number'))}")
         if uid:
             _UPLOADED[uid] = response
         return ok(response)
@@ -2700,6 +2723,11 @@ async def scan_upload(request: web.Request) -> web.Response:
         await run(db.create_written_job, attempt["id"], test["id"], base64.b64encode(written).decode(),
                   str(payload.get("written_mime") or "image/jpeg")[:20], "pending" if queued else "manual")
     essay_status = await attach_essay(user, test, attempt, essays) if essays else None
+    if photos:
+        number = student.get("number")
+        caption = (f"№ {number:03d} " if isinstance(number, int) else "") + f"{student['name']} · test " \
+                  f"{attempt['test_correct']}/{len(choice_items(test['items']))}"
+        queue_sheet_photos(user["id"], test, photos, caption)
     response = {"ok": True, "attempt_id": attempt["id"], "student_id": student["id"], "name": student["name"],
                 "written_queued": queued, "essay_status": essay_status, "essay_pending": essay_pending(test, attempt),
                 "points": None if essay_pending(test, attempt) else total_points(attempt),
@@ -2720,6 +2748,7 @@ async def scan_upload_done(request: web.Request) -> web.Response:
     payload = await body(request)
     count = lambda key: max(0, min(10000, to_int(payload.get(key))))
     status = await run(db.written_status, test["id"])
+    flush_sheet_photos(user["id"], test)
     if "scan_batch_notice" in HOOKS and count("saved"):
         in_background(HOOKS["scan_batch_notice"](user["id"], test, count("saved"), count("written"), count("essays"),
                                                  count("failed")), "Skaner xabari (to'plam)")
