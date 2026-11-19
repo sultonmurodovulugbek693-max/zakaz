@@ -367,6 +367,10 @@ SCHEMA = [
 
 # Eski bazalar uchun keyin qo'shilgan ustunlar
 MIGRATIONS = [
+    ("practice_essays", "kind", "TEXT NOT NULL DEFAULT 'student'"),   # student — ustoz o'quvchisi, public — begona
+    ("practice_essays", "photos", "TEXT"),                             # [[file_id, mime], ...] — rasm yoki PDF esse
+    ("practice_essays", "price", "INTEGER NOT NULL DEFAULT 0"),        # begona to'lagan narx (0 — bepul)
+    ("practice_essays", "receipt", "TEXT"),                            # chek (Telegram file_id)
     ("attempts", "points", f"{FLOAT} NOT NULL DEFAULT 0"),
     ("tests", "essay_topic", "TEXT"),
     ("tests", "theme", "TEXT"),
@@ -915,11 +919,36 @@ def practice_used(teacher_id: int, student_id: int, month: str) -> int:
             "AND status <> 'failed'", (teacher_id, student_id, f"{month}%")).fetchone()["n"]
 
 
-def create_practice(teacher_id: int, student_id: int, topic: str | None, text: str) -> int:
+def create_practice(teacher_id: int, student_id: int, topic: str | None, text: str, kind: str = "student",
+                    photos: list | None = None, status: str = "pending", price: int = 0) -> int:
     with connect() as conn:
         return conn.execute(
-            "INSERT INTO practice_essays (teacher_id, student_id, topic, text, status, created_at) "
-            "VALUES (?, ?, ?, ?, 'pending', ?) RETURNING id", (teacher_id, student_id, topic, text, _now())).fetchone()["id"]
+            "INSERT INTO practice_essays (teacher_id, student_id, topic, text, status, created_at, kind, photos, price) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            (teacher_id, student_id, topic, text, status, _now(), kind,
+             json.dumps(photos) if photos else None, price)).fetchone()["id"]
+
+
+def public_free_used(teacher_id: int, student_id: int) -> int:
+    """Begona o'quvchi shu ustozda nechta bepul esse tekshirtirgan (muvaffaqiyatsizlari hisobga kirmaydi)."""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM practice_essays WHERE teacher_id = ? AND student_id = ? AND kind = 'public' "
+            "AND price = 0 AND status <> 'failed'", (teacher_id, student_id)).fetchone()["n"]
+
+
+def set_practice_status(practice_id: int, status: str, receipt: str | None = None) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE practice_essays SET status = ?, receipt = COALESCE(?, receipt) WHERE id = ?",
+                     (status, receipt, practice_id))
+
+
+def practice_awaiting_pay(student_id: int) -> dict | None:
+    """O'quvchining to'lovi kutilayotgan oxirgi essesi (chekni keyinroq yuborsa ham topiladi)."""
+    with connect() as conn:
+        return _practice(conn.execute(
+            "SELECT * FROM practice_essays WHERE student_id = ? AND status = 'awaiting_pay' ORDER BY id DESC LIMIT 1",
+            (student_id,)).fetchone())
 
 
 def _practice(row) -> dict | None:
@@ -927,6 +956,7 @@ def _practice(row) -> dict | None:
         return None
     item = dict(row)
     item["ai_result"] = json.loads(item["ai_result"]) if item["ai_result"] else None
+    item["photos"] = json.loads(item["photos"]) if item.get("photos") else []
     return item
 
 

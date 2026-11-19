@@ -1251,6 +1251,19 @@ def invite_code(teacher_id: int) -> str:
     return f"t_{teacher_id}_{sig}"
 
 
+def public_code(teacher_id: int) -> str:
+    """Begonalar uchun havola (esse tekshiruvi pullik): t.me/<bot>?start=p_<id>_<imzo>."""
+    sig = hmac.new(f"public:{BOT_TOKEN}".encode(), str(teacher_id).encode(), hashlib.sha256).hexdigest()[:10]
+    return f"p_{teacher_id}_{sig}"
+
+
+def teacher_from_public(code: str) -> int | None:
+    parts = code.split("_")
+    if len(parts) != 3 or parts[0] != "p" or not parts[1].isdigit():
+        return None
+    return int(parts[1]) if hmac.compare_digest(public_code(int(parts[1])), code) else None
+
+
 def teacher_from_invite(code: str) -> int | None:
     parts = code.split("_")
     if len(parts) != 3 or parts[0] != "t" or not parts[1].isdigit():

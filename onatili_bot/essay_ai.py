@@ -365,8 +365,8 @@ async def _claude(system: str, text: str, images: list[tuple[bytes, str]], schem
     import anthropic
 
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-    content = [{"type": "image", "source": {"type": "base64", "media_type": mime,
-                                            "data": base64.standard_b64encode(data).decode()}}
+    content = [{"type": "document" if mime == "application/pdf" else "image",
+                "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode()}}
                for data, mime in images]
     content.append({"type": "text", "text": text})
     model = model or CLAUDE_MODEL

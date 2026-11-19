@@ -233,6 +233,21 @@ def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     return False
 
 
+def can_use_ai(tg_id: int, kind: str = "essays") -> bool:
+    """AI ishlatish mumkinmi — sarflamasdan (to'lov so'rashdan oldin: ustozning krediti/limiti bormi)."""
+    if ai_unlimited(tg_id):
+        return True
+    if kind == "essays" and db.get_credits(tg_id) > 0:
+        return True
+    if not SALES_ENABLED:
+        return False
+    sub = db.get_subscription(tg_id)
+    if not sub or _expires(sub) <= now():
+        return False
+    limit = (trial_limits() if sub["plan"] == "trial" else limits())[kind]
+    return (db.get_usage(tg_id, month_key()).get(kind) or 0) < limit
+
+
 def money(amount: int) -> str:
     return f"{amount:,}".replace(",", " ")
 

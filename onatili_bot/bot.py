@@ -119,6 +119,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("t_"):  # ustozning taklif havolasi — o'quvchi ulanadi
         await join_teacher(message, args[1])
         return
+    if len(args) == 2 and args[1].startswith("p_"):  # ustozning ommaviy havolasi — begona esse tekshirtiradi
+        await open_public(message, args[1])
+        return
     if len(args) == 2 and args[1] == "register":
         await send_register_prompt(message)
         return
@@ -166,7 +169,8 @@ async def link_to_teacher(message: Message, teacher_id: int, via: str) -> None:
     await message.answer(
         (f"✅ <b>Siz {esc(name)} ustozga ulandingiz</b>\n" if fresh else f"Siz {esc(name)} ustozga allaqachon ulangansiz.\n")
         + "Ilovada «✍️ Esse tekshirish»: esse yozasiz — AI imtihondagidek 75 ballik shkalada tekshiradi "
-          "(ustozingiz hisobidan).", reply_markup=app_markup("✍️ Esse tekshirish", v="practice"))
+          "(ustozingiz hisobidan). Botning o'zida ham yuborsa bo'ladi 👇",
+        reply_markup=inline([[("✍️ Botda esse yuborish", f"ecw:new:{teacher_id}")]]))
     if fresh:
         try:
             await message.bot.send_message(teacher_id, f"👤 <b>{esc(message.from_user.full_name)}</b> {via} orqali "
@@ -542,6 +546,10 @@ async def cmd_myid(message: Message) -> None:
 @dp.message(StateFilter(None), F.photo | F.document)
 async def receipt_received(message: Message) -> None:
     """Chek rasmi: ochiq to'lov so'rovi bo'lsa — adminlarga tasdiqlash uchun yuboriladi."""
+    awaiting = await asyncio.to_thread(db.practice_awaiting_pay, message.from_user.id)
+    if awaiting:  # botdagi pullik esse tekshiruvi cheki
+        await practice_receipt(message, awaiting)
+        return
     scan = await asyncio.to_thread(db.collecting_essay_scan, message.from_user.id)
     if scan:  # o'quvchi ilovada «Botga yuboraman» ni bosgan — bu esse sahifasi
         await essay_page_received(message, scan)
@@ -1707,10 +1715,20 @@ async def self_check_notice(bot: Bot, attempt: dict, score: float) -> None:
 async def grade_practice(bot: Bot, practice: dict) -> None:
     """O'quvchining mustaqil essesi: AI baholaydi va o'quvchiga xabar. Bajarilmasa — ustoz krediti qaytariladi."""
     try:
-        result = await essay_ai.grade(practice["topic"] or "", practice["text"], [])
+        images = []
+        for file_id, mime in practice.get("photos") or []:
+            buffer = await bot.download(file_id)
+            images.append((buffer.read(), mime))
+        result = await essay_ai.grade(practice["topic"] or "", practice["text"] or None, images)
     except essay_ai.AIError as error:
         give_up = not error.retry or practice["tries"] + 1 >= ESSAY_MAX_TRIES
         await asyncio.to_thread(db.practice_failed, practice["id"], str(error), give_up)
+        if give_up:
+            try:
+                await bot.send_message(practice["student_id"], "❗️ AI esseni tekshira olmadi — ustoz krediti qaytarildi. "
+                                       "Rasm bo'lsa, yorug' joyda tekis qilib qayta yuboring.")
+            except Exception:
+                pass
         if give_up and not plans.ai_unlimited(practice["teacher_id"]):
             await asyncio.to_thread(db.add_credits, practice["teacher_id"], 1)  # tekshirilmadi — kredit qaytadi
         if error.retry and not give_up:
@@ -1718,10 +1736,9 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
         return
     await asyncio.to_thread(db.save_practice_result, practice["id"], result)
     try:
-        await bot.send_message(practice["student_id"],
-                               f"📝 <b>Essengiz tekshirildi: {fmt_num(essay_to_75(result['score']))}/{ESSAY_SCALE}</b>\n"
-                               "Har mezon bo'yicha tahlil — ilovada.",
-                               reply_markup=app_markup("✍️ Natijani ko'rish", v="practice"))
+        words = word_count(practice["text"] or result.get("transcription") or "")
+        await bot.send_message(practice["student_id"], practice_result_text(result, words),
+                               reply_markup=inline([[("✍️ Yana esse yuborish", f"ecw:new:{practice['teacher_id']}")]]))
     except Exception:
         logger.warning("Esse natijasi o'quvchiga yuborilmadi")
 
@@ -1749,6 +1766,378 @@ async def grade_one(bot: Bot, essay: dict) -> None:
 
 
 # ---------- Qolgan xabarlar va xatolar ----------
+
+# ---------- Botda esse tekshiruvi ----------
+# Ustozning o'quvchisi (taklif havolasi yoki esse kodi bilan ulangan) — ustoz kreditidan, oylik chegara bilan.
+# Begona (ustozning ommaviy havolasi) — PUBLIC_FREE ta bepul, keyin har esse uchun ustoz kartasiga to'laydi:
+# chek → ustoz botda tasdiqlaydi → AI tekshiradi (ustoz kreditidan). Esse — matn (bir necha xabar bo'lsa ham),
+# rasm(lar) yoki PDF. Matn yuborilgan sari nechta so'z bo'lgani ko'rsatib turiladi.
+
+PUBLIC_FREE = 2
+ESSAY_MIN_WORDS = webapp.PRACTICE_MIN_WORDS
+ESSAY_MAX_PHOTOS = 6
+
+
+class EssayCheck(StatesGroup):
+    topic = State()
+    essay = State()
+    receipt = State()
+
+
+class EssaySetup(StatesGroup):
+    price = State()
+    card = State()
+
+
+def essay_setup(teacher_id: int) -> dict:
+    saved = db.get_settings()
+    return {"public": saved.get(f"essay_public:{teacher_id}") == "1",
+            "price": int(saved.get(f"essay_price:{teacher_id}") or 0),
+            "card": saved.get(f"teacher_card:{teacher_id}", ""), "holder": saved.get(f"teacher_holder:{teacher_id}", "")}
+
+
+def word_count(text: str) -> int:
+    return len([w for w in re.split(r"\s+", text.strip()) if any(ch.isalpha() for ch in w)]) if text.strip() else 0
+
+
+async def send_essay_setup(bot: Bot, chat_id: int) -> None:
+    cfg = await asyncio.to_thread(essay_setup, chat_id)
+    username = await bot_username(bot)
+    code = await asyncio.to_thread(db.essay_code_of, chat_id)
+    credits = "cheksiz" if plans.ai_unlimited(chat_id) else f"{await asyncio.to_thread(db.get_credits, chat_id)} ta"
+    limit = await asyncio.to_thread(webapp.student_limit, chat_id)
+    own = f"https://t.me/{username}?start={webapp.invite_code(chat_id)}"
+    public = f"https://t.me/{username}?start={webapp.public_code(chat_id)}"
+    card = f"<code>{esc(cfg['card'])}</code>" + (f" ({esc(cfg['holder'])})" if cfg["holder"] else "") if cfg["card"] else "qo'yilmagan"
+    text = (f"✍️ <b>Esse tekshiruvi</b>\n{LINE}\n"
+            f"👥 <b>O'quvchilaringiz uchun</b> — bepul, kreditingizdan (har biriga oyiga {limit} ta):\n{own}\n"
+            f"yoki botga kod: <code>{code}</code>\n\n"
+            f"🌐 <b>Begonalar uchun</b> — {'✅ ochiq' if cfg['public'] else '⛔️ yopiq'}:\n{public}\n"
+            f"{PUBLIC_FREE} ta bepul, keyin har esse <b>{plans.money(cfg['price']) + ' so' + chr(39) + 'm' if cfg['price'] else 'narx qo' + chr(39) + 'yilmagan'}</b> "
+            "— pul kartangizga, chekni siz tasdiqlaysiz.\n"
+            f"💳 Karta: {card}\n\n"
+            f"🤖 AI krediti: <b>{credits}</b> — har tekshirilgan esse 1 kredit (begonalarniki ham).\n"
+            "Mock narxi alohida — test yaratishda qo'yiladi.")
+    markup = inline([[("⛔️ Ommaviyni yopish" if cfg["public"] else "🌐 Ommaviyni ochish", "ecs:pub")],
+                     [("💰 Esse narxi", "ecs:price"), ("💳 Karta", "ecs:card")]])
+    await bot.send_message(chat_id, text, reply_markup=markup, disable_web_page_preview=True)
+
+
+@dp.message(Command("esse"))
+async def cmd_essay_setup(message: Message, state: FSMContext) -> None:
+    """Ustoz: esse tekshiruvi havolalari, narxi, kartasi, ommaviy rejim."""
+    await state.clear()
+    await asyncio.to_thread(db.remember_user, message.from_user.id, message.from_user.full_name, message.from_user.username)
+    await send_essay_setup(message.bot, message.from_user.id)
+
+
+@dp.callback_query(F.data.startswith("ecs:"))
+async def essay_setup_button(callback: CallbackQuery, state: FSMContext) -> None:
+    action, tid = callback.data.split(":")[1], callback.from_user.id
+    if action == "pub":
+        cfg = await asyncio.to_thread(essay_setup, tid)
+        if not cfg["public"] and (not cfg["price"] or not cfg["card"]):
+            await callback.answer("Avval esse narxi va kartani kiriting", show_alert=True)
+            return
+        await asyncio.to_thread(db.set_setting, f"essay_public:{tid}", "0" if cfg["public"] else "1")
+        await callback.answer("⛔️ Ommaviy tekshiruv yopildi" if cfg["public"] else "🌐 Ommaviy tekshiruv ochildi")
+        await send_essay_setup(callback.bot, tid)
+        return
+    if action == "price":
+        await state.set_state(EssaySetup.price)
+        await callback.message.answer("💰 Bitta esse tekshiruvi narxini yozing (so'mda), masalan: <code>15000</code>")
+    else:
+        await state.set_state(EssaySetup.card)
+        await callback.message.answer("💳 Karta raqami va egasining ismini yozing, masalan:\n"
+                                      "<code>8600 1234 5678 9012 Aliyev Vali</code>")
+    await callback.answer()
+
+
+@dp.message(EssaySetup.price)
+async def essay_setup_price(message: Message, state: FSMContext) -> None:
+    price = int(re.sub(r"\D", "", message.text or "") or 0)
+    if not 1000 <= price <= 1_000_000:
+        await message.answer("Narx 1 000 dan 1 000 000 so'mgacha bo'lsin. Qayta yozing:")
+        return
+    await asyncio.to_thread(db.set_setting, f"essay_price:{message.from_user.id}", str(price))
+    await state.clear()
+    await message.answer(f"✅ Esse narxi: {plans.money(price)} so'm")
+    await send_essay_setup(message.bot, message.from_user.id)
+
+
+@dp.message(EssaySetup.card)
+async def essay_setup_card(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    digits = re.match(r"^[\d\s-]+", text)
+    number = re.sub(r"\D", "", digits.group(0)) if digits else ""
+    if len(number) != 16:
+        await message.answer("Karta raqami 16 ta raqam bo'lsin. Qayta yozing:")
+        return
+    holder = text[digits.end():].strip()[:60]
+    card = " ".join(number[i:i + 4] for i in range(0, 16, 4))
+    await asyncio.to_thread(db.set_setting, f"teacher_card:{message.from_user.id}", card)
+    await asyncio.to_thread(db.set_setting, f"teacher_holder:{message.from_user.id}", holder)
+    await state.clear()
+    await message.answer(f"✅ Karta saqlandi: <code>{card}</code>{' (' + esc(holder) + ')' if holder else ''}")
+    await send_essay_setup(message.bot, message.from_user.id)
+
+
+async def open_public(message: Message, code: str) -> None:
+    """Ustozning ommaviy havolasi: begona o'quvchi esse tekshirtiradi (2 ta bepul, keyin to'lov)."""
+    teacher_id = webapp.teacher_from_public(code)
+    if not teacher_id:
+        await message.answer("⌛️ Havola noto'g'ri. Ustozdan yangisini so'rang.")
+        return
+    if teacher_id == message.from_user.id:
+        await message.answer("Bu sizning ommaviy havolangiz — uni kanal yoki guruhga tashlang. Sozlamalar: /esse")
+        return
+    teacher = await asyncio.to_thread(db.find_user, str(teacher_id))
+    name = esc((teacher or {}).get("full_name") or "Ustoz")
+    if await asyncio.to_thread(db.is_linked, teacher_id, message.from_user.id):
+        await message.answer(f"Siz {name} ustozning o'quvchisisiz — esselaringiz bepul tekshiriladi.",
+                             reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")]]))
+        return
+    cfg = await asyncio.to_thread(essay_setup, teacher_id)
+    if not cfg["public"]:
+        await message.answer(f"⛔️ {name} hozir ommaviy esse tekshiruvini yopgan.")
+        return
+    free_left = max(0, PUBLIC_FREE - await asyncio.to_thread(db.public_free_used, teacher_id, message.from_user.id))
+    await message.answer(
+        f"✍️ <b>{name} — esse tekshiruvi</b>\n{LINE}\n"
+        "AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.\n"
+        + (f"🎁 Bepul: <b>{free_left} / {PUBLIC_FREE}</b> ta qoldi\n" if free_left else "")
+        + f"💰 Keyin har esse: <b>{plans.money(cfg['price'])} so'm</b> (ustoz kartasiga)",
+        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")]]))
+
+
+async def essay_kind(teacher_id: int, student_id: int) -> str:
+    return "student" if await asyncio.to_thread(db.is_linked, teacher_id, student_id) else "public"
+
+
+@dp.callback_query(F.data.startswith("ecw:"))
+async def essay_flow_button(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    action = parts[1]
+    if action == "new":
+        teacher_id, student_id = int(parts[2]), callback.from_user.id
+        if not essay_ai.essay_enabled():
+            await callback.answer("AI esse tekshiruvi hozir o'chiq", show_alert=True)
+            return
+        kind = await essay_kind(teacher_id, student_id)
+        if kind == "public" and not (await asyncio.to_thread(essay_setup, teacher_id))["public"]:
+            await callback.answer("Ustoz ommaviy tekshiruvni yopgan", show_alert=True)
+            return
+        if kind == "student":
+            limit = await asyncio.to_thread(webapp.student_limit, teacher_id)
+            if await asyncio.to_thread(db.practice_used, teacher_id, student_id, plans.month_key()) >= limit:
+                await callback.answer(f"Bu oy uchun chegara tugadi ({limit} ta esse)", show_alert=True)
+                return
+        if not await asyncio.to_thread(plans.can_use_ai, teacher_id):
+            await callback.answer("Ustozning AI krediti tugagan — ustozga ayting", show_alert=True)
+            return
+        await asyncio.to_thread(db.remember_user, student_id, callback.from_user.full_name, callback.from_user.username)
+        await state.set_state(EssayCheck.topic)
+        await state.set_data({"teacher_id": teacher_id, "kind": kind, "parts": [], "photos": []})
+        await callback.message.answer("1️⃣ <b>Mavzu</b> — vaziyat matnini yuboring (AI shu mavzuga mosligini ham tekshiradi).",
+                                      reply_markup=inline([[("⏭ Mavzusiz", "ecw:skip")]]))
+        await callback.answer()
+        return
+    if action == "skip" and await state.get_state() == EssayCheck.topic.state:
+        await ask_essay(callback.message, state, None)
+    elif action == "reset" and await state.get_state() == EssayCheck.essay.state:
+        await state.update_data(parts=[], photos=[])
+        await callback.message.answer("🗑 Tozalandi — esseni qaytadan yuboring.")
+    elif action == "send" and await state.get_state() == EssayCheck.essay.state:
+        await submit_essay(callback.message, state, callback.from_user)
+    await callback.answer()
+
+
+async def ask_essay(message: Message, state: FSMContext, topic: str | None) -> None:
+    await state.update_data(topic=topic)
+    await state.set_state(EssayCheck.essay)
+    await message.answer(
+        "2️⃣ <b>Esse</b> — quyidagilardan birini yuboring:\n"
+        "• ✍️ matn (uzun bo'lsa, bir necha xabarda — so'zlar sanab boriladi);\n"
+        f"• 📷 qog'ozdagi essening rasmi (ko'pi bilan {ESSAY_MAX_PHOTOS} ta);\n"
+        "• 📄 PDF fayl.\n"
+        "Tayyor bo'lgach «✅ Tekshirtirish»ni bosing.")
+
+
+@dp.message(EssayCheck.topic)
+async def essay_topic(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("Mavzu matnini yozing yoki «⏭ Mavzusiz»ni bosing.")
+        return
+    await ask_essay(message, state, text[:1500])
+
+
+def essay_buttons() -> InlineKeyboardMarkup:
+    return inline([[("✅ Tekshirtirish", "ecw:send"), ("🗑 Qaytadan", "ecw:reset")]])
+
+
+@dp.message(EssayCheck.essay)
+async def essay_part(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    if message.text and not message.text.startswith("/"):
+        if data["photos"]:
+            await message.answer("Rasm yuborilgan — matn qo'shib bo'lmaydi. «🗑 Qaytadan» bilan tozalang.")
+            return
+        parts = data["parts"] + [message.text]
+        if sum(len(p) for p in parts) > webapp.PRACTICE_MAX_CHARS:
+            await message.answer("Esse juda uzun.")
+            return
+        await state.update_data(parts=parts)
+        words = word_count("\n".join(parts))
+        note = (f" · kamida {ESSAY_MIN_WORDS} so'z kerak" if words < ESSAY_MIN_WORDS else
+                " · davomi bo'lsa yuboring" if words < 200 else "")
+        await message.answer(f"📝 Hozircha: <b>{words} so'z</b>{note}", reply_markup=essay_buttons())
+        return
+    photo = message.photo[-1].file_id if message.photo else None
+    document = message.document
+    if document and (document.mime_type or "").lower() == "application/pdf":
+        if data["parts"] or data["photos"]:
+            await message.answer("PDF alohida yuboriladi — avval «🗑 Qaytadan» bilan tozalang.")
+            return
+        if (document.file_size or 0) > 10 * 1024 * 1024:
+            await message.answer("PDF 10 MB dan kichik bo'lsin.")
+            return
+        await state.update_data(photos=[[document.file_id, "application/pdf"]])
+        await submit_essay(message, state, message.from_user)
+        return
+    if document and (document.mime_type or "").startswith("image/"):
+        photo = document.file_id
+    if not photo:
+        await message.answer("Esseni matn, rasm yoki PDF qilib yuboring.")
+        return
+    if data["parts"]:
+        await message.answer("Matn yuborilgan — rasm qo'shib bo'lmaydi. «🗑 Qaytadan» bilan tozalang.")
+        return
+    photos = data["photos"] + [[photo, "image/jpeg"]]
+    if len(photos) > ESSAY_MAX_PHOTOS:
+        await message.answer(f"Ko'pi bilan {ESSAY_MAX_PHOTOS} ta rasm.", reply_markup=essay_buttons())
+        return
+    await state.update_data(photos=photos)
+    await message.answer(f"📷 {len(photos)}-rasm qabul qilindi. Yana bo'lsa yuboring.", reply_markup=essay_buttons())
+
+
+async def submit_essay(message: Message, state: FSMContext, user) -> None:
+    data = await state.get_data()
+    teacher_id, kind = data["teacher_id"], data["kind"]
+    text = "\n".join(data["parts"]).strip()
+    photos = data["photos"]
+    if not text and not photos:
+        await message.answer("Avval esseni yuboring.")
+        return
+    if text and word_count(text) < ESSAY_MIN_WORDS:
+        await message.answer(f"Esse juda qisqa — {word_count(text)} so'z, kamida {ESSAY_MIN_WORDS} ta kerak.")
+        return
+    free = kind == "student" or await asyncio.to_thread(db.public_free_used, teacher_id, user.id) < PUBLIC_FREE
+    if free:
+        if not await webapp.ai_allowed(teacher_id, "essays"):  # ustozning 1 krediti
+            await state.clear()
+            await message.answer("⚠️ Ustozning AI krediti tugagan — esse tekshirilmadi. Ustozga ayting.")
+            return
+        await asyncio.to_thread(db.create_practice, teacher_id, user.id, data.get("topic"), text, kind, photos)
+        await state.clear()
+        AI_WAKE.set()
+        await message.answer(f"⏳ <b>Esse qabul qilindi</b>{f' ({word_count(text)} so' + chr(39) + 'z)' if text else ''} — "
+                             "AI tekshirmoqda, odatda 20–60 soniya. Natija shu yerga keladi.")
+        return
+    cfg = await asyncio.to_thread(essay_setup, teacher_id)
+    if not cfg["public"] or not cfg["price"] or not cfg["card"]:
+        await state.clear()
+        await message.answer("⛔️ Ustoz hozir pullik tekshiruvni yopgan.")
+        return
+    practice_id = await asyncio.to_thread(db.create_practice, teacher_id, user.id, data.get("topic"), text, kind, photos,
+                                          "awaiting_pay", cfg["price"])
+    await state.set_state(EssayCheck.receipt)
+    await state.update_data(practice_id=practice_id)
+    await message.answer(
+        f"💳 <b>To'lov: {plans.money(cfg['price'])} so'm</b>\n{LINE}\n"
+        f"Karta: <code>{esc(cfg['card'])}</code>{' (' + esc(cfg['holder']) + ')' if cfg['holder'] else ''}\n\n"
+        f"Bepul {PUBLIC_FREE} ta tekshiruv ishlatilgan. Pulni o'tkazib, <b>chek rasmini shu yerga yuboring</b> — "
+        "ustoz tasdiqlashi bilan esse tekshiriladi. Esse saqlab qo'yildi.")
+
+
+async def practice_receipt(message: Message, practice: dict) -> None:
+    file_id = message.photo[-1].file_id if message.photo else (message.document.file_id if message.document else None)
+    if not file_id:
+        await message.answer("Chekni rasm qilib yuboring.")
+        return
+    await asyncio.to_thread(db.set_practice_status, practice["id"], "awaiting_check", file_id)
+    user = message.from_user
+    who = esc(user.full_name) + (f" (@{esc(user.username)})" if user.username else "")
+    caption = (f"🧾 <b>Esse tekshiruvi to'lovi</b>\n{LINE}\n👤 {who} · <code>{user.id}</code>\n"
+               f"💳 {plans.money(practice['price'])} so'm\nPul kartangizga tushganini tekshirib, qaror qiling:")
+    markup = inline([[("✅ Tasdiqlash", f"ecp:ok:{practice['id']}"), ("❌ Rad etish", f"ecp:no:{practice['id']}")]])
+    try:
+        if message.photo:
+            await message.bot.send_photo(practice["teacher_id"], file_id, caption=caption, reply_markup=markup)
+        else:
+            await message.bot.send_document(practice["teacher_id"], file_id, caption=caption, reply_markup=markup)
+    except Exception:
+        logger.warning("Esse cheki ustozga yuborilmadi: %s", practice["teacher_id"])
+        await message.answer("⚠️ Chek ustozga yetkazilmadi (ustoz botni to'xtatgan bo'lishi mumkin). Ustozga yozing.")
+        return
+    await message.answer("🧾 Chek ustozga yuborildi. Tasdiqlashi bilan esse tekshiriladi va natija shu yerga keladi.")
+
+
+@dp.message(EssayCheck.receipt, F.photo | F.document)
+async def essay_receipt(message: Message, state: FSMContext) -> None:
+    practice = await asyncio.to_thread(db.get_practice, (await state.get_data()).get("practice_id") or 0)
+    await state.clear()
+    if not practice or practice["status"] != "awaiting_pay":
+        await message.answer("Bu to'lov allaqachon ko'rib chiqilgan.")
+        return
+    await practice_receipt(message, practice)
+
+
+@dp.callback_query(F.data.startswith("ecp:"))
+async def essay_payment_decision(callback: CallbackQuery) -> None:
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    practice = await asyncio.to_thread(db.get_practice, int(raw or 0))
+    if not practice or (callback.from_user.id != practice["teacher_id"] and callback.from_user.id not in ADMIN_IDS):
+        await callback.answer("Topilmadi", show_alert=True)
+        return
+    if practice["status"] != "awaiting_check":
+        await callback.answer("Allaqachon ko'rib chiqilgan", show_alert=True)
+        return
+    if action == "ok":
+        if not await webapp.ai_allowed(practice["teacher_id"], "essays"):
+            await callback.answer("AI kreditingiz tugagan — avval kredit oling, keyin qayta bosing", show_alert=True)
+            return
+        await asyncio.to_thread(db.set_practice_status, practice["id"], "pending")
+        AI_WAKE.set()
+        note, student_text = "✅ Tasdiqlandi — esse tekshirilmoqda", "✅ To'lov tasdiqlandi — esse AI'da tekshirilmoqda, natija shu yerga keladi."
+    else:
+        await asyncio.to_thread(db.set_practice_status, practice["id"], "rejected")
+        note, student_text = "❌ Rad etildi", "❌ Ustoz to'lovni tasdiqlamadi. Savol bo'lsa, ustozga yozing."
+    await callback.answer(note)
+    try:
+        await callback.bot.send_message(practice["student_id"], student_text)
+    except Exception:
+        logger.warning("To'lov qarori o'quvchiga yuborilmadi")
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}", reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+
+def practice_result_text(result: dict, words: int | None) -> str:
+    lines = [f"📝 <b>Essengiz tekshirildi: {fmt_num(essay_to_75(result['score']))}/{ESSAY_SCALE}</b>"]
+    if words:
+        lines.append(f"✍️ {words} so'z")
+    lines.append(LINE)
+    for item in result.get("criteria", []):
+        mark = "✅" if item["score"] == 2 else "🟡" if item["score"] == 1 else "❌"
+        comment = item.get("comment", "")
+        lines.append(f"{mark} <b>{esc(essay_ai.RUBRIC_TITLES.get(item['key'], item['key']))}</b>: {item['score']}/2"
+                     + (f" — {esc(comment[:160])}" if comment else ""))
+    if result.get("comment"):
+        lines += [LINE, f"💬 {esc(result['comment'][:600])}"]
+    return "\n".join(lines)[:4000]
+
 
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
@@ -1843,6 +2232,7 @@ async def main() -> None:
         await bot.set_my_commands([
             BotCommand(command="start", description="Ilovani ochish"),
             BotCommand(command="royxat", description="Oflayn kursga ro'yxatdan o'tish"),
+            BotCommand(command="esse", description="Ustoz: esse tekshiruvi — havolalar, narx, karta"),
             BotCommand(command="kod", description="Esse kodi: ustoz — o'z kodini oladi, o'quvchi — kod bilan ulanadi"),
             BotCommand(command="chiqish", description="Skaner ilovasidagi barcha qurilmalardan chiqish"),
         ])
