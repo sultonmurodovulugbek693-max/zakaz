@@ -447,7 +447,9 @@ def _get_pool():
         if _pool is None:
             _pool = ConnectionPool(
                 DATABASE_URL, min_size=1, max_size=8, open=True, timeout=30,
-                kwargs={"row_factory": dict_row, "autocommit": False},
+                # prepare_threshold=None — tayyorlangan so'rovlar keshlanmaydi: deployda jadvalga ustun qo'shilsa,
+                # eski ulanishlar «cached plan must not change result type» xatosini bermaydi (Neon pooler ham shuni xohlaydi)
+                kwargs={"row_factory": dict_row, "autocommit": False, "prepare_threshold": None},
                 check=ConnectionPool.check_connection,  # uzilib qolgan ulanish qayta ochiladi
             )
         return _pool
@@ -478,6 +480,7 @@ def _row(row) -> dict | None:
 
 
 def init() -> None:
+    _forget_settings()  # yangi (yoki tiklangan) baza — xotiradagi sozlamalar eskirgan
     with connect() as conn:
         for statement in SCHEMA:
             conn.execute(statement)
@@ -784,6 +787,19 @@ def owner_totals(owner_id: int) -> dict[int, list[float]]:
     out: dict[int, list[float]] = {}
     for row in rows:
         out.setdefault(row["test_id"], []).append(round((row["points"] or 0) + (row["essay"] or 0), 1))
+    return out
+
+
+def attempts_by_test(owner_id: int) -> dict[int, list[dict]]:
+    """{test_id: [natijalar]} — o'qituvchining barcha testlari bitta so'rovda (har test uchun alohida so'rov
+    masofadagi bazada «📊 Natijalar»ni sekinlashtirardi)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT a.* FROM attempts a JOIN tests t ON t.id = a.test_id WHERE t.owner_id = ? "
+                            "ORDER BY a.id", (owner_id,)).fetchall()
+    out: dict[int, list[dict]] = {}
+    for row in rows:
+        attempt = _attempt_dict(row)
+        out.setdefault(attempt["test_id"], []).append(attempt)
     return out
 
 
@@ -1550,9 +1566,12 @@ BACKUP_TABLES = {
     "join_requests": "id, teacher_id, student_id, first_name, last_name, status, created_at, decided_at",
     "essay_payments": "id, test_id, student_id, amount, status, receipt_hash, txn, note, created_at, decided_at",
     "ai_usage": "*",
+    "essay_wallets": "*",  # begonalarning esse krediti (pul to'langan — yo'qolmasin)
+    "wallet_payments": "id, teacher_id, student_id, essays, amount, status, receipt_hash, txn, note, created_at, decided_at",
 }
 SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students",
-                 "payments", "registrations", "teacher_places", "practice_essays", "join_requests", "essay_payments")
+                 "payments", "registrations", "teacher_places", "practice_essays", "join_requests", "essay_payments",
+                 "wallet_payments")
 
 
 def export_tables() -> dict[str, list[dict]]:
@@ -1563,6 +1582,7 @@ def export_tables() -> dict[str, list[dict]]:
 
 def import_tables(data: dict[str, list[dict]], force: bool = False) -> dict[str, int]:
     """Zaxira nusxadan tiklash — bo'sh bazaga (force=True bo'lsa, mavjud yozuvlar ustiga qo'shmaydi, o'tkazib yuboradi)."""
+    _forget_settings()
     counts = {}
     with connect() as conn:
         if not force and conn.execute("SELECT COUNT(*) AS n FROM tests").fetchone()["n"]:
@@ -1865,16 +1885,36 @@ def teacher_of_essay_code(code: str) -> int | None:
 
 # ---------- Sozlamalar (admin bot orqali o'zgartiradi) ----------
 
+# Sozlamalar kichik va kam o'zgaradi, lekin bitta sahifa ochilishida 30 martagacha o'qilardi (har biri — masofadagi
+# bazaga alohida so'rov). Endi xotirada: yozilganda darhol yangilanadi, baribir SETTINGS_TTL soniyada bir qayta o'qiladi
+SETTINGS_TTL = 30
+_settings_cache: dict = {"at": 0.0, "data": None}
+_settings_lock = threading.Lock()
+
+
+def _forget_settings() -> None:
+    with _settings_lock:
+        _settings_cache["data"] = None
+
+
 def get_settings() -> dict:
+    with _settings_lock:
+        data, at = _settings_cache["data"], _settings_cache["at"]
+    if data is not None and time.monotonic() - at < SETTINGS_TTL:
+        return dict(data)  # nusxa — chaqirgan tomon o'zgartirsa ham xotiradagisi buzilmaydi
     with connect() as conn:
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
-    return {row["key"]: row["value"] for row in rows}
+    data = {row["key"]: row["value"] for row in rows}
+    with _settings_lock:
+        _settings_cache.update(data=data, at=time.monotonic())
+    return dict(data)
 
 
 def set_setting(key: str, value: str) -> None:
     with connect() as conn:
         conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
                      "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
+    _forget_settings()
 
 
 # ---------- Obuna to'lovlari (karta → chek → admin tasdiqlaydi) ----------

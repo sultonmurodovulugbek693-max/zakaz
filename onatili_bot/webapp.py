@@ -161,9 +161,16 @@ async def bootstrap(request: web.Request) -> web.Response:
     missing = await missing_for(user)
     if missing:
         return ok({"user": user, "subscribe": missing})
-    attempts = await run(db.attempts_of_user, user["id"])
-    tests = await run(db.list_tests, user["id"], 50)
-    all_totals = await run(db.owner_totals, user["id"]) if tests else {}
+    uid = user["id"]
+    unlimited = plans.ai_unlimited(uid)
+    # Bir-biriga bog'liq bo'lmagan so'rovlar — parallel (masofadagi bazada ketma-ket kutish ilovani sekinlashtirardi)
+    (attempts, tests, all_totals, role, last_name, classes, registration, plan, credits, essay_ai_ok, teachers,
+     wallets, my_card, joins, offers, card, payment) = await asyncio.gather(
+        run(db.attempts_of_user, uid), run(db.list_tests, uid, 50), run(db.owner_totals, uid),
+        run(db.get_role, uid), run(db.last_name_used, uid), run(db.list_classes, uid), run(db.get_registration, uid),
+        run(plans.status, uid), run(db.get_credits, uid), run(plans.can_use_ai, uid, "essays"), run(db.teachers_of, uid),
+        run(db.wallets_of_student, uid), run(teacher_card, uid), run(db.join_requests_for, uid), run(plans.offers),
+        run(plans.card), run(db.open_payment, uid))
     teacher_tests = []
     for test in tests:
         totals = all_totals.get(test["id"], [])
@@ -177,34 +184,33 @@ async def bootstrap(request: web.Request) -> web.Response:
         })
     return ok({
         "user": user,
-        "role": await run(db.get_role, user["id"]),
-        "last_name": await run(db.last_name_used, user["id"]),
+        "role": role,
+        "last_name": last_name,
         "attempts": [{
             "id": a["id"], "code": a["code"], "title": a["title"], "fmt": a["fmt"], "variant": a["variant"],
             "announced": bool(a["closed"]), "created_at": a["created_at"], "theme": a["theme"] or "classic",
         } for a in attempts],
         "tests": teacher_tests,
-        "classes": len(await run(db.list_classes, user["id"])),
-        "registered": bool(await run(db.get_registration, user["id"])),
-        "plan": await run(plans.status, user["id"]),
+        "classes": len(classes),
+        "registered": bool(registration),
+        "plan": plan,
         "sales": SALES_ENABLED,  # obuna sotish yoqilganmi (hozircha yo'q)
-        "can_create": SALES_ENABLED or plans.is_free(user["id"]),  # test yarata oladimi
+        "can_create": SALES_ENABLED or plans.is_free(uid),  # test yarata oladimi
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
-        "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
+        "ai_credits": None if unlimited else credits,
         # o'quvchilar essesini hozir AI tekshira oladimi (kredit yoki obunaning oylik limiti) — «tugagan» ogohlantirishi uchun
-        "essay_ai_ok": await run(plans.can_use_ai, user["id"], "essays"),
+        "essay_ai_ok": essay_ai_ok,
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
-        "practice": essay_ai.essay_enabled() and (bool(await run(db.teachers_of, user["id"]))
-                                                  or bool(await run(db.wallets_of_student, user["id"]))),
-        "my_card": await run(teacher_card, user["id"]),
+        "practice": essay_ai.essay_enabled() and (bool(teachers) or bool(wallets)),
+        "my_card": my_card,
         "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
-        "free_ai": plans.ai_unlimited(user["id"]) and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
-        "joins_pending": sum(1 for r in await run(db.join_requests_for, user["id"]) if r["status"] == "pending"),
-        "my_teachers": [t["full_name"] or "Ustoz" for t in await run(db.teachers_of, user["id"])],
-        "plans": await run(plans.offers),
-        "card": await run(plans.card),
-        "payment": await run(db.open_payment, user["id"]),
+        "free_ai": unlimited and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
+        "joins_pending": sum(1 for r in joins if r["status"] == "pending"),
+        "my_teachers": [t["full_name"] or "Ustoz" for t in teachers],
+        "plans": offers,
+        "card": card,
+        "payment": payment,
         "admin_contact": ADMIN_CONTACT,
         "ai": essay_ai.essay_enabled(),
         "themes": THEMES,
@@ -626,7 +632,8 @@ async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> di
 # Kredit har ustozda alohida (pul o'sha ustoz kartasiga tushadi). Narxlarni ustoz o'zi qo'yadi: 1 ta esse narxi
 # (essay_price) va 2–100 talik paketlar (essay_packs). Botdagi ommaviy havola va onlayn mock — ikkalasi shu kreditdan.
 
-MAX_PACKS = 4  # 1 talikdan tashqari nechta paket
+MAX_PACKS = 9  # 1 talikdan tashqari nechta paket (ilovada jami 10 qator)
+DEFAULT_PACKS = (1, 2, 5, 10, 30, 50)  # ilovada oldindan yozilgan kredit sonlari — ustoz narxini qo'yadi
 PACK_PRICE_MIN, PACK_PRICE_MAX = 1000, 5_000_000
 
 
@@ -662,7 +669,8 @@ def clean_packs(rows) -> list[list[int]]:
         except (TypeError, ValueError):
             raise ValueError("Paket: esse soni va narxi son bo'lsin")
         if not 2 <= essays <= 100:
-            raise ValueError("Paketdagi esselar soni 2–100 bo'lsin (1 talik — «Esse narxi»)")
+            raise ValueError("Paketdagi kredit soni 2–100 bo'lsin (1 talik — «1 esse narxi»)" if essays == 1
+                             else "Har qatorda kredit soni 1–100 bo'lsin")
         if not PACK_PRICE_MIN <= price <= PACK_PRICE_MAX:
             raise ValueError(f"Paket narxi {plans.money(PACK_PRICE_MIN)} – {plans.money(PACK_PRICE_MAX)} so'm bo'lsin")
         if any(p[0] == essays for p in out):
@@ -820,13 +828,55 @@ async def packs_save(request: web.Request) -> web.Response:
     rows = payload.get("packs") or []
     if not isinstance(rows, list):
         raise ApiError(400, "Paketlar noto'g'ri")
-    rows = [(p.get("essays"), p.get("price")) for p in rows if isinstance(p, dict) and (p.get("essays") or p.get("price"))]
-    single = None if payload.get("price") is None else to_int(payload.get("price"), 0, "Esse narxi")
+    # Narxi yozilmagan qator saqlanmaydi (kredit soni oldindan yozilgan bo'ladi). 1 kreditlik qator — «1 esse narxi»
+    rows = [(to_int(p.get("essays"), 0, "Kredit soni"), to_int(p.get("price"), 0, "Narx"))
+            for p in rows if isinstance(p, dict) and str(p.get("price") or "").strip() not in ("", "0")]
+    singles = [price for essays, price in rows if essays == 1]
+    if len(singles) > 1:
+        raise ApiError(400, "1 kreditlik narx ikki marta yozilgan")
+    rows = [row for row in rows if row[0] != 1]
+    if payload.get("price") is not None:  # eski ko'rinish: alohida «1 esse narxi»
+        singles = [to_int(payload.get("price"), 0, "Esse narxi")]
+    single = singles[0] if singles else 0
     try:
         packs = await run(save_packs, user["id"], single, rows)
     except ValueError as error:
         raise ApiError(400, str(error))
     return ok({"ok": True, "packs": packs})
+
+
+async def settings_view(user: dict) -> dict:
+    """Ustozning «⚙️ Sozlamalar»i: karta, ommaviy esse tekshiruvi (havolasi bilan) va kredit narxlari."""
+    username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
+    card, packs, is_open = await asyncio.gather(run(teacher_card, user["id"]), run(essay_packs, user["id"]),
+                                                run(public_open, user["id"]))
+    return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": PUBLIC_FREE,
+            "public_url": f"https://t.me/{username}?start={public_code(user['id'])}" if username else None}
+
+
+async def teacher_settings(request: web.Request) -> web.Response:
+    return ok(await settings_view(await auth(request)))
+
+
+async def teacher_settings_save(request: web.Request) -> web.Response:
+    """Karta (16 raqam + egasi) va/yoki ommaviy tekshiruvni yoqish — botdagi /esse bilan bir xil qoidalar."""
+    user = await auth(request)
+    payload = await body(request)
+    if "card" in payload:
+        number = _digits(payload.get("card"))
+        if len(number) != 16:
+            raise ApiError(400, "Karta raqami 16 ta raqam bo'lsin")
+        holder = clean_text(payload.get("holder"), 60)
+        if len(holder) < 3:
+            raise ApiError(400, "Karta egasining ism-familiyasini yozing — AI chekda shuni tekshiradi")
+        await run(db.set_setting, f"teacher_card:{user['id']}", " ".join(number[i:i + 4] for i in range(0, 16, 4)))
+        await run(db.set_setting, f"teacher_holder:{user['id']}", holder)
+    if "public" in payload:
+        turn_on = bool(payload.get("public"))
+        if turn_on and (not (await run(teacher_card, user["id"]))["number"] or not await run(essay_packs, user["id"])):
+            raise ApiError(400, "Avval karta va kamida bitta kredit narxini kiriting")
+        await run(db.set_setting, f"essay_public:{user['id']}", "1" if turn_on else "0")
+    return ok(await settings_view(user))
 
 
 async def wallet_payments_list(request: web.Request) -> web.Response:
@@ -1379,11 +1429,12 @@ async def copy_test(request: web.Request) -> web.Response:
 async def teacher_test(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
-    attempts = await run(db.list_attempts, test["id"])
-    keys = await run(db.get_keys, test["id"])
-    essays = await run(db.essays_for_test, test["id"]) if test["fmt"] == "milliy" else {}
-    rasch = await run(rasch_results, test, attempts) if test["fmt"] == "milliy" and attempts else {}
-    written_jobs = await run(db.written_jobs_for_test, test["id"])
+    milliy = test["fmt"] == "milliy"
+    attempts, keys, essays, written_jobs, students, pupils = await asyncio.gather(  # parallel — sahifa tezroq
+        run(db.list_attempts, test["id"]), run(db.get_keys, test["id"]),
+        run(db.essays_for_test, test["id"]) if milliy else asyncio.sleep(0, {}),
+        run(db.written_jobs_for_test, test["id"]), run(db.list_students, test["id"]), pupils_of(user["id"]))
+    rasch = await run(rasch_results, test, attempts) if milliy and attempts else {}
     rows = []
     for a in attempts:
         essay = essays.get(a["id"])
@@ -1408,7 +1459,6 @@ async def teacher_test(request: web.Request) -> web.Response:
     for _, grade_name in rasch.values():
         grades[grade_name] = grades.get(grade_name, 0) + 1
     written_review_info = await written_review_summary(test, attempts, keys)
-    pupils = await pupils_of(user["id"])
     offline_milliy = test["fmt"] == "milliy" and test.get("mode") == "offline"
     return ok({
         "written_review": written_review_info,
@@ -1420,7 +1470,7 @@ async def teacher_test(request: web.Request) -> web.Response:
                  "sheets_sent": bool(test.get("sheets_sent")),
                  "sheet_style": sheet_styles.style_of(test)},
         "sheet_styles": sheet_styles.STYLES,
-        "students": [student_view(s, pupils) for s in await run(db.list_students, test["id"])],
+        "students": [student_view(s, pupils) for s in students],
         "pupils": list(pupils.values()) if test.get("mode") == "offline" else [],
         "attempts": rows, "analysis": analysis, "grades": grades,
         "essay_cost": round(sum(e["cost"] for e in essays.values()), 4),
@@ -3348,6 +3398,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/wallet-order", wallet_order_for_test)
     app.router.add_post("/api/teacher/packs", packs_save)
+    app.router.add_get("/api/teacher/settings", teacher_settings)
+    app.router.add_post("/api/teacher/settings", teacher_settings_save)
     app.router.add_get("/api/teacher/wallet-payments", wallet_payments_list)
     app.router.add_get("/api/teacher/wallet-payment/{payment_id:\\d+}/receipt", wallet_payment_receipt)
     app.router.add_post("/api/teacher/wallet-payment/{payment_id:\\d+}", wallet_payment_decide)

@@ -37,7 +37,9 @@ def scores(test: dict, attempts: list[dict]) -> dict[int, dict]:
                       "grade": None, "test": None, "essay": None, "suffix": "%"} for a in attempts}
 
 
-def _mean(values: list[float]) -> float | None:
+def _mean(values: list[float | None]) -> float | None:
+    """O'rtacha — faqat bor ballardan (esse bahosi kutilayotgan natijada ball None — u hisobga kirmaydi)."""
+    values = [v for v in values if v is not None]
     return round(sum(values) / len(values), 1) if values else None
 
 
@@ -89,8 +91,9 @@ def overview(owner_id: int) -> dict:
     pupils = class_map(owner_id)
     tests_of_class: dict[int, set] = {}
     tests = []
+    all_attempts = db.attempts_by_test(owner_id)  # bitta so'rov — har test uchun alohida emas
     for test in db.list_tests(owner_id, MAX_TESTS):
-        attempts = db.list_attempts(test["id"])
+        attempts = all_attempts.get(test["id"], [])
         if not attempts:
             continue
         marks = scores(test, attempts)
@@ -113,8 +116,9 @@ def class_report(owner_id: int, cls: dict) -> dict:
     by_number = {s["number"]: s for s in students}
     cells: dict[int, dict] = {s["id"]: {} for s in students}
     tests = []
+    all_attempts = db.attempts_by_test(owner_id)
     for test in reversed(db.list_tests(owner_id, MAX_TESTS)):
-        attempts = db.list_attempts(test["id"])
+        attempts = all_attempts.get(test["id"], [])
         mine = []
         for attempt in attempts:
             number = offline_number(test["id"], attempt.get("tg_id"))

@@ -731,6 +731,20 @@ class OfficialSheet(ServerBase):
         status, _ = await self.post(f"/api/teacher/test/{test['id']}/announce", {})
         self.assertEqual(status, 200)
 
+    async def test_results_page_with_pending_essay(self):
+        """Esse bahosi kutilayotgan natija bor — «📊 Natijalar» ochiladi (o'rtacha faqat bor ballardan)."""
+        test = await self.make()
+        answers = {str(i): "A" for i in range(1, 36)}
+        _, r7 = await self.upload(test, {"uid": "m7", "number": "7", "variant": "A", "answers": answers})
+        await self.upload(test, {"uid": "m8", "number": "8", "variant": "A", "answers": answers})
+        status, res = await self.get("/api/teacher/results")
+        self.assertEqual(status, 200, res)
+        self.assertIsNone(res["tests"][0]["avg"])  # ikkalasida ham esse bahosi yo'q
+        await self.post(f"/api/teacher/essay/{r7['attempt_id']}", {"score75": 63})
+        status, res = await self.get("/api/teacher/results")
+        self.assertEqual(status, 200, res)
+        self.assertIsNotNone(res["tests"][0]["avg"])
+
     async def test_rescan_keeps_essay_score(self):
         """1-varaq qayta skanerlansa — o'qituvchi kiritgan esse bahosi yo'qolmaydi (natija yopilib qolmaydi)."""
         test = await self.make()
@@ -1069,7 +1083,15 @@ class EssayPaid(ServerBase):
         status, r = await self.post("/api/teacher/packs", {"price": 5000, "packs": [{"essays": 5, "price": 20000}]})
         self.assertEqual(status, 200, r)
         self.assertEqual([(p["essays"], p["discount"]) for p in r["packs"]], [(1, 0), (5, 20)])
-        self.assertEqual((await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 3000}]}))[0], 400)
+        # Ilova: «Kredit — Narxi» qatorlari; 1 kreditlik qator — 1 esse narxi, narxsiz qator saqlanmaydi
+        status, r = await self.post("/api/teacher/packs", {"packs": [
+            {"essays": 1, "price": 12000}, {"essays": 2, "price": ""}, {"essays": 5, "price": 50000}, {"essays": 50, "price": 400000}]})
+        self.assertEqual(status, 200, r)
+        self.assertEqual([(p["essays"], p["price"], p["discount"]) for p in r["packs"]],
+                         [(1, 12000, 0), (5, 50000, 17), (50, 400000, 33)])
+        self.assertEqual((await self.post("/api/teacher/packs", {"packs": [{"essays": "", "price": 9000}]}))[0], 400)
+        self.assertEqual((await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 1}, {"essays": 1, "price": 2}]}))[0], 400)
+        await self.post("/api/teacher/packs", {"price": 5000, "packs": [{"essays": 5, "price": 20000}]})
 
         await self.as_student(OTHER)
         _, info = await self.info(test)
@@ -1762,3 +1784,23 @@ class PracticePublic(ServerBase):
         self.assertEqual(status, 200, res)
         self.assertNotIn("status", res)
         self.assertEqual(db.get_practice(res["id"])["kind"], "student")
+
+
+class TeacherSettings(ServerBase):
+    """⚙️ Sozlamalar: karta, begonalar uchun ochish (karta va narxsiz — yo'q), kredit narxlari."""
+
+    async def test_card_public_and_packs(self):
+        webapp.HOOKS["bot_username"] = lambda: asyncio.sleep(0, "test_bot")
+        status, s = await self.get("/api/teacher/settings")
+        self.assertEqual((status, s["card"], s["public"], s["packs"]), (200, "", False, []))
+        self.assertEqual((await self.post("/api/teacher/settings", {"public": True}))[0], 400)  # karta va narx yo'q
+        self.assertEqual((await self.post("/api/teacher/settings", {"card": "8600 1234", "holder": "Ali Valiyev"}))[0], 400)
+        status, s = await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": " Ali  Valiyev "})
+        self.assertEqual((status, s["card"], s["holder"]), (200, "8600 1234 5678 9012", "Ali Valiyev"))
+        self.assertEqual((await self.post("/api/teacher/settings", {"public": True}))[0], 400)  # narx hali yo'q
+        await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 12000}, {"essays": 5, "price": 55000}]})
+        status, s = await self.post("/api/teacher/settings", {"public": True})
+        self.assertEqual((status, s["public"]), (200, True))
+        self.assertIn("start=p_", s["public_url"])
+        self.assertEqual([p["essays"] for p in s["packs"]], [1, 5])
+        self.assertEqual(webapp.teacher_card(OWNER)["number"], "8600 1234 5678 9012")  # bot ham shu kartani ko'radi

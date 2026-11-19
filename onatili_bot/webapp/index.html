@@ -1847,7 +1847,8 @@ async function aiView(mode) {
       <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
       : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
       <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar test bepul, esse tekshiruvini o'zi to'laydi.</span></div>
-      ${walletPaymentsHTML(wp.payments)}${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}${packsCardHTML(r)}`}
+      <button type="button" class="item" data-go-settings><span class="ico">⚙️</span><span><b>Sozlamalar</b><small>Karta, begonalar uchun esse tekshiruvi va kredit narxlari</small></span><span class="muted">›</span></button>
+      ${walletPaymentsHTML(wp.payments)}${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}`}
     ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
       <div class="row between"><b>🤖 Kreditingiz</b><span class="credit-n">${r.unlimited ? "♾" : n}</span></div>
       <span class="muted small">${r.unlimited ? "Sizda AI cheksiz." : n ? `Yana <b>${n} ta</b> o'quvchi essesini tekshirtira olasiz.` : "Kredit yo'q — esselar AI'da tekshirilmaydi, o'zingiz baholaysiz."}</span>
@@ -1858,7 +1859,8 @@ async function aiView(mode) {
       <div class="chips" id="packs">${[1, 2, 5, 10].map(k => `<button type="button" class="chip ${k === 1 ? "on" : ""}" data-packs="${k}">${k * r.pack.essays} ta · ${sum(k * r.pack.price)}</button>`).join("")}</div>
       <button type="button" class="btn block" id="buy">Sotib olish</button><div id="pay-box"></div></div>`
       : !r.unlimited ? `<div class="card small muted">Kredit narxi hali belgilanmagan — admin bilan bog'laning.</div>` : ""}
-    <button type="button" class="item" data-goto-students><span class="ico">👥</span><span><b>O'quvchilarim</b><small>Ulash, arizalar va oylik chegara</small></span><span class="muted">›</span></button>`}
+    <button type="button" class="item" data-goto-students><span class="ico">👥</span><span><b>O'quvchilarim</b><small>Ulash, arizalar va oylik chegara</small></span><span class="muted">›</span></button>
+    <button type="button" class="item" data-go-settings><span class="ico">⚙️</span><span><b>Sozlamalar</b><small>Karta, begonalar uchun esse tekshiruvi va kredit narxlari</small></span><span class="muted">›</span></button>`}
     ${isAi ? "" : `<div class="section-title"><h2>Ro'yxat</h2><span class="muted small">${r.students.length} ta</span></div>
     <div class="card"><b>🔗 Ulash</b>
       <span class="muted small">Ulangan o'quvchi test bo'lmasa ham «✍️ Esse tekshirish»da esse yozib tekshirtiradi (kreditingizdan).</span>
@@ -1873,7 +1875,8 @@ async function aiView(mode) {
     <div class="list">${students || `<div class="card empty"><div class="big">👥</div>Hali o'quvchi ulanmagan — taklif havolasini yuboring.</div>`}</div>`}
   </div>`;
   document.querySelectorAll("[data-goto-students]").forEach(x => x.onclick = () => { haptic("light"); go("students"); });
-  bindJoins(); bindEssayPayments(); bindWalletPayments(); bindPacksCard();
+  bindJoins(); bindEssayPayments(); bindWalletPayments();
+  document.querySelectorAll("[data-go-settings]").forEach(x => x.onclick = () => { haptic("light"); go("settings"); });
   let packs = 1;
   document.querySelectorAll("[data-packs]").forEach(x => x.onclick = () => { packs = +x.dataset.packs; haptic("select");
     document.querySelectorAll("[data-packs]").forEach(y => y.classList.toggle("on", y === x)); });
@@ -2128,27 +2131,93 @@ function bindEssayPayments() {
 }
 
 // Begonalar uchun esse krediti: ustoz 1 ta esse narxini va paketlarni (nechta esse — narxi) o'zi qo'yadi
+const PACK_DEFAULTS = [1, 2, 5, 10, 30, 50], PACK_ROWS_MAX = 10;
+// Bitta qator: kredit soni va narxi (narxi bo'sh qator saqlanmaydi)
+function packRowHTML(p) {
+  return `<div class="row pk-row" style="gap:8px"><input class="input" data-pk-n inputmode="numeric" value="${p.essays || ""}" placeholder="Kredit" style="flex:1" aria-label="Kredit soni">
+    <input class="input" data-pk-p inputmode="numeric" value="${p.price ? sum(p.price) : ""}" placeholder="Narxi (so'm)" style="flex:1.6" aria-label="Narxi">
+    <span class="small muted" style="min-width:44px">${p.discount ? `−${p.discount}%` : ""}</span></div>`;
+}
+// ---------- ⚙️ Sozlamalar (ustoz): karta, begonalar uchun esse tekshiruvi, kredit narxlari ----------
+VIEWS.settings = async () => {
+  loading();
+  let s; try { s = await api("/api/teacher/settings"); } catch (e) { return fail(e); }
+  const ready = s.card && s.packs.length;
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
+      <span class="muted small">Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi.</span></div>
+
+    <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
+    <div class="card"><span class="muted small">O'quvchilar kreditni shu kartaga to'laydi. AI chekdagi karta oxirgi 4 raqamini yoki egasining ismini tekshiradi.</span>
+      <div class="field"><label for="st-card">Karta raqami</label><input class="input" id="st-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
+      <div class="field"><label for="st-holder">Karta egasi</label><input class="input" id="st-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
+      <button type="button" class="btn ghost block" id="st-card-save">Kartani saqlash</button></div>
+
+    <div class="section-title"><h2>🌐 Begonalar uchun</h2><span class="muted small">${s.public ? "✅ ochiq" : "⛔️ yopiq"}</span></div>
+    <div class="card"><span class="muted small">Havolani kanal yoki guruhga tashlang: kirgan o'quvchi ${s.free} ta esseni bepul tekshirtiradi, keyin sizdan kredit sotib oladi (1 kredit = 1 esse).</span>
+      ${s.public && s.public_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="st-share" style="flex:1">📨 Havolani ulashish</button><button type="button" class="btn plain" id="st-copy">📋</button></div>` : ""}
+      ${!ready && !s.public ? `<span class="small" style="color:var(--warn)">Yoqish uchun avval karta va kamida bitta kredit narxini kiriting.</span>` : ""}
+      <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
+
+    ${packsCardHTML({ essay_packs: s.packs })}
+  </div>`;
+  bindPacksCard();
+  const digits = v => String(v || "").replace(/\D/g, "");
+  const cardEl = document.getElementById("st-card");
+  cardEl.oninput = () => { const d = digits(cardEl.value).slice(0, 16); cardEl.value = d.replace(/(\d{4})(?=\d)/g, "$1 "); };
+  const saveCard = document.getElementById("st-card-save");
+  saveCard.onclick = async () => {
+    saveCard.disabled = true;
+    try { await api("/api/teacher/settings", { card: cardEl.value, holder: document.getElementById("st-holder").value });
+      haptic("success"); toast("✅ Karta saqlandi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); saveCard.disabled = false; }
+  };
+  const pub = document.getElementById("st-public");
+  pub.onclick = async () => {
+    pub.disabled = true;
+    try { await api("/api/teacher/settings", { public: !s.public }); haptic("success");
+      toast(s.public ? "⛔️ Begonalar uchun yopildi" : "🌐 Begonalar uchun ochildi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); pub.disabled = false; }
+  };
+  const share = document.getElementById("st-share");
+  if (share) share.onclick = () => {
+    const text = "Essengizni AI imtihondagidek 75 ballik shkalada tekshiradi — shu havola orqali yuboring:";
+    const url = `https://t.me/share/url?url=${encodeURIComponent(s.public_url)}&text=${encodeURIComponent(text)}`;
+    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  };
+  const copy = document.getElementById("st-copy");
+  if (copy) copy.onclick = () => navigator.clipboard.writeText(s.public_url).then(() => { toast("Havola nusxalandi"); haptic("success"); }, () => toast(s.public_url));
+};
+
 function packsCardHTML(r) {
-  const packs = r.essay_packs || [], single = packs.find(p => p.essays === 1), multi = packs.filter(p => p.essays > 1);
-  const rows = [...multi, {}, {}, {}, {}].slice(0, 4);
-  return `<div class="section-title"><h2>📦 Begonalar uchun kredit</h2><span class="muted small">${packs.length ? `${packs.length} ta narx` : "narx yo'q"}</span></div>
-    <div class="card" id="packs-card"><span class="muted small">Ommaviy havola orqali kelgan o'quvchi 2 ta bepul esse tekshirtiradi, keyin kredit sotib oladi: bitta chek — bir nechta esse, har esse 1 kredit. Pul kartangizga tushadi.${r.my_card && r.my_card.number ? ` Karta: <b>${esc(r.my_card.number)}</b>` : " ⚠️ Karta hali kiritilmagan — botda /esse → «💳 Karta»."}</span>
-      <div class="field"><label for="pk-single">1 ta esse narxi (so'm)</label><input class="input" id="pk-single" inputmode="numeric" value="${single ? single.price : ""}" placeholder="Masalan 5000"></div>
-      <label class="small">Paketlar <span class="muted">— bo'sh qatorlar hisobga olinmaydi</span></label>
-      ${rows.map((p, i) => `<div class="row" style="gap:8px"><input class="input" data-pk-n="${i}" inputmode="numeric" value="${p.essays || ""}" placeholder="Esse soni" style="flex:1">
-        <input class="input" data-pk-p="${i}" inputmode="numeric" value="${p.price || ""}" placeholder="Narxi (so'm)" style="flex:1.4">
-        <span class="small muted" style="min-width:44px">${p.discount ? `−${p.discount}%` : ""}</span></div>`).join("")}
+  const saved = r.essay_packs || [];
+  // Saqlangan narxlar + qolgan odatiy kredit sonlari (narxi bo'sh) — ustoz faqat narxni yozadi, sonni ham o'zgartira oladi
+  const rows = [...saved, ...PACK_DEFAULTS.filter(n => !saved.some(p => p.essays === n)).map(n => ({ essays: n }))]
+    .sort((a, b) => a.essays - b.essays).slice(0, PACK_ROWS_MAX);
+  return `<div class="section-title"><h2>📦 Kredit narxlari</h2><span class="muted small">${saved.length ? `${saved.length} ta narx` : "narx yo'q"}</span></div>
+    <div class="card" id="packs-card"><span class="muted small">1 kredit = 1 esse. O'quvchi bitta chek bilan bir nechta kredit oladi — keyingi esselari chek so'ramaydi.</span>
+      <div class="row small muted" style="gap:8px"><b style="flex:1">Kredit</b><b style="flex:1.6">Narxi (so'm)</b><span style="min-width:44px">Chegirma</span></div>
+      <div id="pk-rows" style="display:grid;gap:8px">${rows.map(packRowHTML).join("")}</div>
+      <span class="muted small">Narxi yozilmagan qator sotilmaydi. Chegirma 1 kreditlik narxga nisbatan o'zi hisoblanadi.</span>
+      <button type="button" class="btn ghost block" id="pk-add" ${rows.length >= PACK_ROWS_MAX ? "hidden" : ""}>➕ Qator qo'shish</button>
       <button type="button" class="btn block" id="pk-save">Saqlash</button></div>`;
 }
 function bindPacksCard() {
   const save = document.getElementById("pk-save"); if (!save) return;
   const digits = v => String(v || "").replace(/\D/g, "");
+  const box = document.getElementById("pk-rows"), add = document.getElementById("pk-add");
+  add.onclick = () => {
+    box.insertAdjacentHTML("beforeend", packRowHTML({})); haptic("light");
+    const fresh = box.lastElementChild.querySelector("[data-pk-n]"); if (fresh) fresh.focus();
+    add.hidden = box.children.length >= PACK_ROWS_MAX;
+  };
   save.onclick = async () => {
-    const packs = [...document.querySelectorAll("[data-pk-n]")].map(n => ({ essays: +digits(n.value) || 0,
-      price: +digits(document.querySelector(`[data-pk-p="${n.dataset.pkN}"]`).value) || 0 })).filter(p => p.essays || p.price);
+    const packs = [...box.querySelectorAll(".pk-row")].map(row => ({ essays: +digits(row.querySelector("[data-pk-n]").value) || 0,
+      price: +digits(row.querySelector("[data-pk-p]").value) || 0 })).filter(p => p.price);
+    if (!packs.length) { toast("Kamida bitta narx yozing"); haptic("error"); return; }
     save.disabled = true;
     try {
-      await api("/api/teacher/packs", { price: +digits(document.getElementById("pk-single").value) || 0, packs });
+      await api("/api/teacher/packs", { packs });
       haptic("success"); toast("✅ Narxlar saqlandi"); rerender();
     } catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
   };
