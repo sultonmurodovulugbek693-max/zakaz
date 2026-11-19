@@ -29,20 +29,24 @@ PAD = 22
 ROWS_PER_PAGE = 30
 CERT_LINE = GRADES[-1][0]  # 46 — C darajasi, sertifikat chegarasi
 
-BG = (17, 20, 24)
-PANEL = (27, 32, 40)
-BOX = (22, 26, 32)
-BOX_LINE = (32, 38, 47)
-TEXT = (232, 235, 240)
-MUTED = (139, 147, 161)
-FAINT = (107, 115, 129)
-TRACK = (35, 41, 52)
-GOLD = (250, 204, 21)
-RED = (248, 113, 113)
-GREEN = (52, 211, 153)
+# Rasmiy hisobot uslubi: oq qog'oz, to'q ko'k-kulrang matn, bosiq ranglar
+BG = (255, 255, 255)
+PANEL = (246, 247, 249)       # ko'rsatkich kataklari
+STRIPE = (248, 249, 251)      # jadvalning juft qatorlari
+BOX = (255, 255, 255)
+BOX_LINE = (222, 226, 232)
+RULE = (31, 52, 84)           # sarlavha ostidagi chiziq
+TEXT = (17, 24, 39)
+MUTED = (92, 101, 115)
+FAINT = (138, 146, 158)
+TRACK = (231, 234, 239)
+NAVY = (31, 52, 84)
+RED = (160, 44, 44)
+GREEN = (22, 101, 66)
+AVG = (194, 110, 20)          # o'rtacha ball chizig'i
 GRADE_COLORS = {
-    "A+": (52, 211, 153), "A": (74, 222, 128), "B+": (56, 189, 248), "B": (96, 165, 250),
-    "C+": (250, 204, 21), "C": (251, 146, 60), "NC": (248, 113, 113),
+    "A+": (22, 92, 62), "A": (38, 120, 82), "B+": (33, 86, 140), "B": (66, 115, 165),
+    "C+": (150, 112, 25), "C": (170, 98, 35), "NC": (160, 44, 44),
 }
 
 
@@ -154,19 +158,41 @@ def _date() -> str:
     return f"{datetime.now():%d.%m.%Y}"
 
 
+# ---------- Umumiy bezak ----------
+
+def _header(sheet: _Sheet, kind: str, title: str, sub: str) -> float:
+    """Hujjat sarlavhasi: hujjat turi (kichik bosh harflar), nomi, tafsilot va to'q chiziq. Pastki chetini qaytaradi."""
+    room = WIDTH - 2 * PAD
+    sheet.text(PAD, PAD + 8, kind, 8.5, MUTED, True)
+    sheet.text(PAD, PAD + 27, sheet.fit(title, 16, room, True), 16, TEXT, True)
+    sheet.text(PAD, PAD + 42, sheet.fit(sub, 10, room), 10, MUTED)
+    sheet.rect(PAD, PAD + 52, room, 1.6, RULE)
+    return PAD + 52
+
+
+def _footer(sheet: _Sheet, height: float, lines: list[str]) -> None:
+    y = height - PAD - 13 * (len(lines) - 1)
+    sheet.rect(PAD, y - 13, WIDTH - 2 * PAD, 0.6, BOX_LINE)
+    for k, line in enumerate(lines):
+        sheet.text(PAD, y + k * 13, sheet.fit(line, 8.5, WIDTH - 2 * PAD), 8.5, FAINT)
+
+
+def _kpis(sheet: _Sheet, top: float, items: list[tuple[str, str, tuple]]) -> float:
+    """Ko'rsatkichlar qatori (teng kataklar). Pastki chetini qaytaradi."""
+    gap = 6
+    w = (WIDTH - 2 * PAD - gap * (len(items) - 1)) / len(items)
+    for k, (value, label, color) in enumerate(items):
+        x = PAD + k * (w + gap)
+        sheet.rect(x, top, w, 44, PANEL, 3)
+        sheet.text(x + 9, top + 21, value, 15, color, True)
+        sheet.text(x + 9, top + 35, sheet.fit(label, 8.5, w - 14), 8.5, MUTED)
+    return top + 44
+
+
 # ---------- 1-varaq: reyting ----------
 
-def _kpi(sheet: _Sheet, right: float, top: float, items: list[tuple[str, str, tuple]]) -> float:
-    """O'ngdan chapga kichik ko'rsatkich kataklari; chap chetini qaytaradi."""
-    x = right
-    for value, label, color in reversed(items):
-        w = max(sheet.width(value, 16, True), sheet.width(label, 10)) + 20
-        x -= w
-        sheet.rect(x, top, w, 38, PANEL, 10)
-        sheet.text(x + w / 2, top + 20, value, 16, color, True, "ms")
-        sheet.text(x + w / 2, top + 32, label, 10, MUTED, anchor="ms")
-        x -= 6
-    return x
+ROW_H = 19
+LINE = (200, 205, 213)
 
 
 def _rating_page(test: dict, rows: list[dict], start: int, cut_at: int | None, page: int, pages: int,
@@ -174,62 +200,66 @@ def _rating_page(test: dict, rows: list[dict], start: int, cut_at: int | None, p
     milliy = test["fmt"] == "milliy"
     count = len(rows)
     has_cut = cut_at is not None and start < cut_at < start + count
-    height = PAD + 44 + 16 + count * 23 + (22 if has_cut else 0) + 30 + PAD
+    footer = (["Ball — Rasch modeli bo'yicha umumiy ball (75 dan). Sertifikat — C (46) va yuqori."] if milliy
+              else ["Natija — to'g'ri javoblar foizi."])
+    height = PAD + 52 + 12 + 44 + 16 + 18 + count * ROW_H + (20 if has_cut else 0) + 22 + 13 * len(footer) + PAD
     sheet = _Sheet(height)
-    sheet.rect(0, 0, WIDTH, height, BG)
 
-    # Sarlavha va ko'rsatkichlar
+    sub = f"Kod {test['code']} · {_date()} · {summary['n']} qatnashchi" + (f" · {page}/{pages}-varaq" if pages > 1 else "")
+    top = _header(sheet, "NATIJALAR REYTINGI", _title(test), sub) + 12
     if milliy:
-        kpis = [(str(summary["certified"]), "sert.", GREEN), (str(summary["nc"]), "NC", RED), (_num(summary["avg"]), "o'rt.", TEXT)]
+        kpis = [(str(summary["n"]), "qatnashchi", TEXT), (str(summary["certified"]), "sertifikat oldi", GREEN),
+                (str(summary["nc"]), "sertifikatsiz (NC)", RED), (_num(summary["avg"]), "o'rtacha ball", TEXT)]
     else:
-        kpis = [(str(summary["good"]), "80%+", GREEN), (f"{_num(summary['avg'])}%", "o'rt.", TEXT)]
-    left_of_kpi = _kpi(sheet, WIDTH - PAD, PAD, kpis)
-    room = left_of_kpi - PAD - 8
-    sheet.text(PAD, PAD + 17, sheet.fit(_title(test), 17, room, True), 17, TEXT, True)
-    sub = f"Reyting · kod {test['code']} · {_date()}" + (f" · {page}/{pages}" if pages > 1 else "")
-    sheet.text(PAD, PAD + 34, sheet.fit(sub, 11.5, room), 11.5, MUTED)
+        kpis = [(str(summary["n"]), "qatnashchi", TEXT), (str(summary["good"]), "80% va yuqori", GREEN),
+                (f"{_num(summary['avg'])}%", "o'rtacha natija", TEXT)]
+    top = _kpis(sheet, top, kpis) + 16
 
-    # Ustunlar: o'rin | ism | ball chizig'i | ball | daraja
-    right = WIDTH - PAD - 6
-    pill_x = right - 30 if milliy else right
-    value_right = (pill_x - 8) if milliy else right
-    track_x = value_right - 40 - 92
-    top = PAD + 60
+    # Ustunlar: № | F.I.Sh. | natija chizig'i | ball | daraja
+    right = WIDTH - PAD - 4
+    grade_x = right - 26 if milliy else right
+    value_right = (grade_x - 10) if milliy else right
+    track_w = 84
+    track_x = value_right - 38 - track_w
+    head = [(PAD + 4, "№", "ls"), (PAD + 28, "F.I.SH.", "ls"), (track_x, "NATIJA", "ls"),
+            (value_right, "BALL" if milliy else "FOIZ", "rs")] + ([(grade_x + 13, "DARAJA", "ms")] if milliy else [])
+    for x, label, anchor in head:
+        sheet.text(x, top + 9, label, 7.5, MUTED, True, anchor)
+    top += 14
+    sheet.rect(PAD, top, WIDTH - 2 * PAD, 0.8, LINE)
+    top += 4
+
     top_max = 75 if milliy else 100
     for index, row in enumerate(rows):
         place = start + index + 1
         if has_cut and place == cut_at + 1:
-            y = top + 11
-            label = f"SERTIFIKAT CHEGARASI · {CERT_LINE} BALL"
-            half = sheet.width(label, 9.5) / 2 + 8
-            sheet.line(PAD, y, WIDTH / 2 - half, y, (127, 29, 29), 1, 2.5)
-            sheet.line(WIDTH / 2 + half, y, WIDTH - PAD, y, (127, 29, 29), 1, 2.5)
-            sheet.text(WIDTH / 2, y + 3.5, label, 9.5, RED, anchor="ms")
-            top += 22
+            y = top + 10
+            label = f"SERTIFIKAT CHEGARASI — {CERT_LINE} BALL"
+            half = sheet.width(label, 7.5, True) / 2 + 8
+            sheet.line(PAD, y, WIDTH / 2 - half, y, RED, 0.8, 2)
+            sheet.line(WIDTH / 2 + half, y, WIDTH - PAD, y, RED, 0.8, 2)
+            sheet.text(WIDTH / 2, y + 2.7, label, 7.5, RED, True, "ms")
+            top += 20
         if milliy:
             color = GRADE_COLORS[row["grade"]]
         else:
             color = GREEN if row["score"] >= 80 else (GRADE_COLORS["B"] if row["score"] >= 60 else
                                                       (GRADE_COLORS["C+"] if row["score"] >= 40 else RED))
-        if place <= 3:  # birinchi uchtalik — oltin tus
-            for k in range(60):
-                alpha = 0.13 * (1 - k / 60)
-                x0 = PAD + (WIDTH - 2 * PAD) * k / 60
-                sheet.rect(x0, top, (WIDTH - 2 * PAD) / 60 + 0.5, 20, _mix(GOLD, alpha))
-        mid = top + 10
-        sheet.text(PAD + 26, mid, str(place), 11.5, FAINT, anchor="rm")
-        sheet.text(PAD + 34, mid, sheet.fit(row["name"], 11.5, track_x - PAD - 42), 11.5, TEXT, anchor="lm")
-        sheet.rect(track_x, mid - 2.5, 92, 5, TRACK, 2.5)
-        sheet.rect(track_x, mid - 2.5, max(3, 92 * min(1, row["score"] / top_max)), 5, color, 2.5)
-        sheet.text(value_right, mid, (_num(row["score"]) if milliy else f"{fmt_num(row['score'])}%"), 11.5, TEXT, True, "rm")
+        if index % 2:
+            sheet.rect(PAD, top, WIDTH - 2 * PAD, ROW_H, STRIPE)
+        mid = top + ROW_H / 2
+        best = place <= 3
+        sheet.text(PAD + 4, mid, str(place), 10, TEXT if best else MUTED, best, "lm")
+        sheet.text(PAD + 28, mid, sheet.fit(row["name"], 10, track_x - PAD - 36, best), 10, TEXT, best, "lm")
+        sheet.rect(track_x, mid - 2, track_w, 4, TRACK, 1)
+        sheet.rect(track_x, mid - 2, max(2, track_w * min(1, row["score"] / top_max)), 4, color, 1)
+        sheet.text(value_right, mid, (_num(row["score"]) if milliy else f"{fmt_num(row['score'])}%"), 10, TEXT, True, "rm")
         if milliy:
-            sheet.rect(pill_x, mid - 8, 30, 16, _mix(color, 0.16), 5)
-            sheet.text(pill_x + 15, mid, row["grade"], 10, color, True, "mm")
-        top += 23
-
-    note = ("Rasch modeli · umumiy ball 75 dan · sertifikat C (46) va yuqori" if milliy
-            else "Natija — to'g'ri javoblar foizi")
-    sheet.text(WIDTH / 2, height - PAD + 2, note, 9.5, FAINT, anchor="ms")
+            sheet.rect(grade_x, mid - 7, 26, 14, BG, 2, _mix(color, 0.55))
+            sheet.text(grade_x + 13, mid, row["grade"], 8.5, color, True, "mm")
+        top += ROW_H
+    sheet.rect(PAD, top, WIDTH - 2 * PAD, 0.8, LINE)
+    _footer(sheet, height, footer)
     return sheet.png()
 
 
@@ -250,8 +280,19 @@ def rating_pages(test: dict, attempts: list[dict]) -> list[bytes]:
 
 # ---------- 2-varaq: statistika ----------
 
+# Savol qiyinligi (Rasch logit) — bitta ko'k rangning to'rt tusi: oson — och, juda qiyin — to'q
+DIFFICULTY = [(-1, (176, 196, 222), "oson"), (0, (115, 147, 190), "o'rtacha"),
+              (1, (58, 93, 145), "qiyin"), (99, (24, 42, 72), "juda qiyin")]
+
+
 def _difficulty_color(b: float) -> tuple:
-    return GREEN if b < -1 else (163, 230, 53) if b < 0 else GOLD if b < 1 else RED
+    return next(color for edge, color, _ in DIFFICULTY if b < edge)
+
+
+def _section(sheet: _Sheet, top: float, height: float, title: str, note: str) -> None:
+    sheet.rect(PAD, top, WIDTH - 2 * PAD, height, BOX, 3, BOX_LINE)
+    sheet.text(PAD + 12, top + 18, title, 10.5, TEXT, True)
+    sheet.text(WIDTH - PAD - 12, top + 18, note, 8.5, MUTED, anchor="rs")
 
 
 def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
@@ -267,33 +308,24 @@ def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
     items = item_stats(test, attempts)
     show_items = len(items) >= 2
 
-    hist_h, items_h, lists_h = 176, 150, 4 + 8 + 5 * 17 + 10
-    height = PAD + 44 + 60 + hist_h + 12 + ((items_h + lists_h + 12) if show_items else 0) + 44 + PAD
+    footer = (["Rasch modeli: kam yechilgan savol qiyinroq — uni yechgan o'quvchi ko'proq ball oladi.",
+               "Umumiy ball: T = 50 + 10·Z, eng yuqorisi 75. Sertifikat — C (46 ball) va undan yuqori."] if milliy
+              else ["Savol qiyinligi — uni yecha olmaganlar ulushidan (Rasch logit)."])
+    hist_h, items_h, lists_h = 170, 140, 16 + 5 * 16 + 8
+    height = (PAD + 52 + 12 + 44 + 14 + hist_h + 12 + ((items_h + lists_h + 12) if show_items else 0)
+              + 10 + 13 * len(footer) + PAD)
     sheet = _Sheet(height)
 
-    sheet.text(PAD, PAD + 17, sheet.fit(_title(test), 17, WIDTH - 2 * PAD, True), 17, TEXT, True)
     method = "Rasch modeli bo'yicha" if milliy else "to'g'ri javoblar foizi"
-    sheet.text(PAD, PAD + 34, sheet.fit(f"Statistika · kod {test['code']} · {_date()} · {n} qatnashchi · {method}", 11.5,
-                                        WIDTH - 2 * PAD), 11.5, MUTED)
-
-    # Ko'rsatkichlar
+    top = _header(sheet, "STATISTIK TAHLIL", _title(test), f"Kod {test['code']} · {_date()} · {n} qatnashchi · {method}") + 12
     suffix = "" if milliy else "%"
-    last = (f"{round(certified / n * 100)}%", f"sertifikat {certified}/{n}") if milliy else (_num(median) + "%", "median")
-    kpis = [(_num(avg) + suffix, "o'rtacha ball", TEXT), (_num(scores[0]) + suffix, "eng yuqori", GREEN),
-            (_num(scores[-1]) + suffix, "eng past", RED), (last[0], last[1], TEXT)]
-    top = PAD + 48
-    w = (WIDTH - 2 * PAD - 3 * 6) / 4
-    for k, (value, label, color) in enumerate(kpis):
-        x = PAD + k * (w + 6)
-        sheet.rect(x, top, w, 50, PANEL, 12)
-        sheet.text(x + 9, top + 24, value, 18, color, True)
-        sheet.text(x + 9, top + 40, sheet.fit(label, 9.5, w - 14), 9.5, MUTED)
-    top += 62
+    last = (f"{round(certified / n * 100)}%", f"sertifikat · {certified}/{n}") if milliy else (_num(median) + "%", "median")
+    top = _kpis(sheet, top, [(_num(avg) + suffix, "o'rtacha ball", TEXT), (_num(scores[0]) + suffix, "eng yuqori", GREEN),
+                             (_num(scores[-1]) + suffix, "eng past", RED), (last[0], last[1], TEXT)]) + 14
 
     # Ball taqsimoti
-    sheet.rect(PAD, top, WIDTH - 2 * PAD, hist_h, BOX, 14, BOX_LINE)
-    sheet.text(PAD + 12, top + 20, "Umumiy ball taqsimoti", 12, TEXT, True)
-    sheet.text(WIDTH - PAD - 12, top + 20, "75 ballik shkala" if milliy else "100 foizlik shkala", 11, MUTED, anchor="rs")
+    _section(sheet, top, hist_h, "Umumiy ball taqsimoti",
+             "75 ballik shkala, 5 ballik oraliqlar" if milliy else "100 foizlik shkala")
     hi, step = (75, 5) if milliy else (100, 10)
     lo = max(0, min(hi - 4 * step, math.floor(scores[-1] / step) * step))
     bins = []
@@ -304,94 +336,90 @@ def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
         edge = upper
     peak = max(c for _, c in bins) or 1
     y_max = max(2, math.ceil(peak / 2) * 2)
-    cx0, cx1, cy0, cy1 = PAD + 32, WIDTH - PAD - 14, top + 38, top + hist_h - 40
+    cx0, cx1, cy0, cy1 = PAD + 34, WIDTH - PAD - 14, top + 34, top + hist_h - 38
     x_of = lambda s: cx0 + (s - lo) / (hi - lo) * (cx1 - cx0)
     y_of = lambda c: cy1 - c / y_max * (cy1 - cy0)
     grid_step = max(1, y_max // 4)
     for c in range(0, y_max + 1, grid_step):
-        sheet.line(cx0, y_of(c), cx1, y_of(c), TRACK, 0.8)
-        sheet.text(cx0 - 6, y_of(c) + 3.5, str(c), 9.5, FAINT, anchor="rs")
+        sheet.line(cx0, y_of(c), cx1, y_of(c), TRACK, 0.6)
+        sheet.text(cx0 - 6, y_of(c) + 3, str(c), 8, FAINT, anchor="rs")
     for start, count in bins:
         if not count:
             continue
-        x0, x1 = x_of(start) + 2, x_of(start + step) - 2
-        color = GRADE_COLORS[grade_for(start + step / 2)] if milliy else (
-            GREEN if start >= 80 else GRADE_COLORS["B"] if start >= 60 else GRADE_COLORS["C+"] if start >= 40 else RED)
-        sheet.rect(x0, y_of(count), x1 - x0, cy1 - y_of(count), _mix(color, 0.9), 4)
-        sheet.text((x0 + x1) / 2, y_of(count) - 4, str(count), 10.5, TEXT, True, "ms")
+        x0, x1 = x_of(start) + 1.5, x_of(start + step) - 1.5
+        below = milliy and start + step <= CERT_LINE  # butun oraliq sertifikat chegarasidan past
+        sheet.rect(x0, y_of(count), x1 - x0, cy1 - y_of(count), (201, 138, 138) if below else NAVY, 1)
+        sheet.text((x0 + x1) / 2, y_of(count) - 3.5, str(count), 8.5, TEXT, True, "ms")
+    sheet.line(cx0, cy1, cx1, cy1, MUTED, 0.8)
     for start, _ in bins + [(hi, 0)]:
-        sheet.text(x_of(start), cy1 + 14, str(start), 9.5, MUTED, anchor="ms")
-    sheet.line(x_of(min(max(avg, lo), hi)), cy0 - 6, x_of(min(max(avg, lo), hi)), cy1, TEXT, 1.2, 2)
-    legend_y = top + hist_h - 10
-    sheet.line(PAD + 12, legend_y - 3.5, PAD + 24, legend_y - 3.5, TEXT, 1.2, 2)
-    sheet.text(PAD + 29, legend_y, f"o'rtacha {_num(avg)}", 10, MUTED)
-    x = PAD + 29 + sheet.width(f"o'rtacha {_num(avg)}", 10) + 14
+        sheet.text(x_of(start), cy1 + 12, str(start), 8, MUTED, anchor="ms")
+    avg_x = x_of(min(max(avg, lo), hi))
+    sheet.line(avg_x, cy0 - 6, avg_x, cy1, AVG, 1.1, 2)
+    legend_y = top + hist_h - 9
+    sheet.line(PAD + 12, legend_y - 3, PAD + 24, legend_y - 3, AVG, 1.1, 2)
+    sheet.text(PAD + 29, legend_y, f"o'rtacha {_num(avg)}", 8.5, MUTED)
+    x = PAD + 29 + sheet.width(f"o'rtacha {_num(avg)}", 8.5) + 14
     if milliy and lo <= CERT_LINE <= hi:
-        sheet.line(x_of(CERT_LINE), cy0 - 6, x_of(CERT_LINE), cy1, RED, 1.2, 3)
-        sheet.line(x, legend_y - 3.5, x + 12, legend_y - 3.5, RED, 1.2, 3)
-        sheet.text(x + 17, legend_y, f"sertifikat chegarasi {CERT_LINE}", 10, MUTED)
-        x += 17 + sheet.width(f"sertifikat chegarasi {CERT_LINE}", 10) + 14
-    sheet.text(x, legend_y, f"median {_num(median)}", 10, MUTED)
+        sheet.line(x_of(CERT_LINE), cy0 - 6, x_of(CERT_LINE), cy1, RED, 1.1, 3)
+        sheet.line(x, legend_y - 3, x + 12, legend_y - 3, RED, 1.1, 3)
+        sheet.text(x + 17, legend_y, f"sertifikat chegarasi {CERT_LINE}", 8.5, MUTED)
+        x += 17 + sheet.width(f"sertifikat chegarasi {CERT_LINE}", 8.5) + 14
+    sheet.text(x, legend_y, f"median {_num(median)}", 8.5, MUTED)
     top += hist_h + 12
 
     # Savollar yechilishi
     if show_items:
-        box_h = items_h + lists_h
-        sheet.rect(PAD, top, WIDTH - 2 * PAD, box_h, BOX, 14, BOX_LINE)
-        sheet.text(PAD + 12, top + 20, "Savollar yechilishi", 12, TEXT, True)
-        sheet.text(WIDTH - PAD - 12, top + 20, "rang — Rasch qiyinligi", 11, MUTED, anchor="rs")
-        qx0, qx1, qy0, qy1 = PAD + 34, WIDTH - PAD - 10, top + 34, top + 108
+        _section(sheet, top, items_h + lists_h, "Savollar bo'yicha yechilish", "ustun tusi — Rasch qiyinligi")
+        qx0, qx1, qy0, qy1 = PAD + 34, WIDTH - PAD - 10, top + 32, top + 100
         bw = (qx1 - qx0) / len(items)
         for value in (0, 50, 100):
             y = qy1 - value / 100 * (qy1 - qy0)
-            sheet.line(qx0, y, qx1, y, TRACK, 0.8)
-            sheet.text(qx0 - 5, y + 3.5, f"{value}%", 9, FAINT, anchor="rs")
+            sheet.line(qx0, y, qx1, y, TRACK, 0.6)
+            sheet.text(qx0 - 5, y + 3, f"{value}%", 8, FAINT, anchor="rs")
         for k, item in enumerate(items):
             h = item["share"] * (qy1 - qy0)
-            sheet.rect(qx0 + k * bw + bw * 0.12, qy1 - h, bw * 0.76, h, _difficulty_color(item["difficulty"]), min(1.5, bw / 4))
+            sheet.rect(qx0 + k * bw + bw * 0.14, qy1 - h, bw * 0.72, h, _difficulty_color(item["difficulty"]))
+        sheet.line(qx0, qy1, qx1, qy1, MUTED, 0.8)
         ticks = {0, len(items) - 1} | {k for k in range(len(items)) if (k + 1) % 10 == 0}
         first_written = next((k for k, item in enumerate(items) if item["written"]), None)
         if first_written:
             ticks.add(first_written)
             sx = qx0 + first_written * bw
-            sheet.line(sx, qy0 - 4, sx, qy1, (75, 85, 99), 0.8, 2)
+            sheet.line(sx, qy0 - 4, sx, qy1, FAINT, 0.7, 2)
         drawn = []
         for k in sorted(ticks):
             x = qx0 + (k + 0.5) * bw
             if any(abs(x - d) < 14 for d in drawn):
                 continue
             drawn.append(x)
-            sheet.text(x, qy1 + 12, items[k]["label"], 8.5, MUTED, anchor="ms")
+            sheet.text(x, qy1 + 11, items[k]["label"], 7.5, MUTED, anchor="ms")
         lx = PAD + 12
-        for label, color in (("oson", GREEN), ("o'rtacha", (163, 230, 53)), ("qiyin", GOLD), ("juda qiyin", RED)):
-            sheet.rect(lx, top + 128, 9, 9, color, 2)
-            sheet.text(lx + 13, top + 136, label, 10, MUTED)
-            lx += 13 + sheet.width(label, 10) + 14
+        for _, color, label in DIFFICULTY:
+            sheet.rect(lx, top + 118, 8, 8, color)
+            sheet.text(lx + 12, top + 125, label, 8.5, MUTED)
+            lx += 12 + sheet.width(label, 8.5) + 12
         if first_written:
-            sheet.text(WIDTH - PAD - 12, top + 136, f"yozma: {items[first_written]['label']}–{items[-1]['label']}", 10, MUTED, anchor="rs")
+            sheet.text(WIDTH - PAD - 12, top + 125, f"yozma: {items[first_written]['label']}–{items[-1]['label']}",
+                       8.5, MUTED, anchor="rs")
 
         ordered = sorted(items, key=lambda i: -i["share"])
         easy, hard = ordered[:5], list(reversed(ordered[-5:]))
-        col_w = (WIDTH - 2 * PAD - 24 - 12) / 2
-        for c, (title, color, group) in enumerate((("ENG KO'P YECHILGAN", GREEN, easy), ("ENG KAM YECHILGAN", RED, hard))):
-            x = PAD + 12 + c * (col_w + 12)
-            y = top + items_h + 4
-            sheet.text(x, y, title, 9.5, color, True)
+        col_w = (WIDTH - 2 * PAD - 24 - 16) / 2
+        sheet.rect(PAD + 12, top + items_h - 4, WIDTH - 2 * PAD - 24, 0.6, BOX_LINE)
+        for c, (title, color, group) in enumerate((("ENG KO'P YECHILGAN", NAVY, easy), ("ENG KAM YECHILGAN", RED, hard))):
+            x = PAD + 12 + c * (col_w + 16)
+            y = top + items_h + 10
+            sheet.text(x, y, title, 7.5, color, True)
             for k, item in enumerate(group):
-                yy = y + 8 + k * 17
-                sheet.text(x, yy + 8, f"{item['label']}-s.", 10.5, TEXT, anchor="lm")
-                bar_x, bar_w = x + 38, col_w - 38 - 38
-                sheet.rect(bar_x, yy + 5.5, bar_w, 5, TRACK, 2.5)
-                sheet.rect(bar_x, yy + 5.5, max(2, bar_w * item["share"]), 5, color, 2.5)
-                sheet.text(x + col_w, yy + 8, f"{round(item['share'] * 100)}%", 10.5, TEXT, True, "rm")
-        top += box_h + 12
+                mid = y + 12 + k * 16
+                sheet.text(x, mid, f"{item['label']}-savol", 9, TEXT, anchor="lm")
+                bar_x, bar_w = x + 52, col_w - 52 - 34
+                sheet.rect(bar_x, mid - 2, bar_w, 4, TRACK, 1)
+                sheet.rect(bar_x, mid - 2, max(2, bar_w * item["share"]), 4, color, 1)
+                sheet.text(x + col_w, mid, f"{round(item['share'] * 100)}%", 9, TEXT, True, "rm")
+        top += items_h + lists_h + 12
 
-    notes = (["Rasch modelida kam yechilgan savol qiyinroq hisoblanadi —",
-              "uni yechgan o'quvchi ko'proq ball oladi.",
-              "Umumiy ball: T = 50 + 10·Z, eng yuqorisi 75 · sertifikat C (46) va yuqori."] if milliy
-             else ["Savol qiyinligi — uni yecha olmaganlar ulushidan (Rasch logit)."])
-    for k, note in enumerate(notes):
-        sheet.text(PAD, top + 12 + k * 13, sheet.fit(note, 9.5, WIDTH - 2 * PAD), 9.5, FAINT)
+    _footer(sheet, height, footer)
     return sheet.png()
 
 
