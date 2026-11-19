@@ -16,6 +16,7 @@ Narx, chegirma, karta raqami va sinov kunlarini ADMIN BOTDA o'zgartiradi (/sozla
 qiymatlar — faqat boshlang'ich (sozlanmagan bo'lsa ishlatiladi).
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import db
@@ -73,6 +74,59 @@ def set_access(tg_id: int, allowed: bool) -> bool:
     return True
 
 
+def can_manage(tg_id: int) -> bool:
+    """Obuna tariflari va to'lov kartasini ilovada kiritadi: admin va Render'dagi FREE_IDS."""
+    return tg_id in ADMIN_IDS or tg_id in FREE_IDS
+
+
+def sales_on() -> bool:
+    """Obuna sotilyaptimi: Render'da PLANS_ENABLED=1 yoki ilovadagi «💎 Obuna tariflari»da yoqilgan."""
+    return SALES_ENABLED or db.get_settings().get("sales_on") == "1"
+
+
+def credit_mode(tg_id: int) -> bool:
+    """AI esse — o'qituvchining kreditidan: obuna sotilmayapti yoki /ruxsat bilan bepul qo'shilgan
+    (obuna olmaydigan) o'qituvchi. Admin va FREE_IDS — cheksiz, ularga bu tekshiruv yetib bormaydi.
+    Sotuv to'xtatilgan bo'lsa ham, to'langan obunasi tugamagan o'qituvchi oylik limitidan foydalanaveradi."""
+    if tg_id in granted_ids() and not ai_unlimited(tg_id):
+        return True
+    if sales_on():
+        return False
+    sub = db.get_subscription(tg_id)
+    return not (sub and sub["plan"] != "trial" and _expires(sub) > now())
+
+
+# ---------- Ilovada kiritiladigan tariflar: «1 oy — 200 000», «3 oy — 600 000» ----------
+# Kalit: m1, m3 … (oy soni). Tarif kiritilmagan bo'lsa — eski PERIODS (admin bot /sozlama) ishlaydi.
+TARIFF_MONTHS_MAX = 36
+
+
+def tariffs() -> list[dict]:
+    try:
+        rows = json.loads(db.get_settings().get("tariffs") or "[]")
+    except (TypeError, ValueError):
+        return []
+    out = {}
+    for row in rows if isinstance(rows, list) else []:
+        try:
+            months, price = int(row["months"]), int(row["price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 1 <= months <= TARIFF_MONTHS_MAX and price > 0:
+            out[months] = price
+    return [{"months": m, "price": out[m]} for m in sorted(out)]
+
+
+def set_tariffs(rows: list[tuple[int, int]]) -> None:
+    db.set_setting("tariffs", json.dumps([{"months": m, "price": p} for m, p in rows]))
+
+
+def tariff_months(key: str) -> int | None:
+    """«m3» → 3 (ilovadagi tarif kaliti), aks holda None."""
+    key = str(key or "")
+    return int(key[1:]) if key[:1] == "m" and key[1:].isdigit() and 1 <= int(key[1:]) <= TARIFF_MONTHS_MAX else None
+
+
 def ai_unlimited(tg_id: int) -> bool:
     """AI cheksiz: admin va Render'dagi FREE_IDS. Botda /ruxsat bilan qo'shilgan o'qituvchi test yaratadi,
     lekin AI esse tekshiruvi uning kreditidan yechiladi (o'qituvchi to'laydi — o'quvchilari foydalanadi)."""
@@ -95,14 +149,21 @@ def setting(key: str, default=0) -> int:
 
 
 def price_of(period: str) -> int:
-    """Chegirma qo'llangandan keyingi narx (so'mda)."""
+    """Chegirma qo'llangandan keyingi narx (so'mda). Ilovadagi tarif (m3) — kiritilgan narx, chegirmasiz."""
+    months = tariff_months(period)
+    if months is not None:
+        return next((t["price"] for t in tariffs() if t["months"] == months), 0)
     base = setting(f"price_{period}", PERIODS[period][2])
     discount = max(0, min(90, setting(f"discount_{period}", 0)))
     return max(0, round(base * (100 - discount) / 100 / 1000) * 1000)
 
 
 def offers() -> list[dict]:
-    """Ilova va botda ko'rsatiladigan tariflar ro'yxati."""
+    """Ilova va botda ko'rsatiladigan tariflar ro'yxati: ilovada kiritilganlar, bo'lmasa — eski muddatlar."""
+    custom = tariffs()
+    if custom:
+        return [{"key": f"m{t['months']}", "name": f"{t['months']} oy", "days": 30 * t["months"],
+                 "price": t["price"], "final": t["price"], "discount": 0} for t in custom]
     out = []
     for key, (name, days, default_price) in PERIODS.items():
         base = setting(f"price_{key}", default_price)
@@ -154,6 +215,8 @@ def _expires(sub: dict) -> datetime:
 def period_name(key: str) -> str:
     if key == PACK:
         return "Esse paketi"
+    if tariff_months(key) is not None:
+        return f"{tariff_months(key)} oy"
     return PERIODS[key][0] if key in PERIODS else ("Sinov" if key == "trial" else key)
 
 
@@ -189,8 +252,11 @@ def ensure_active(tg_id: int) -> dict:
     """Test yaratishdan oldin: obunasi yo'q bo'lsa — sinov yoqilgan bo'lsa boshlanadi, aks holda active=False."""
     if is_free(tg_id):
         return status(tg_id)
-    if not SALES_ENABLED:  # obuna yopiq — faqat FREE_IDS / admin
-        return {**status(tg_id), "active": False, "closed": True}
+    if not sales_on():  # obuna yopiq — FREE_IDS / admin va oldin to'langan (muddati tugamagan) obunalar
+        current = status(tg_id)
+        if current["active"] and current["plan"] != "trial":
+            return current
+        return {**current, "active": False, "closed": True}
     if not db.get_subscription(tg_id) and trial_days() > 0:
         db.set_subscription(tg_id, "trial", (now() + timedelta(days=trial_days())).isoformat(timespec="seconds"))
     return status(tg_id)
@@ -198,13 +264,14 @@ def ensure_active(tg_id: int) -> dict:
 
 def grant(tg_id: int, period: str, count: int = 1) -> dict:
     """Obunani yoqish/uzaytirish. Faol obuna bo'lsa — muddat oxiriga qo'shiladi."""
-    key = ALIASES.get(str(period).lower().strip())
+    months = tariff_months(period)
+    key = f"m{months}" if months is not None else ALIASES.get(str(period).lower().strip())
     if key is None:
         raise ValueError("Muddat noto'g'ri. Bor muddatlar: hafta, oy, 3oy, yil")
     count = max(1, min(24, count))
     sub = db.get_subscription(tg_id)
     start = _expires(sub) if sub and sub["plan"] != "trial" and _expires(sub) > now() else now()
-    days = PERIODS[key][1] * count
+    days = (30 * months if months is not None else PERIODS[key][1]) * count
     db.set_subscription(tg_id, key, (start + timedelta(days=days)).isoformat(timespec="seconds"))
     return status(tg_id)
 
@@ -215,8 +282,8 @@ def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     if ai_unlimited(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
-    if not SALES_ENABLED:
-        # Obuna yopiq: esse tekshiruvi o'qituvchining kreditidan (admin /kredit bilan to'ldiradi)
+    if credit_mode(tg_id):
+        # Obuna yopiq yoki /ruxsat bilan bepul o'qituvchi: esse tekshiruvi kreditidan (admin /kredit bilan to'ldiradi)
         if kind == "essays" and db.use_credits(tg_id, amount):
             db.consume_usage(tg_id, month_key(), kind, amount, None)
             return True
@@ -238,7 +305,7 @@ def can_use_ai(tg_id: int, kind: str = "essays") -> bool:
     if ai_unlimited(tg_id):
         return True
     has_credits = kind == "essays" and db.get_credits(tg_id) > 0
-    if not SALES_ENABLED:
+    if credit_mode(tg_id):
         return has_credits
     # use_ai bilan bir xil tartib: paket faqat faol obuna bilan ishlaydi (aks holda «bor» deb, sarflashda rad etardi)
     sub = db.get_subscription(tg_id)

@@ -14,6 +14,7 @@ Ishga tushirish:  python bot.py
 import asyncio
 import re
 import base64
+import hashlib
 import html
 import json
 import types
@@ -466,7 +467,7 @@ async def notify_granted(bot: Bot, tg_id: int, status: dict) -> None:
 async def notify_pack(bot: Bot, tg_id: int, essays: int, balance: int) -> None:
     try:
         text = (f"🤖 <b>AI esse krediti qo'shildi: +{essays}</b>\nJami: <b>{balance}</b> ta — yana {balance} ta o'quvchi "
-                "essesini tekshirtira olasiz (1 esse = 1 kredit)." if not config.SALES_ENABLED else
+                "essesini tekshirtira olasiz (1 esse = 1 kredit)." if not plans.sales_on() else
                 f"📦 <b>Esse paketi qo'shildi</b>: +{essays} ta\n"
                 f"Jami qo'shimcha: {balance} ta esse. Oylik limit tugaganda AI shulardan foydalanadi — "
                 "muddati yo'q, keyingi oyga ham o'tadi.")
@@ -509,7 +510,7 @@ async def cmd_prices(message: Message) -> None:
     if plans.is_free(message.from_user.id):
         await message.answer("♾ <b>Sizga hammasi bepul</b> — obuna sotib olish shart emas.")
         return
-    if not config.SALES_ENABLED:
+    if not plans.sales_on():
         await message.answer("🔒 Obuna hozircha yopiq. Test yaratish faqat ruxsat berilgan o'qituvchilarga.\n"
                              f"Telegram ID'ingiz: <code>{message.from_user.id}</code>"
                              + (f" — ruxsat uchun @{esc(config.ADMIN_CONTACT)} ga yuboring." if config.ADMIN_CONTACT else ""))
@@ -565,7 +566,7 @@ async def receipt_received(message: Message) -> None:
         return
     payment = await asyncio.to_thread(db.open_payment, message.from_user.id)
     if not payment:
-        if not config.SALES_ENABLED:  # obuna yopiq — rasm nima uchunligini tushuntiramiz (obunani taklif qilmaymiz)
+        if not plans.sales_on():  # obuna yopiq — rasm nima uchunligini tushuntiramiz (obunani taklif qilmaymiz)
             await message.answer("📷 Bu rasm hech narsaga biriktirilmadi.\n"
                                  "• Titulni tekshirish — ilovada «📷 Skanerlash»\n"
                                  "• Qog'ozdagi esse — testdagi «📷 Qog'ozga yozdingizmi?» → «🤖 Botga yuboraman»\n"
@@ -579,12 +580,44 @@ async def receipt_received(message: Message) -> None:
         await message.answer(f"⏳ Chekingiz allaqachon adminga yuborilgan · {plans.payment_title(payment)}.\n"
                              "Tasdiqlanishini kuting. Chek xato bo'lsa — ilovada «💎 Obuna»dan to'lovni qaytadan boshlang.")
         return
+    await plan_receipt_received(message, payment)
+
+
+async def plan_receipt_received(message: Message, payment: dict) -> None:
+    """Obuna (yoki esse paketi) cheki: AI o'qiydi — bugungi sana, summa, qabul qiluvchi karta yoki ismi mos bo'lsa
+    obuna darhol yoqiladi. Mos kelmasa (yoki AI o'qiy olmasa) — chek sababi bilan adminlarga (ADMIN_IDS, FREE_IDS)."""
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
-    await asyncio.to_thread(db.attach_receipt, payment["id"], file_id)
-    await message.answer(f"✅ Chek qabul qilindi · {plans.payment_title(payment)} — "
-                         f"{plans.money(payment['amount'])} so'm\nAdmin tekshirib, "
-                         + ("esselarni qo'shadi." if payment["period"] == plans.PACK else "obunangizni yoqadi."))
-    await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo))
+    mime = "image/jpeg" if message.photo else (message.document.mime_type or "")
+    good, reasons, txn, digest = False, [], None, None
+    if mime.startswith("image/"):
+        wait = await message.answer("🔎 Chek tekshirilmoqda…")
+        try:
+            data = (await message.bot.download(file_id)).read()
+            digest = hashlib.sha256(data).hexdigest()
+            card = await asyncio.to_thread(plans.card)
+            good, reasons, txn = await webapp.verify_receipt(data, mime, payment["amount"], card)
+            if await asyncio.to_thread(db.receipt_used, digest, txn, payment["id"], "payments"):
+                good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
+        except Exception:
+            logger.exception("Obuna cheki avtomatik tekshirilmadi")
+            good, reasons = False, ["chekni avtomatik tekshirib bo'lmadi"]
+        finally:
+            try:
+                await wait.delete()
+            except TelegramBadRequest:
+                pass
+    else:
+        reasons = ["chek rasm emas (fayl) — AI o'qimadi"]
+    reasons = [r.replace("ustoz", "admin") for r in reasons]
+    await asyncio.to_thread(db.attach_receipt, payment["id"], file_id, digest, txn, "; ".join(reasons) or None)
+    if good and await asyncio.to_thread(db.decide_payment, payment["id"], "paid", 0):
+        note = await apply_payment(message.bot, payment)
+        await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo), note=f"🤖 AI tasdiqladi — {note}")
+        return
+    await message.answer(f"⏳ <b>Chek qabul qilindi</b> · {plans.payment_title(payment)} — {plans.money(payment['amount'])} so'm\n"
+                         "Avtomatik tasdiqlanmadi, admin ko'rib chiqadi va bot xabar beradi."
+                         + (f"\nSabab: {esc('; '.join(reasons))}" if reasons else ""))
+    await send_receipt_to_admins(message.bot, payment["id"], bool(message.photo), reasons=reasons)
 
 
 READER_NAMES = {"gemini": "Gemini (bepul)", "claude": "Claude (aniqroq)"}
@@ -779,14 +812,23 @@ async def decide_essay_payment_button(callback: CallbackQuery) -> None:
         pass
 
 
-async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> None:
+async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool, reasons: list[str] | None = None,
+                                 note: str = "") -> None:
+    """Chek adminlarga (ADMIN_IDS va FREE_IDS). note — AI tasdiqlagan (faqat ma'lumot, tugmasiz);
+    aks holda AI sababi va «Tasdiqlash / Rad etish»."""
     payment = await asyncio.to_thread(db.get_payment, payment_id)
     if not payment or not payment["receipt"]:
         return
     caption = (f"🧾 <b>Yangi to'lov</b> · {plans.payment_title(payment)} — "
                f"<b>{plans.money(payment['amount'])} so'm</b>\n{LINE}\n{_who(payment)}")
-    markup = inline([[("✅ Tasdiqlash", f"pay:ok:{payment_id}"), ("❌ Rad etish", f"pay:no:{payment_id}")]])
-    for admin_id in ADMIN_IDS:
+    if note:
+        caption += f"\n{LINE}\n{esc(note)}"
+        markup = None
+    else:
+        if reasons:
+            caption += f"\n🤖 AI: {esc('; '.join(reasons))}"
+        markup = inline([[("✅ Tasdiqlash", f"pay:ok:{payment_id}"), ("❌ Rad etish", f"pay:no:{payment_id}")]])
+    for admin_id in ADMIN_IDS | config.FREE_IDS:
         try:
             if as_photo:
                 await bot.send_photo(admin_id, payment["receipt"], caption=caption, reply_markup=markup)
@@ -796,10 +838,23 @@ async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool) -> N
             logger.warning("Chek adminga yuborilmadi: %s", admin_id, exc_info=True)
 
 
+async def apply_payment(bot: Bot, payment: dict) -> str:
+    """Tasdiqlangan to'lov: obuna yoqiladi/uzaytiriladi yoki esse paketi qo'shiladi, foydalanuvchiga xabar.
+    Qaytaradi — adminlar uchun qisqa izoh."""
+    if payment["period"] == plans.PACK:
+        essays = payment["essays"] or (await asyncio.to_thread(plans.pack))["essays"]
+        balance = await asyncio.to_thread(plans.add_pack, payment["tg_id"], essays)
+        await notify_pack(bot, payment["tg_id"], essays, balance)
+        return f"+{essays} esse (jami {balance})"
+    status = await asyncio.to_thread(plans.grant, payment["tg_id"], payment["period"])
+    await notify_granted(bot, payment["tg_id"], status)
+    return f"{status['name']} · {status['expires']} gacha"
+
+
 @dp.callback_query(F.data.startswith("pay:"))
 async def decide_payment(callback: CallbackQuery) -> None:
     """Admin chekni tasdiqlaydi yoki rad etadi. Tasdiqlansa — obuna darhol yoqiladi (yoki esse paketi qo'shiladi)."""
-    if callback.from_user.id not in ADMIN_IDS:
+    if not plans.can_manage(callback.from_user.id):
         await callback.answer("Faqat admin uchun", show_alert=True)
         return
     _, action, raw = callback.data.split(":")
@@ -812,17 +867,10 @@ async def decide_payment(callback: CallbackQuery) -> None:
     if not decided:
         await callback.answer("Bu to'lov allaqachon ko'rib chiqilgan", show_alert=True)
         return
-    if action == "ok" and payment["period"] == plans.PACK:
-        essays = payment["essays"] or (await asyncio.to_thread(plans.pack))["essays"]
-        balance = await asyncio.to_thread(plans.add_pack, payment["tg_id"], essays)
-        await callback.answer("✅ Esselar qo'shildi")
-        await notify_pack(callback.bot, payment["tg_id"], essays, balance)
-        note = f"✅ Tasdiqladi: {esc(callback.from_user.full_name)} — +{essays} esse (jami {balance})"
-    elif action == "ok":
-        status = await asyncio.to_thread(plans.grant, payment["tg_id"], payment["period"])
-        await callback.answer("✅ Obuna yoqildi")
-        await notify_granted(callback.bot, payment["tg_id"], status)
-        note = f"✅ Tasdiqladi: {esc(callback.from_user.full_name)} — {status['name']} · {status['expires']} gacha"
+    if action == "ok":
+        done = await apply_payment(callback.bot, payment)
+        await callback.answer("✅ Tasdiqlandi")
+        note = f"✅ Tasdiqladi: {esc(callback.from_user.full_name)} — {esc(done)}"
     else:
         await callback.answer("❌ Rad etildi")
         try:

@@ -574,6 +574,51 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .pk-del:hover, .pk-del:focus-visible { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
 .pk-del:active { transform: scale(.9); }
 .pk-del svg.ic { width: 18px; height: 18px; }
+/* ---------- Kirish: ochilish ekrani, «Kim sifatida kirasiz?», «Telegram orqali kirish» ---------- */
+.intro, .intro-hero { background: #0b1f2a; color: #fff; position: relative; overflow: hidden; isolation: isolate; }
+.intro { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; transition: opacity .45s ease, transform .45s ease; }
+.intro.out { opacity: 0; transform: scale(1.04); pointer-events: none; }
+.ih-aur { position: absolute; inset: 0; z-index: -1; }
+.ih-aur i { position: absolute; border-radius: 50%; filter: blur(38px); opacity: .8; mix-blend-mode: screen; }
+.ih-aur i:nth-child(1) { width: 70%; height: 55%; background: #00c853; left: -20%; top: -10%; animation: ih-a1 7s ease-in-out infinite alternate; }
+.ih-aur i:nth-child(2) { width: 60%; height: 50%; background: #b6f27a; right: -20%; top: 25%; opacity: .5; animation: ih-a2 9s ease-in-out infinite alternate; }
+.ih-aur i:nth-child(3) { width: 70%; height: 50%; background: #14b8a6; left: 10%; bottom: -20%; animation: ih-a3 8s ease-in-out infinite alternate; }
+@keyframes ih-a1 { to { transform: translate(40%, 30%) scale(1.2); } }
+@keyframes ih-a2 { to { transform: translate(-45%, 20%) scale(.8); } }
+@keyframes ih-a3 { to { transform: translate(-25%, -35%) scale(1.3); } }
+.intro-c, .intro-hero { display: grid; justify-items: center; text-align: center; gap: 10px; }
+.ih-logo { width: 78px; height: 78px; border-radius: 24px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); display: grid; place-items: center; font: 800 32px var(--font-display); color: #fff; backdrop-filter: blur(8px); animation: ih-pop .8s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes ih-pop { from { transform: scale(.3); opacity: 0; } }
+.ih-shine { font: 800 44px/1 var(--font-display); letter-spacing: -.045em; background: linear-gradient(100deg, #fff 0 35%, #b6f27a 48%, #fff 60% 100%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ih-glint 2.6s ease-in-out infinite, m-rise .6s .25s cubic-bezier(.2,.8,.2,1) backwards; }
+@keyframes ih-glint { 0% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
+.intro small, .intro-hero small { font: 600 11px var(--font-body); letter-spacing: .24em; text-transform: uppercase; color: rgba(255,255,255,.82); animation: m-rise .6s .4s cubic-bezier(.2,.8,.2,1) backwards; }
+.intro-orb { position: absolute; left: 50%; bottom: calc(64px + var(--safe-bottom)); width: 44px; height: 44px; margin-left: -22px; }
+.intro-orb i, .mini-orb { position: absolute; inset: 0; border-radius: 50%; border: 2px solid transparent; border-top-color: #b6f27a; animation: spin 1.1s linear infinite; }
+.intro-orb i:nth-child(2) { inset: 8px; border-top-color: #fff; animation-duration: .8s; animation-direction: reverse; }
+/* Kirish ekranlari tepasidagi karta (rol tanlash, Telegram orqali kirish) */
+.intro-hero { border-radius: 30px; padding: 34px 18px 26px; box-shadow: 0 22px 40px -22px rgba(11,31,42,.75); }
+.intro-hero .ih-logo { width: 64px; height: 64px; border-radius: 20px; font-size: 27px; }
+.intro-hero .ih-shine { font-size: 38px; }
+.intro-hero small { letter-spacing: .08em; text-transform: none; font-size: 14px; }
+.login-head { display: grid; gap: 6px; padding: 4px 2px 0; }
+.login-head h1 { font-size: 26px; letter-spacing: -.03em; }
+.role-card { display: grid; grid-template-columns: 52px minmax(0, 1fr) 24px; gap: 14px; align-items: center; width: 100%; text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 2px solid var(--line); border-radius: 22px; padding: 16px; cursor: pointer; box-shadow: var(--shadow); transition: border-color .25s, transform .25s cubic-bezier(.34,1.56,.64,1); }
+.role-card:hover { transform: translateY(-2px); }
+.role-card:active { transform: scale(.98); }
+.role-card .rc-ico { width: 52px; height: 52px; border-radius: 16px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.role-card .rc-ico svg.ic { width: 26px; height: 26px; }
+.role-card b { display: block; font-size: 17px; }
+.role-card small { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.rc-dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; transition: background .3s, border-color .3s; }
+.role-card[aria-checked="true"] { border-color: var(--accent); }
+.role-card[aria-checked="true"] .rc-dot { background: var(--accent); border-color: var(--accent); }
+.role-card[aria-checked="true"] .rc-dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: ih-pop .35s cubic-bezier(.34,1.56,.64,1); }
+.login-steps { list-style: none; margin: 0; padding: 0; counter-reset: ls; display: grid; gap: 10px; }
+.login-steps li { counter-increment: ls; display: grid; grid-template-columns: 34px 1fr; column-gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; }
+.login-steps li::before { content: counter(ls); grid-row: span 2; width: 34px; height: 34px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 800; }
+.login-steps b { font-size: 14.5px; } .login-steps span { font-size: 12.5px; color: var(--muted); }
+.login-status { display: flex; gap: 10px; align-items: center; justify-content: center; font-size: 13px; color: var(--muted); text-align: center; }
+.mini-orb { position: relative; flex: none; width: 16px; height: 16px; border-top-color: var(--accent); }
 /* Chiziqli belgilar */
 svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; vertical-align: -.2em; }
 /* «Natijalar» — to'q karta: suzuvchi nur, o'sib chiquvchi ustunchalar */
@@ -617,6 +662,10 @@ svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke
 <body>
 <div class="topbar" id="topbar" hidden><button type="button" class="back" id="back" aria-label="Orqaga">‹ Orqaga</button></div>
 <div id="app"></div>
+<!-- Ochilish ekrani: birinchi sahifa chizilguncha (Flutter ilovada o'zining ochilish ekrani bor — u yerda chiqmaydi) -->
+<div class="intro" id="intro" aria-hidden="true"><span class="ih-aur"><i></i><i></i><i></i></span>
+  <div class="intro-c"><span class="ih-logo">O</span><b class="ih-shine">Ona tili</b><small>test · esse · skaner</small></div>
+  <span class="intro-orb"><i></i><i></i></span></div>
 <nav class="tabbar" id="tabbar" aria-label="Bo'limlar"><div></div></nav>
 <div class="toast" id="toast" role="status"></div>
 <script>
@@ -872,7 +921,8 @@ function paintTabs(view) {
   // Rol tanlash va majburiy obuna ekranlarida panel chiqmaydi
   const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
-    key === "plan" ? S.boot.sales : key === "ai" ? !S.boot.sales && S.boot.can_create !== false
+    // Obuna sotilsa — «💎 Obuna»; AI esse kreditdan bo'lsa (obuna yopiq yoki /ruxsat bilan bepul) — «🤖 AI»
+    key === "plan" ? S.boot.sales && !S.boot.credit_mode : key === "ai" ? (S.boot.credit_mode ?? !S.boot.sales) && S.boot.can_create !== false
       : key === "students" || key === "settings" ? S.boot.can_create !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
@@ -1041,16 +1091,28 @@ function rolePicker() {
   showBack(false);
   const first = ((S.boot && S.boot.user.name) || "").split(" ")[0];
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><span class="hi">Salom, ${esc(first)} 👋</span><h1>Kim sifatida kirasiz?</h1>
+    ${introHero(`Salom, ${esc(first)} 👋`)}
+    <div class="login-head"><h1>Kim sifatida kirasiz?</h1>
       <span class="muted small">Tanlovingiz eslab qolinadi — keyingi safar to'g'ridan-to'g'ri shu ekran ochiladi. Keyin tepadan almashtirish mumkin.</span></div>
-    <button class="card item" data-pick="student" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">🎓</span><span><b style="font-size:20px">O'quvchi</b><small>Test kodini kiritib yechaman, natijamni olaman</small></span></button>
-    <button class="card item" data-pick="teacher" style="text-align:left;padding:22px"><span class="ico" style="font-size:34px">👩‍🏫</span><span><b style="font-size:20px">O'qituvchi</b><small>Test yarataman (Rasch mock yoki oddiy), titul yoki onlayn o'tkazaman</small></span></button>
+    <button class="role-card" data-pick="student" role="radio" aria-checked="false"><span class="rc-ico"><svg class="ic" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2Z"/><path d="M8 7h6M8 11h6"/></svg></span><span><b>O'quvchi</b><small>Test kodini kiritib yechaman, natijamni olaman</small></span><span class="rc-dot"></span></button>
+    <button class="role-card" data-pick="teacher" role="radio" aria-checked="false"><span class="rc-ico"><svg class="ic" viewBox="0 0 24 24"><path d="M22 9 12 4 2 9l10 5 10-5Z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/></svg></span><span><b>O'qituvchi</b><small>Test yarataman (Rasch mock yoki oddiy), titul yoki onlayn o'tkazaman</small></span><span class="rc-dot"></span></button>
   </div>`;
   document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => {
-    setRole(el.dataset.pick);
-    if (el.dataset.pick === "student") { S.stack = []; return go("courses", { first: true }, true); }  // avval kursini topadi
-    render();
+    // Tanlangan karta belgilanadi (doiracha sakraydi), so'ng keyingi ekran
+    document.querySelectorAll("[data-pick]").forEach(x => x.setAttribute("aria-checked", String(x === el)));
+    haptic("select");
+    setTimeout(() => {
+      setRole(el.dataset.pick);
+      if (el.dataset.pick === "student") { S.stack = []; return go("courses", { first: true }, true); }  // avval kursini topadi
+      render();
+    }, reduceMotion ? 0 : 320);
   });
+}
+
+// Kirish ekranlari tepasi: to'q fon, suzuvchi rang dog'lari, sakrovchi logotip, yaltiroq «Ona tili»
+function introHero(sub) {
+  return `<section class="intro-hero" aria-label="Ona tili"><span class="ih-aur" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="ih-logo" aria-hidden="true">O</span><b class="ih-shine">Ona tili</b><small>${sub}</small></section>`;
 }
 
 // Ro'yxat qatorlari — bosh sahifada ham, «Testlar»/«Natijalar» bo'limlarida ham shu ko'rinish
@@ -2315,6 +2377,9 @@ VIEWS.settings = async () => {
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
       <span class="muted small">Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi.</span></div>
+    ${S.boot && S.boot.can_manage ? `<button type="button" class="item results-go" id="st-sales"><span class="ico">💎</span>
+      <span><b>Obuna tariflari</b><small>Ilova narxlari, to'lov kartasi, sotuvni yoqish — faqat admin</small></span>
+      <span class="rg-end">${ico("arrow")}</span></button>` : ""}
 
     <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
     <div class="card"><span class="muted small">O'quvchilar kreditni shu kartaga to'laydi. AI chekdagi karta oxirgi 4 raqamini yoki egasining ismini tekshiradi.</span>
@@ -2331,6 +2396,8 @@ VIEWS.settings = async () => {
     ${packsCardHTML({ essay_packs: s.packs })}
   </div>`;
   bindPacksCard();
+  const toSales = document.getElementById("st-sales");
+  if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
   const digits = v => String(v || "").replace(/\D/g, "");
   const cardEl = document.getElementById("st-card");
   cardEl.oninput = () => { const d = digits(cardEl.value).slice(0, 16); cardEl.value = d.replace(/(\d{4})(?=\d)/g, "$1 "); };
@@ -2356,6 +2423,97 @@ VIEWS.settings = async () => {
   };
   const copy = document.getElementById("st-copy");
   if (copy) copy.onclick = () => navigator.clipboard.writeText(s.public_url).then(() => { toast("Havola nusxalandi"); haptic("success"); }, () => toast(s.public_url));
+};
+
+// ---------- 💎 Obuna tariflari (admin va FREE_IDS): ilova narxlari, to'lov kartasi, sotuvni yoqish ----------
+// Foydalanuvchi tarifni tanlaydi → shu kartaga o'tkazadi → chekni botga yuboradi → AI tekshiradi
+// (sana, summa, karta yoki egasining ismi). Mos kelsa obuna darhol yoqiladi, aks holda chek adminlarga boradi.
+function tariffRowHTML(t) {
+  return `<div class="pk-row"><div class="pk-step">
+      <button type="button" data-pk-dec aria-label="Oyni kamaytirish">−</button>
+      <input class="input" data-pk-n inputmode="numeric" value="${t.months || ""}" placeholder="Oy" aria-label="Necha oy">
+      <button type="button" data-pk-inc aria-label="Oyni ko'paytirish">+</button></div>
+    <input class="input pk-price" data-pk-p inputmode="numeric" value="${t.price ? sum(t.price) : ""}" placeholder="Narxi (so'm)" aria-label="Narxi">
+    <span class="pk-disc small muted">${t.months && t.price ? `${sum(Math.round(t.price / t.months / 1000) * 1000)}/oy` : ""}</span>
+    <button type="button" class="pk-del" data-pk-del aria-label="Tarifni o'chirish">${ico("trash")}</button></div>`;
+}
+VIEWS.sales = async () => {
+  if (S.boot && !S.boot.can_manage) return go("settings", {}, true);
+  loading();
+  let s; try { s = await api("/api/admin/sales"); } catch (e) { return fail(e); }
+  const rows = s.tariffs.length ? s.tariffs : [{ months: 1 }, { months: 3 }];
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Admin</span><h1>💎 Obuna tariflari</h1>
+      <span class="muted small">Ilovadan foydalanish (test yaratish) uchun obuna narxlari. Admin va FREE_IDS'dagilar o'zgartira oladi.</span></div>
+
+    <div class="card" style="gap:10px">
+      <div class="row between"><b>Obuna sotish</b><span class="pill-tag ${s.sales_on ? "done" : "wait"}">${s.sales_on ? "● Yoqilgan" : "○ O'chiq"}</span></div>
+      <span class="muted small">${s.sales_on
+        ? "Ruxsat berilmagan foydalanuvchilar test yaratish uchun tarif sotib oladi. /ruxsat berilgan ustozlar bepul qoladi."
+        : "Hozir test yaratishni faqat admin, FREE_IDS va /ruxsat berilganlar qila oladi. Yoqsangiz — boshqalar tarif sotib oladi."}</span>
+      ${s.forced ? `<span class="muted small">Render'da PLANS_ENABLED=1 — sotuv doim yoqiq, bu yerdan o'chirib bo'lmaydi.</span>`
+        : `<button type="button" class="btn ${s.sales_on ? "ghost" : ""} block" id="sl-toggle">${s.sales_on ? "Sotuvni to'xtatish" : "Sotuvni yoqish"}</button>`}
+      ${s.pending ? `<span class="muted small">⏳ Ko'rib chiqilmagan cheklar: <b>${s.pending}</b> ta — botda «Tasdiqlash / Rad etish».</span>` : ""}
+    </div>
+
+    <div class="section-title"><h2>📅 Tariflar</h2><span class="muted small">${s.tariffs.length ? `${s.tariffs.length} ta` : "kiritilmagan"}</span></div>
+    <div class="card"><span class="muted small">Necha oy va narxi. Masalan: 1 oy — 200 000, 3 oy — 600 000. Narxi yozilmagan qator saqlanmaydi.</span>
+      <div class="pk-row pk-head small muted"><b>Oy</b><b>Narxi (so'm)</b><span class="pk-disc">1 oyga</span><span></span></div>
+      <div id="pk-rows" style="display:grid;gap:8px">${rows.map(tariffRowHTML).join("")}</div>
+      <button type="button" class="btn ghost block" id="pk-add">➕ Tarif qo'shish</button>
+      <button type="button" class="btn block" id="pk-save">Tariflarni saqlash</button></div>
+
+    <div class="section-title"><h2>💳 To'lov kartasi</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
+    <div class="card"><span class="muted small">Obuna puli shu kartaga tushadi. AI chekda karta oxirgi 4 raqamini yoki egasining ismini tekshiradi — ismni chekdagidek yozing.</span>
+      <div class="field"><label for="sl-card">Karta raqami</label><input class="input" id="sl-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
+      <div class="field"><label for="sl-holder">Karta egasi</label><input class="input" id="sl-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
+      <button type="button" class="btn ghost block" id="sl-card-save">Kartani saqlash</button></div>
+  </div>`;
+  const digits = v => String(v || "").replace(/\D/g, "");
+  const box = document.getElementById("pk-rows"), add = document.getElementById("pk-add"), MAX = 12;
+  add.hidden = box.children.length >= MAX;
+  add.onclick = () => {
+    const last = [...box.querySelectorAll("[data-pk-n]")].reduce((m, x) => Math.max(m, +digits(x.value) || 0), 0);
+    box.insertAdjacentHTML("beforeend", tariffRowHTML({ months: Math.min(36, last ? last + (last >= 6 ? 6 : last >= 3 ? 3 : 1) : 1) }));
+    haptic("light"); box.lastElementChild.querySelector("[data-pk-p]").focus();
+    add.hidden = box.children.length >= MAX;
+  };
+  box.onclick = e => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    const row = btn.closest(".pk-row"), input = row.querySelector("[data-pk-n]");
+    if (btn.hasAttribute("data-pk-del")) {
+      haptic("light"); row.classList.add("out");
+      setTimeout(() => { row.remove(); add.hidden = box.children.length >= MAX; }, 260);
+      return;
+    }
+    const step = btn.hasAttribute("data-pk-inc") ? 1 : btn.hasAttribute("data-pk-dec") ? -1 : 0; if (!step) return;
+    input.value = Math.min(36, Math.max(1, (+digits(input.value) || 0) + step)); haptic("select");
+    input.classList.remove("bump"); void input.offsetWidth; input.classList.add("bump");
+  };
+  box.oninput = e => { if (e.target.matches("[data-pk-n]")) e.target.value = digits(e.target.value).slice(0, 2); };
+  const send = async (btn, payload, done) => {
+    btn.disabled = true;
+    try {
+      const r = await api("/api/admin/sales", payload);
+      if (S.boot) S.boot.sales = r.sales_on;  // pastki panel (💎 Obuna) va «test yaratish» darhol shunga mos
+      haptic("success"); toast(done); rerender();
+    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; }
+  };
+  const save = document.getElementById("pk-save");
+  save.onclick = () => {
+    const tariffs = [...box.querySelectorAll(".pk-row")].map(row => ({ months: +digits(row.querySelector("[data-pk-n]").value) || 0,
+      price: +digits(row.querySelector("[data-pk-p]").value) || 0 })).filter(t => t.price);
+    if (!tariffs.length && s.sales_on) { toast("Sotuv yoqilgan — kamida bitta tarif qolsin"); haptic("error"); return; }
+    send(save, { tariffs }, "✅ Tariflar saqlandi");
+  };
+  const cardBtn = document.getElementById("sl-card-save"), cardEl = document.getElementById("sl-card");
+  cardEl.oninput = () => { const d = digits(cardEl.value).slice(0, 16); cardEl.value = d.replace(/(\d{4})(?=\d)/g, "$1 "); };
+  cardBtn.onclick = () => send(cardBtn, { card: cardEl.value, holder: document.getElementById("sl-holder").value.trim() }, "✅ Karta saqlandi");
+  const toggle = document.getElementById("sl-toggle");
+  if (toggle) toggle.onclick = async () => {
+    if (s.sales_on && !(await confirmBox("Obuna sotuvi to'xtatilsinmi?\n\nYangi obuna sotib olinmaydi. Pul to'laganlar obunasi muddati tugaguncha ishlayveradi."))) return;
+    send(toggle, { sales_on: !s.sales_on }, s.sales_on ? "⛔️ Sotuv to'xtatildi" : "✅ Obuna sotuvi yoqildi");
+  };
 };
 
 function packsCardHTML(r) {
@@ -2724,11 +2882,11 @@ VIEWS.plan = async () => {
       <b>⏳ Kutilayotgan to'lov</b><span class="muted small">${esc(planName(open.period))} · ${sum(open.amount)} so'm —
       ${open.status === "sent" ? "chek yuborilgan, admin tekshirmoqda" : "chekni botga yuboring"}</span></div>` : ""}
     ${used}
-    <div class="section-title" id="periods-title"><h2>Muddatni tanlang</h2></div>
+    <div class="section-title" id="periods-title"><h2>Tarifni tanlang</h2></div>
     <div class="list" id="periods">${rows || `<div class="card empty">Narxlar hali kiritilmagan — admin bilan bog'laning.</div>`}</div>
     <div id="pay-box"></div>
-    <div class="card"><span class="muted small">1) Muddatni tanlaysiz → 2) kartaga o'tkazasiz → 3) chek rasmini botga yuborasiz.
-      Admin tasdiqlagach obuna darhol yoqiladi va bot xabar beradi.</span></div>
+    <div class="card"><span class="muted small">1) Tarifni tanlaysiz → 2) kartaga o'tkazasiz → 3) chek rasmini (skrinshot) botga yuborasiz.
+      AI chekni tekshiradi: summa, bugungi sana va qabul qiluvchi mos bo'lsa obuna darhol yoqiladi. Aks holda admin ko'rib chiqadi.</span></div>
     <div class="row between card" style="padding:12px 14px;display:flex"><span>Sizning ID: <b>${esc(String(me))}</b></span>
       <button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
     ${contact}
@@ -2768,7 +2926,7 @@ function payBox(root, r) {
     ${r.card.holder ? `<div class="row between"><span class="muted small">Egasi</span><span>${esc(r.card.holder)}</span></div>` : ""}
     <button type="button" class="btn ghost sm" id="copy-card">📋 Karta raqamini nusxalash</button>
     <button type="button" class="btn block" id="to-bot">📤 Chekni botga yuborish</button>
-    <span class="muted small">Botda chek rasmini yuboring — admin tasdiqlagach ${r.payment.period === "pack" ? "esselar qo'shiladi" : "obunangiz yoqiladi"} va bot xabar beradi.</span></div>`;
+    <span class="muted small">Botga chek rasmini (skrinshot) yuboring — AI tekshiradi, mos bo'lsa ${r.payment.period === "pack" ? "esselar darhol qo'shiladi" : "obunangiz darhol yoqiladi"}. Aks holda admin ko'rib chiqadi va bot xabar beradi.</span></div>`;
   box.querySelector("#copy-card").onclick = () => navigator.clipboard
     ? navigator.clipboard.writeText(r.card.number).then(() => toast("📋 Karta raqami nusxalandi"), () => toast(r.card.number))
     : toast(r.card.number);
@@ -4373,19 +4531,24 @@ function bulkEssays(d) {
 VIEWS.appLogin = async () => {
   showBack(false);
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><h1>Titul skaneri</h1>
-      <span class="muted">O'qituvchilar uchun: ochiq testlaringiz titullarini kamerada tekshiring — natijalar botga tushadi.</span></div>
-    <div class="card"><b>Kirish</b>
-      <span class="muted small">Tugmani bosing — Telegram'da bot ochiladi. U yerda «Start»ni, so'ng «✅ Ha, men kiryapman»ni bosing va ilovaga qayting.</span>
-      <button class="btn block" id="tg-login" style="padding:16px">✈️ Telegram orqali kirish</button>
-      <span class="muted small" id="login-status"></span></div>
+    ${introHero("Titul skaneri")}
+    <div class="login-head"><h1>Xush kelibsiz</h1>
+      <span class="muted small">O'qituvchilar uchun: ochiq testlaringiz titullarini kamerada tekshiring — natijalar botga tushadi.</span></div>
+    <ol class="login-steps">
+      <li><b>Tugmani bosing</b><span>Telegram'da bot ochiladi</span></li>
+      <li><b>«Start» → «✅ Ha, men kiryapman»</b><span>botda shu ikkisini bosing</span></li>
+      <li><b>Ilovaga qayting</b><span>kirish o'zi tugaydi</span></li>
+    </ol>
+    <button class="btn block" id="tg-login" style="padding:17px">✈️ Telegram orqali kirish</button>
+    <span class="login-status" id="login-status" hidden></span>
   </div>`;
   const status = document.getElementById("login-status");
   document.getElementById("tg-login").onclick = async () => {
     let r;
     try { r = await api("/api/app/login", {}); } catch (e) { return toast(e.message); }
     S.loginToken = r.token;
-    status.textContent = "⏳ Botda «Start» → «✅ Ha, men kiryapman»ni bosing, so'ng shu yerga qayting…";
+    status.hidden = false;
+    status.innerHTML = `<i class="mini-orb" aria-hidden="true"></i>Botda «Start» → «✅ Ha, men kiryapman»ni bosing, so'ng shu yerga qayting…`;
     location.href = r.url;  // ilova t.me havolasini Telegram'da ochadi
     pollLogin(r.token);
   };
@@ -4480,6 +4643,19 @@ VIEWS.appHome = async () => {
 
 // ---------- Harakat qatlami: to'lqinli tugmalar, konfetti, so'z o'lchagich, sanovchi raqamlar ----------
 (function motion() {
+  // Ochilish ekrani: birinchi haqiqiy sahifa (yuklanish kartalari emas) chizilgach yo'qoladi
+  const intro = document.getElementById("intro");
+  if (intro) {
+    if (APP && !(tg && tg.initData)) intro.remove();  // Flutter ilovada o'zining ochilish ekrani bor
+    else {
+      const t0 = performance.now();
+      const hide = () => { if (!intro.isConnected || intro.classList.contains("out")) return; intro.classList.add("out"); setTimeout(() => intro.remove(), 500); };
+      const ready = () => $app.querySelector(".view") && !$app.querySelector(".view > .skeleton");
+      const check = () => ready() ? setTimeout(hide, Math.max(0, (reduceMotion ? 0 : 900) - (performance.now() - t0))) : setTimeout(check, 60);
+      check(); setTimeout(hide, 4000);
+    }
+  }
+
   // Bosilgan joydan to'lqin tarqaladi
   document.addEventListener("pointerdown", e => {
     if (reduceMotion) return;

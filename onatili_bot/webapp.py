@@ -34,7 +34,7 @@ import plans
 import results
 import sheet
 import sheet_styles
-from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN, SALES_ENABLED
+from config import ADMIN_CONTACT, ADMIN_IDS, BOT_TOKEN, SALES_ENABLED  # noqa: F401 (env bayrog'i — plans.sales_on ichida)
 from scoring import essay_on_paper, essay_pending, rasch_breakdown, rasch_results, total_points
 from structure import (
     ESSAY_MAX,
@@ -171,6 +171,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         run(plans.status, uid), run(db.get_credits, uid), run(plans.can_use_ai, uid, "essays"), run(db.teachers_of, uid),
         run(db.wallets_of_student, uid), run(teacher_card, uid), run(db.join_requests_for, uid), run(plans.offers),
         run(plans.card), run(db.open_payment, uid))
+    sales, credit_mode = await asyncio.gather(run(plans.sales_on), run(plans.credit_mode, uid))
     teacher_tests = []
     for test in tests:
         totals = all_totals.get(test["id"], [])
@@ -194,8 +195,11 @@ async def bootstrap(request: web.Request) -> web.Response:
         "classes": len(classes),
         "registered": bool(registration),
         "plan": plan,
-        "sales": SALES_ENABLED,  # obuna sotish yoqilganmi (hozircha yo'q)
-        "can_create": SALES_ENABLED or plans.is_free(uid),  # test yarata oladimi
+        "sales": sales,  # obuna sotilyaptimi (Render PLANS_ENABLED yoki ilovadagi «💎 Obuna tariflari»)
+        # test yarata oladimi: sotuv yoqiq (obunasizga — sotib olish taklif qilinadi), bepul yoki to'langan obuna bor
+        "can_create": sales or plans.is_free(uid) or bool(plan.get("active")),
+        "credit_mode": credit_mode,  # AI esse kreditdan (obuna emas): «🤖 AI» bo'limi ko'rinadi
+        "can_manage": plans.can_manage(uid),  # tariflar va to'lov kartasini kiritadi (admin, FREE_IDS)
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
         "ai_credits": None if unlimited else credits,
         # o'quvchilar essesini hozir AI tekshira oladimi (kredit yoki obunaning oylik limiti) — «tugagan» ogohlantirishi uchun
@@ -845,6 +849,68 @@ async def packs_save(request: web.Request) -> web.Response:
     return ok({"ok": True, "packs": packs})
 
 
+# ---------- 💎 Obuna tariflari (admin va FREE_IDS): tariflar, to'lov kartasi, sotuvni yoqish ----------
+
+async def sales_admin_view() -> dict:
+    card, tariffs, on = await asyncio.gather(run(plans.card), run(plans.tariffs), run(plans.sales_on))
+    pending = await run(db.list_payments, "sent", 20)
+    return {"tariffs": tariffs, "card": card["number"], "holder": card["holder"], "sales_on": on,
+            "forced": bool(SALES_ENABLED),  # Render'da PLANS_ENABLED=1 — ilovadan o'chirib bo'lmaydi
+            "pending": len(pending)}
+
+
+async def sales_admin(request: web.Request) -> web.Response:
+    user = await auth(request)
+    if not plans.can_manage(user["id"]):
+        raise ApiError(403, "Bu bo'lim faqat admin uchun")
+    return ok(await sales_admin_view())
+
+
+async def sales_admin_save(request: web.Request) -> web.Response:
+    """Tariflar ([oy, narx] qatorlari), to'lov kartasi (16 raqam + egasi — AI chekda shu ismni tekshiradi)
+    va «obuna sotilsin» tugmasi. Yoqish uchun kamida bitta tarif va karta kerak."""
+    user = await auth(request)
+    if not plans.can_manage(user["id"]):
+        raise ApiError(403, "Bu bo'lim faqat admin uchun")
+    payload = await body(request)
+    if "tariffs" in payload:
+        raw = payload.get("tariffs")
+        if not isinstance(raw, list):
+            raise ApiError(400, "Tariflar noto'g'ri")
+        rows = {}
+        for item in raw:
+            if not isinstance(item, dict) or str(item.get("price") or "").strip() in ("", "0"):
+                continue  # narxi yozilmagan qator — saqlanmaydi
+            months, price = to_int(item.get("months"), 0, "Oy soni"), to_int(item.get("price"), 0, "Narx")
+            if not 1 <= months <= plans.TARIFF_MONTHS_MAX:
+                raise ApiError(400, f"Oy soni 1 dan {plans.TARIFF_MONTHS_MAX} gacha bo'lsin")
+            if price < 1000:
+                raise ApiError(400, f"{months} oylik narx juda kichik — so'mda yozing (masalan 200000)")
+            if months in rows:
+                raise ApiError(400, f"{months} oylik tarif ikki marta yozilgan")
+            rows[months] = price
+        await run(plans.set_tariffs, sorted(rows.items()))
+    if "card" in payload:
+        number = _digits(payload.get("card"))
+        if len(number) != 16:
+            raise ApiError(400, "Karta raqami 16 ta raqam bo'lsin")
+        holder = clean_text(payload.get("holder"), 60)
+        if len(holder) < 3:
+            raise ApiError(400, "Karta egasining ism-familiyasini yozing — AI chekda shuni tekshiradi")
+        await run(db.set_setting, "card_number", " ".join(number[i:i + 4] for i in range(0, 16, 4)))
+        await run(db.set_setting, "card_holder", holder)
+    if "sales_on" in payload:
+        turn_on = bool(payload.get("sales_on"))
+        if turn_on:
+            card = await run(plans.card)
+            if not await run(plans.tariffs):
+                raise ApiError(400, "Avval kamida bitta tarif narxini yozing")
+            if not card["number"] or not card["holder"]:
+                raise ApiError(400, "Avval to'lov kartasi va egasining ismini kiriting")
+        await run(db.set_setting, "sales_on", "1" if turn_on else "0")
+    return ok(await sales_admin_view())
+
+
 async def settings_view(user: dict) -> dict:
     """Ustozning «⚙️ Sozlamalar»i: karta, ommaviy esse tekshiruvi (havolasi bilan) va kredit narxlari."""
     username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
@@ -1177,10 +1243,11 @@ async def plan_order(request: web.Request) -> web.Response:
     period = str(payload.get("period") or "")
     count = max(1, min(20, to_int(payload.get("count"), 1, "Paketlar soni")))
     essays = None
-    if not SALES_ENABLED:
-        # Obuna yopiq: ruxsat berilgan o'qituvchi AI esse kreditini o'zi sotib oladi (karta → chek → admin)
+    if await run(plans.credit_mode, user["id"]):
+        # Obuna yopiq (yoki /ruxsat bilan bepul o'qituvchi): AI esse kreditini o'zi sotib oladi (karta → chek)
         if period != plans.PACK:
-            raise ApiError(403, "Obuna hozircha yopiq")
+            raise ApiError(403, "Sizga test yaratish bepul — obuna kerak emas" if await run(plans.sales_on)
+                           else "Obuna hozircha yopiq")
         if not await run(plans.is_free, user["id"]):
             raise ApiError(403, "Kredit test yaratishga ruxsati bor o'qituvchilar uchun")
         if plans.ai_unlimited(user["id"]):
@@ -1191,8 +1258,8 @@ async def plan_order(request: web.Request) -> web.Response:
         amount, essays = offer["price"] * count, offer["essays"] * count
     elif await run(plans.is_free, user["id"]):
         raise ApiError(400, "Sizda hamma narsa bepul — obuna kerak emas")
-    elif period != plans.PACK and period not in plans.PERIODS:
-        raise ApiError(400, "Muddat noto'g'ri")
+    elif period != plans.PACK and period not in {o["key"] for o in await run(plans.offers)}:
+        raise ApiError(400, "Bunday tarif yo'q — ilovani yangilab, qaytadan tanlang")
     elif period == plans.PACK:
         if not (await run(plans.status, user["id"]))["active"]:
             raise ApiError(400, "Esse paketi faol obunaga qo'shiladi — avval obunani yangilang")
@@ -1256,7 +1323,7 @@ CREDIT_WARN = 5  # shuncha kredit qolganda o'qituvchiga ogohlantirish
 async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatish (oylik limit bo'yicha). Limit/obuna tugagan bo'lsa — o'qituvchiga oyiga bir marta xabar."""
     if await run(plans.use_ai, owner_id, kind, amount):
-        if kind == "essays" and not SALES_ENABLED and not plans.ai_unlimited(owner_id) and "send_text" in HOOKS:
+        if kind == "essays" and await run(plans.credit_mode, owner_id) and not plans.ai_unlimited(owner_id) and "send_text" in HOOKS:
             left = await run(db.get_credits, owner_id)
             if left == CREDIT_WARN:  # kredit oz qoldi — bir marta ogohlantirish
                 try:
@@ -1265,7 +1332,7 @@ async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
                 except Exception:
                     logger.warning("Kredit ogohlantirishi yuborilmadi", exc_info=True)
         return True
-    if kind == "essays" and not SALES_ENABLED:
+    if kind == "essays" and await run(plans.credit_mode, owner_id):
         # Obuna yopiq — kredit tugadi: o'qituvchiga bir marta (kredit to'ldirilgach yana) xabar
         await run(db.consume_usage, owner_id, plans.month_key(), kind, 0, None)  # oy qatori bo'lsin (xabar belgisi)
         if await run(db.take_limit_notice, owner_id, plans.month_key()) and "send_text" in HOOKS:
@@ -1597,7 +1664,7 @@ async def link_by_teacher(teacher: dict, student_id: int) -> bool:
 
 async def link_view(request: web.Request) -> web.Response:
     user = await auth(request)
-    if not await run(plans.is_free, user["id"]) and not SALES_ENABLED:
+    if not await run(plans.is_free, user["id"]) and not await run(plans.sales_on):
         raise ApiError(403, "Bu bo'lim test yaratishga ruxsati bor o'qituvchilar uchun")
     username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
     students = await run(db.linked_students, user["id"], plans.month_key())
@@ -1622,7 +1689,7 @@ async def link_view(request: web.Request) -> web.Response:
 
 async def link_add(request: web.Request) -> web.Response:
     user = await auth(request)
-    if not await run(plans.is_free, user["id"]) and not SALES_ENABLED:
+    if not await run(plans.is_free, user["id"]) and not await run(plans.sales_on):
         raise ApiError(403, "Ruxsat yo'q")
     ref = str((await body(request)).get("ref") or "").strip()
     if not ref:
@@ -3421,6 +3488,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/wallet-order", wallet_order_for_test)
     app.router.add_post("/api/teacher/packs", packs_save)
+    app.router.add_get("/api/admin/sales", sales_admin)
+    app.router.add_post("/api/admin/sales", sales_admin_save)
     app.router.add_get("/api/teacher/settings", teacher_settings)
     app.router.add_post("/api/teacher/settings", teacher_settings_save)
     app.router.add_get("/api/teacher/wallet-payments", wallet_payments_list)

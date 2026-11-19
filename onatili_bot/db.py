@@ -409,6 +409,9 @@ MIGRATIONS = [
     ("registrations", "region", "TEXT"),  # manzil endi ro'yxatdan tanlanadi (places.py)
     ("registrations", "district", "TEXT"),
     ("payments", "essays", "INTEGER"),  # esse paketi (period = 'pack'): nechta esse — buyurtma paytidagi hajm
+    ("payments", "receipt_hash", "TEXT"),  # chek rasmi izi — bitta chek ikki to'lovga ishlatilmasin
+    ("payments", "txn", "TEXT"),  # chekdagi tranzaksiya raqami (AI o'qigan)
+    ("payments", "note", "TEXT"),  # AI xulosasi: nima uchun avtomatik tasdiqlanmadi
     ("attempts", "notified", "INTEGER NOT NULL DEFAULT 0"),  # e'londa natija xabari yuborilgan (qayta e'londa takrorlanmaydi)
     ("tests", "sheets_sent", "INTEGER NOT NULL DEFAULT 0"),  # titul PDF'i botga yuborilgan (1-qadam bajarilgan)
     ("tests", "announcing", "INTEGER NOT NULL DEFAULT 0"),
@@ -1190,10 +1193,12 @@ def save_essay_receipt(payment_id: int, receipt: str, mime: str, receipt_hash: s
 def receipt_used(receipt_hash: str, txn: str | None, payment_id: int, table: str = "essay_payments") -> bool:
     """Shu chek (rasm yoki tranzaksiya raqami) boshqa to'lovda ishlatilganmi — mock esse to'lovlari va kredit
     paketlari birga tekshiriladi (bitta chek ikkalasiga ishlatilmasin). table — shu to'lov qaysi jadvalda."""
+    # Obuna to'lovlari (payments) ham: u yerda «sent» — admin ko'rib chiqmoqda
+    tables = {"essay_payments": "'paid', 'review'", "wallet_payments": "'paid', 'review'", "payments": "'paid', 'sent'"}
     with connect() as conn:
-        for name in ("essay_payments", "wallet_payments"):
+        for name, statuses in tables.items():
             if conn.execute(
-                f"SELECT 1 FROM {name} WHERE id <> ? AND status IN ('paid', 'review') AND "
+                f"SELECT 1 FROM {name} WHERE id <> ? AND status IN ({statuses}) AND "
                 "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
                 (payment_id if name == table else -1, receipt_hash, txn or "", txn or "")).fetchone():
                 return True
@@ -1952,10 +1957,11 @@ def open_payment(tg_id: int) -> dict | None:
             (tg_id,)).fetchone())
 
 
-def attach_receipt(payment_id: int, file_id: str) -> None:
+def attach_receipt(payment_id: int, file_id: str, receipt_hash: str | None = None, txn: str | None = None,
+                   note: str | None = None) -> None:
     with connect() as conn:
-        conn.execute("UPDATE payments SET receipt = ?, status = 'sent' WHERE id = ? AND status IN ('pending', 'sent')",
-                     (file_id, payment_id))
+        conn.execute("UPDATE payments SET receipt = ?, receipt_hash = ?, txn = ?, note = ?, status = 'sent' "
+                     "WHERE id = ? AND status IN ('pending', 'sent')", (file_id, receipt_hash, txn, note, payment_id))
 
 
 def decide_payment(payment_id: int, status: str, admin_id: int) -> bool:
