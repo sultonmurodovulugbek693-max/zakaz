@@ -1575,6 +1575,65 @@ function bindChannelEditor(list, save) {
   });
 }
 
+// Kalitni tuzatish: saqlangach hamma natija yangi kalit bilan qayta tekshiriladi (Rasch ham)
+VIEWS.keys = async ({ id }) => {
+  loading();
+  const d = await api(`/api/teacher/test/${id}/keys`);
+  const variants = Object.keys(d.keys);
+  const keys = JSON.parse(JSON.stringify(d.keys));
+  let cur = variants[0];
+  const texts = d.items.filter(i => i.kind === "text");
+  const draw = () => {
+    const key = keys[cur];
+    $app.innerHTML = `<div class="view">
+      <div class="hero"><span class="brand"><i>O</i>Kalit</span><h1>Kalitni tuzatish</h1>
+        <span class="muted small">${esc(d.test.title)} · kod ${d.test.code}</span></div>
+      <div class="flash" role="status"><span>Saqlasangiz, <b>${d.attempts} ta natija</b> yangi kalit bilan qayta tekshiriladi — ball, xatolar va Rasch darajasi o'zgaradi. Botga xabar keladi.</span></div>
+      ${variants.length > 1 ? `<div class="chips">${variants.map(v => `<button type="button" class="chip ${v === cur ? "on" : ""}" data-var="${v}">${v} variant</button>`).join("")}</div>` : ""}
+      <div class="section-title"><h2>Test kaliti</h2></div>
+      ${bubbleSheet(d.items, key)}
+      ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">ma'nodosh — ixtiyoriy</span></div>
+        <div class="card">${texts.map(i => {
+          const parts = (key[i.label] || "").split("|").map(x => x.trim());
+          const synonyms = parts.slice(1).filter(Boolean);
+          return `<div class="wkey" data-q="${i.label}">
+            <div class="textq"><b>${i.label}</b><input class="input wk-main" value="${esc(parts[0] || "")}" placeholder="To'g'ri javob" autocomplete="off"></div>
+            <div class="syn-list">${synonyms.map(synRow).join("")}</div>
+            <button type="button" class="syn-add" ${synonyms.length >= 2 ? "hidden" : ""}>＋ Ma'nodosh qo'shish</button></div>`;
+        }).join("")}</div>` : ""}
+      <div class="sticky-bottom"><div><button class="btn block" id="keys-save">Saqlash va qayta tekshirish</button></div></div>
+    </div>`;
+    const collect = () => document.querySelectorAll(".wkey").forEach(box => {
+      const parts = [box.querySelector(".wk-main"), ...box.querySelectorAll(".wk-syn")].map(x => x.value.replace(/\|/g, " ").trim()).filter(Boolean);
+      if (parts.length) key[box.dataset.q] = parts.join(" | "); else delete key[box.dataset.q];
+    });
+    bindBubbles(key);
+    document.querySelectorAll(".wkey").forEach(box => {
+      const list = box.querySelector(".syn-list"), add = box.querySelector(".syn-add");
+      const refresh = () => { add.hidden = list.children.length >= 2; };
+      add.onclick = () => { list.insertAdjacentHTML("beforeend", synRow("")); list.lastElementChild.querySelector("input").focus(); haptic("select"); refresh(); };
+      list.addEventListener("click", e => { const del = e.target.closest(".syn-del"); if (!del) return; del.closest(".syn-row").remove(); haptic("select"); refresh(); });
+    });
+    document.querySelectorAll("[data-var]").forEach(x => x.onclick = () => { collect(); cur = x.dataset.var; haptic("select"); draw(); });
+    document.getElementById("keys-save").onclick = async () => {
+      collect();
+      for (const v of variants) {
+        const miss = d.items.filter(i => !keys[v][i.label]);
+        if (miss.length) { toast(`${v} variant: ${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} — kaliti yo'q`); haptic("error"); return; }
+      }
+      if (!(await confirmBox(`Kalitni saqlab, ${d.attempts} ta natijani qayta tekshiraymi?`))) return;
+      const btn = document.getElementById("keys-save"); btn.disabled = true; btn.textContent = "Tekshirilmoqda…";
+      try {
+        const r = await api(`/api/teacher/test/${id}/keys`, { keys });
+        haptic("success");
+        toast(r.edited.length ? `✅ Kalit tuzatildi (${r.edited.length} ta savol). ${r.total} ta natija qayta tekshirildi, ${r.changed} tasining bali o'zgardi` : "Kalit o'zgarmagan");
+        S.boot = null; go("teacher", { id }, true);
+      } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Saqlash va qayta tekshirish"; }
+    };
+  };
+  draw();
+};
+
 function synRow(value) {
   return `<div class="syn-row"><input class="input wk-syn" value="${esc(value)}" placeholder="Ma'nodoshi" autocomplete="off"><button type="button" class="syn-del" aria-label="Ma'nodoshni o'chirish">✕</button></div>`;
 }
@@ -1654,6 +1713,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const files = `<div class="card"><h2>Fayllar</h2><div class="files">
       <button class="btn ghost sm" id="sheets2">📄 Titul</button>
       <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
+      <button class="btn ghost sm" id="edit-keys">✏️ Kalitni tuzatish</button>
       ${n ? `<button class="btn ghost sm" data-send="rating">🏆 Reyting rasmi</button><button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
       ${n && milliy ? `<button class="btn ghost sm" id="certs-all">🎓 Sertifikatlar</button>` : ""}</div>
       <span class="muted small">Fayllar Telegram chatga yuboriladi. Kelmasa — to'g'ridan-to'g'ri yuklab oling:</span>
@@ -1716,6 +1776,8 @@ VIEWS.teacher = async ({ id, tab }) => {
     try { const res = await api(`/api/teacher/test/${t.id}/announce`, {}); haptic("success"); toast(res.queued ? `📢 ${res.queued} ta o'quvchiga natija yuborilmoqda — tugagach bot xabar beradi` : "📢 Natijalar e'lon qilindi"); S.boot = null; rerender(); }
     catch (e) { toast(e.message); an.disabled = false; an.textContent = "📢 Natijalarni e'lon qilish"; }
   };
+  const ek = document.getElementById("edit-keys");
+  if (ek) ek.onclick = () => go("keys", { id: t.id });
   const ro = document.getElementById("reopen");
   if (ro) ro.onclick = async () => { if (!(await confirmBox("Testni qayta ochasizmi? Yangi javoblar qabul qilinadi."))) return; await api(`/api/teacher/test/${t.id}/reopen`, {}); S.boot = null; rerender(); };
   if (offline && tab === "students") bindRoster(d, id);

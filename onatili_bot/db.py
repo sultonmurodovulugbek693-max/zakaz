@@ -641,6 +641,14 @@ def delete_test(test_id: int) -> None:
         conn.execute("DELETE FROM tests WHERE id = ?", (test_id,))
 
 
+def set_keys(test_id: int, keys: dict[str, dict[str, str]]) -> None:
+    """O'qituvchi kalitni tuzatdi — variantlar kalitlari almashtiriladi."""
+    with connect() as conn:
+        for name, answers in keys.items():
+            conn.execute("UPDATE variants SET answers = ? WHERE test_id = ? AND name = ?",
+                         (json.dumps(answers, ensure_ascii=False), test_id, name))
+
+
 def get_keys(test_id: int) -> dict[str, dict[str, str]]:
     """Variantlar kalitlari: {"A": {"1": "B", ...}, "B": {...}}."""
     with connect() as conn:

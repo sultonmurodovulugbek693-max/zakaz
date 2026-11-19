@@ -807,6 +807,59 @@ def validate_key(items: list[dict], raw: dict) -> dict:
     return key
 
 
+async def keys_get(request: web.Request) -> web.Response:
+    """Kalitni tahrirlash sahifasi: savollar va hozirgi kalit (variantlar bo'yicha)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    keys = await run(db.get_keys, test["id"])
+    attempts = await run(db.list_attempts, test["id"])
+    items = [{"label": i["label"], "kind": i["kind"], "options": i.get("options", 4)} for i in test["items"]]
+    return ok({"test": {"id": test["id"], "title": test["title"], "code": test["code"]}, "items": items,
+               "keys": keys, "attempts": len(attempts)})
+
+
+def regrade_attempts(test: dict, keys: dict) -> tuple[int, int]:
+    """Hamma natija yangi kalit bilan qayta tekshiriladi. (jami, bali o'zgargan) qaytaradi.
+    Rasch bali saqlanmaydi — har safar to'g'ri/xato javoblardan qayta hisoblanadi, demak o'zi yangilanadi."""
+    attempts = db.list_attempts(test["id"])
+    changed = 0
+    for attempt in attempts:
+        key = keys.get(attempt["variant"]) or next(iter(keys.values()))
+        fresh = grade(test["items"], key, attempt["answers"])
+        if fresh["wrong"] != attempt["wrong"] or fresh["points"] != (attempt.get("points") or 0):
+            changed += 1
+        db.update_attempt_result(attempt["id"], attempt["answers"], fresh)
+    return len(attempts), changed
+
+
+async def keys_save(request: web.Request) -> web.Response:
+    """Kalit tuzatildi: saqlanadi, hamma natija qayta tekshiriladi, test egasiga botda xabar boradi."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    raw = (await body(request)).get("keys")
+    old = await run(db.get_keys, test["id"])
+    if not isinstance(raw, dict):
+        raise ApiError(400, "Kalit yuborilmadi")
+    keys = {}
+    for name in old:
+        if not isinstance(raw.get(name), dict):
+            raise ApiError(400, f"{name} variant kaliti yuborilmadi")
+        keys[name] = validate_key(test["items"], raw[name])
+    edited = [item["label"] for item in test["items"] if any(keys[v][item["label"]] != old[v].get(item["label"]) for v in keys)]
+    if not edited:
+        return ok({"ok": True, "edited": [], "total": 0, "changed": 0})
+    await run(db.set_keys, test["id"], keys)
+    total, changed = await run(regrade_attempts, test, keys)
+    if "send_text" in HOOKS:
+        shown = ", ".join(edited[:10]) + ("…" if len(edited) > 10 else "")
+        text = (f"🔑 <b>{html.escape(test['title'])}</b> (kod {test['code']}): kalit tuzatildi — {shown}-savol.\n"
+                f"♻️ {total} ta natija qayta tekshirildi" + (f", {changed} tasining bali o'zgardi." if total else "."))
+        if total and any(item["kind"] == "text" and item["label"] in edited for item in test["items"]):
+            text += "\n✍️ Yozma javob kaliti o'zgardi — «✍️ Yozmalarni tekshirish»da belgilaganlaringizni ko'zdan kechiring."
+        in_background(HOOKS["send_text"](user["id"], text), "Kalit o'zgargani haqida xabar")
+    return ok({"ok": True, "edited": edited, "total": total, "changed": changed})
+
+
 async def require_plan(user: dict) -> None:
     """Yangi test faqat faol obuna (yoki bepul sinov) bilan. Birinchi marta — sinov o'zi boshlanadi."""
     status = await run(plans.ensure_active, user["id"])
@@ -2935,6 +2988,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/announce", announce)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/reopen", reopen)
+    app.router.add_get("/api/teacher/test/{test_id:\\d+}/keys", keys_get)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/keys", keys_save)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/delete", delete_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/copy", copy_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/channels", set_channels)

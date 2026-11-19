@@ -105,6 +105,10 @@ class ServerBase(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(path, json=payload)
         return response.status, await response.json()
 
+    async def get(self, path):
+        response = await self.client.get(path)
+        return response.status, await response.json()
+
     async def create(self, mode="online", fmt="oddiy", channels=()):
         items = structure.build_items(fmt, 5 if fmt == "oddiy" else 45)
         key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
@@ -226,6 +230,43 @@ class RatingImages(ServerBase):
     async def test_rating_without_results(self):
         _, r = await self.create("online", fmt="milliy")
         self.assertEqual(rating.rating_images(db.get_test(r["id"]), []), [])
+
+
+class KeyFix(ServerBase):
+    """Kalit tuzatilsa — hamma natija qayta tekshiriladi, test egasiga xabar boradi."""
+
+    async def test_key_change_regrades_attempts(self):
+        _, r = await self.create("online")
+        test = db.get_test(r["id"])
+        key = db.get_keys(test["id"])["A"]  # hammasi "A"
+        answers = {str(i): "A" for i in range(1, 6)}
+        answers["3"] = "B"
+        res = structure.grade(test["items"], key, answers)
+        attempt = db.save_attempt(test["id"], 777, "Ali", "A", answers, res)
+        self.assertEqual(attempt["test_correct"], 4)
+        sent = []
+        webapp.HOOKS["send_text"] = lambda chat_id, text: asyncio.sleep(0, result=sent.append((chat_id, text)))
+
+        status, page = await self.get(f"/api/teacher/test/{test['id']}/keys")
+        self.assertEqual(status, 200)
+        self.assertEqual(page["attempts"], 1)
+        new = {**key, "3": "B"}  # 3-savol kaliti noto'g'ri edi
+        status, out = await self.post(f"/api/teacher/test/{test['id']}/keys", {"keys": {"A": new}})
+        self.assertEqual(status, 200)
+        self.assertEqual(out["edited"], ["3"])
+        self.assertEqual((out["total"], out["changed"]), (1, 1))
+        fresh = db.get_attempt(attempt["id"])
+        self.assertEqual(fresh["test_correct"], 5)
+        self.assertEqual(fresh["wrong"], [])
+        self.assertEqual(db.get_keys(test["id"])["A"]["3"], "B")
+        await asyncio.sleep(0.05)
+        self.assertEqual(sent[0][0], OWNER)  # xabar test egasiga
+        self.assertIn("1 ta natija qayta tekshirildi", sent[0][1])
+
+        status, out = await self.post(f"/api/teacher/test/{test['id']}/keys", {"keys": {"A": new}})
+        self.assertEqual(out["edited"], [])  # o'zgarmagan — qayta tekshirilmaydi
+        status, _ = await self.post(f"/api/teacher/test/{test['id']}/keys", {"keys": {"A": {**new, "2": "Z"}}})
+        self.assertEqual(status, 400)
 
 
 class ClassFromId(ServerBase):
