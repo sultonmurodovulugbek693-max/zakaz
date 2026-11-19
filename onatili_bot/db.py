@@ -1215,11 +1215,19 @@ def wallet_use(teacher_id: int, student_id: int) -> bool:
             "AND balance >= 1", (_now(), teacher_id, student_id)).rowcount)
 
 
+def remember_public(teacher_id: int, student_id: int) -> None:
+    """Begona o'quvchi ustozning ommaviy havolasini ochdi — ilovadagi «✍️ Esse tekshirish»da shu ustoz chiqadi."""
+    with connect() as conn:
+        conn.execute("INSERT INTO essay_wallets (teacher_id, student_id, balance, updated_at) VALUES (?, ?, 0, ?) "
+                     "ON CONFLICT(teacher_id, student_id) DO NOTHING", (teacher_id, student_id, _now()))
+
+
 def wallets_of_student(student_id: int) -> list[dict]:
+    """Begona o'quvchi tanigan ustozlar (ommaviy havola orqali) va har biridagi krediti."""
     with connect() as conn:
         rows = conn.execute(
             "SELECT w.teacher_id, w.balance, u.full_name FROM essay_wallets w LEFT JOIN users u ON u.tg_id = w.teacher_id "
-            "WHERE w.student_id = ? AND w.balance > 0 ORDER BY w.updated_at DESC", (student_id,)).fetchall()
+            "WHERE w.student_id = ? ORDER BY w.balance DESC, w.updated_at DESC", (student_id,)).fetchall()
     return [dict(row) for row in rows]
 
 

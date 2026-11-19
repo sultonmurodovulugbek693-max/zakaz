@@ -2214,14 +2214,14 @@ VIEWS.practice = async () => {
   const t = r.teachers;
   const history = r.history.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">📝</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
-      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : "⏳"}</span></button>`).join("");
+      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
-    ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Ustozga ulanmagansiz</b><span>Ustozingizdan taklif havolasini so'rang.</span></div>` : `
+    ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Ustozga ulanmagansiz</b><span>Ustozingizdan taklif havolasini (yoki esse tekshiruvi havolasini) so'rang.</span></div>` : `
     <div class="card">
       ${t.length > 1 ? `<div class="field"><label>Ustoz</label><div class="chips">${t.map((x, i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-teacher="${x.id}">${esc(x.name)}</button>`).join("")}</div></div>` : `<span class="small">Ustoz: <b>${esc(t[0].name)}</b></span>`}
-      <span class="muted small" id="left"></span>
+      <div id="left" style="display:grid;gap:8px"></div>
       <div class="field"><label for="ptopic">Mavzu (vaziyat) <span class="muted">— ixtiyoriy</span></label><textarea class="input" id="ptopic" rows="2" placeholder="Masalan: Kitob o'qish foydalimi yoki internet?">${esc(draft.topic || "")}</textarea></div>
       <textarea class="input" id="pessay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
       <div class="counter" id="pcount"></div>
@@ -2231,8 +2231,33 @@ VIEWS.practice = async () => {
   </div>`;
   document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
   if (!t.length) return;
-  let teacher = t[0];
-  const left = () => { document.getElementById("left").textContent = `Bu oy yana ${teacher.left} / ${teacher.limit} ta esse tekshirtira olasiz.`; };
+  let teacher = t[0], packEssays = 1;
+  // Ustozning o'quvchisi — oylik chegara; begona — bepullar, kredit va paketlar (bitta chek — bir nechta esse)
+  const left = () => {
+    const box = document.getElementById("left");
+    if (teacher.kind !== "public") { box.innerHTML = `<span class="muted small">Bu oy yana ${teacher.left} / ${teacher.limit} ta esse tekshirtira olasiz.</span>`; return; }
+    const packs = teacher.packs || [];
+    packEssays = packs.length ? packs[packs.length - 1].essays : 1;
+    box.innerHTML = `${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.</span>` : ""}
+      <div class="row" style="gap:8px;flex-wrap:wrap">${teacher.free_left ? `<span class="pill-tag done">🎁 Bepul: ${teacher.free_left} / ${teacher.free}</span>` : ""}
+        <span class="pill-tag ${teacher.balance ? "done" : "wait"}">💳 Kredit: ${teacher.balance} ta</span>
+        ${teacher.waiting ? `<span class="pill-tag wait">⏳ ${teacher.waiting} ta esse kredit kutmoqda</span>` : ""}</div>
+      ${teacher.free_left ? "" : `<span class="muted small">Har esse — 1 kredit. Kredit bo'lmasa ham yuboring: esse saqlanadi va kredit olishingiz bilan o'zi tekshiriladi.</span>`}
+      ${packs.length && teacher.open ? `<div class="chips" id="ppacks">${packs.map((x, i) => `<button type="button" class="chip ${i === packs.length - 1 ? "on" : ""}" data-ppack="${x.essays}">${x.essays} ta · ${sum(x.price)}${x.discount ? ` <b>−${x.discount}%</b>` : ""}</button>`).join("")}</div>
+        <button type="button" class="btn ${teacher.free_left ? "ghost" : ""} block" id="pbuy">💳 Kredit sotib olish</button>` : ""}`;
+    box.querySelectorAll("[data-ppack]").forEach(x => x.onclick = () => { packEssays = +x.dataset.ppack; haptic("select");
+      box.querySelectorAll("[data-ppack]").forEach(y => y.classList.toggle("on", y === x)); });
+    const buy = document.getElementById("pbuy");
+    if (buy) buy.onclick = async () => {
+      buy.disabled = true;
+      try {
+        const o = await api("/api/practice/wallet-order", { teacher_id: teacher.id, essays: packEssays }); haptic("success");
+        toast("Botga karta va summa yuborildi — chekni o'sha yerga yuboring");
+        if (o.bot) { try { tg.openTelegramLink(`https://t.me/${o.bot}`); } catch (e) { window.open(`https://t.me/${o.bot}`, "_blank"); } }
+      } catch (e) { toast(e.message); haptic("error"); }
+      buy.disabled = false;
+    };
+  };
   left();
   document.querySelectorAll("[data-teacher]").forEach(x => x.onclick = () => { teacher = t.find(y => String(y.id) === x.dataset.teacher); haptic("select");
     document.querySelectorAll("[data-teacher]").forEach(y => y.classList.toggle("on", y === x)); left(); });
@@ -2243,27 +2268,38 @@ VIEWS.practice = async () => {
   essay.oninput = () => { save(); count(); }; topic.oninput = save; count();
   btn.onclick = async () => {
     if (words() < 60) { toast("Esse juda qisqa — kamida 60 so'z"); haptic("error"); return essay.focus(); }
-    if (!teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
+    const pub = teacher.kind === "public";
+    if (!pub && !teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
+    if (pub && !teacher.open) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
     btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
       const res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim() });
       store(draftKey, "{}"); haptic("success"); essay.value = ""; topic.value = ""; count();
-      teacher.left = Math.max(0, teacher.left - 1); left();
       btn.textContent = "Yana bitta esse"; btn.disabled = false;
-      watchPractice(res.id);
+      if (!pub) { teacher.left = Math.max(0, teacher.left - 1); left(); return watchPractice(res.id); }
+      if (res.free) teacher.free_left = Math.max(0, teacher.free_left - 1);
+      if (res.balance != null) teacher.balance = res.balance;
+      if (res.status === "awaiting_credit") {
+        teacher.waiting = (teacher.waiting || 0) + 1; left();
+        document.getElementById("my-essay").innerHTML = `<div class="card essay-wait"><b>💳 Essengiz saqlandi</b><span class="muted small">${res.teacher_out
+          ? "Ustozning AI krediti hozir tugagan — kreditingiz yechilmadi. Keyingi esse yuborganingizda birinchi bo'lib shu esse tekshiriladi."
+          : "Kredit oling — to'lov tasdiqlanishi bilan esse o'zi tekshiriladi va natija botga keladi."}</span></div>`;
+        return;
+      }
+      left(); watchPractice(res.id, res.free ? "Bepul tekshiruvdan." : `1 kredit yechildi — qoldi ${teacher.balance} ta.`);
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Tekshirtirish"; }
   };
 };
 
-async function watchPractice(id) {
+async function watchPractice(id, note = "Ustozingiz kreditidan tekshirildi.") {
   const box = document.getElementById("my-essay"); if (!box) return;
   box.scrollIntoView({ behavior: "smooth", block: "start" });
   const seq = S.seq;
   for (let i = 0; i < 60 && seq === S.seq && document.body.contains(box); i++) {
     let e; try { e = await api(`/api/practice/${id}`); } catch (err) { e = null; }
     if (!document.body.contains(box)) return;
-    if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e).replace("Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.", "Ustozingiz kreditidan tekshirildi."); haptic("success"); return; }
-    if (e && e.status === "failed") { box.innerHTML = `<div class="card essay-wait"><b>❗️ AI tekshira olmadi</b><span class="muted small">Ustozingiz krediti qaytarildi — keyinroq qayta yuboring.</span></div>`; return; }
+    if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e).replace("Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.", note); haptic("success"); return; }
+    if (e && e.status === "failed") { box.innerHTML = `<div class="card essay-wait"><b>❗️ AI tekshira olmadi</b><span class="muted small">Kredit qaytarildi — keyinroq qayta yuboring.</span></div>`; return; }
     box.innerHTML = `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">Odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi — bot xabar beradi.</span></div>`;
     await new Promise(r => setTimeout(r, 4000));
   }
@@ -2271,7 +2307,7 @@ async function watchPractice(id) {
 
 async function showPractice(id) {
   let e; try { e = await api(`/api/practice/${id}`); } catch (err) { return toast(err.message); }
-  if (e.status !== "graded") return toast(e.status === "failed" ? "AI tekshira olmadi" : "⏳ Hali tekshirilmoqda");
+  if (e.status !== "graded") return toast(e.status === "failed" ? "AI tekshira olmadi" : e.status === "awaiting_credit" ? "💳 Kredit kutmoqda — kredit olsangiz o'zi tekshiriladi" : "⏳ Hali tekshirilmoqda");
   const modal = openModal("📝 Esse natijasi", myEssayHTML(e).replace("Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.", ""));
   return modal;
 }

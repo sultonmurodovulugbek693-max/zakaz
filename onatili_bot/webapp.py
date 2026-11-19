@@ -194,7 +194,9 @@ async def bootstrap(request: web.Request) -> web.Response:
         # o'quvchilar essesini hozir AI tekshira oladimi (kredit yoki obunaning oylik limiti) — «tugagan» ogohlantirishi uchun
         "essay_ai_ok": await run(plans.can_use_ai, user["id"], "essays"),
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
-        "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
+        # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
+        "practice": essay_ai.essay_enabled() and (bool(await run(db.teachers_of, user["id"]))
+                                                  or bool(await run(db.wallets_of_student, user["id"]))),
         "my_card": await run(teacher_card, user["id"]),
         "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
         "free_ai": plans.ai_unlimited(user["id"]) and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
@@ -1490,6 +1492,11 @@ async def send_pdf(request: web.Request) -> web.Response:
 
 STUDENT_LIMIT_DEFAULT = 10
 PRACTICE_MIN_WORDS, PRACTICE_MAX_CHARS = 60, 20000
+PUBLIC_FREE = 2  # ommaviy havola: begona o'quvchiga shuncha bepul esse, keyin kredit
+
+
+def public_open(teacher_id: int) -> bool:
+    return db.get_settings().get(f"essay_public:{teacher_id}") == "1"
 
 
 def invite_code(teacher_id: int) -> str:
@@ -1611,16 +1618,65 @@ async def practice_home(request: web.Request) -> web.Response:
     for t in await run(db.teachers_of, user["id"]):
         limit = await run(student_limit, t["teacher_id"])
         used = await run(db.practice_used, t["teacher_id"], user["id"], month)
-        teachers.append({"id": t["teacher_id"], "name": t["full_name"] or "Ustoz", "left": max(0, limit - used), "limit": limit})
+        teachers.append({"id": t["teacher_id"], "name": t["full_name"] or "Ustoz", "kind": "student",
+                         "left": max(0, limit - used), "limit": limit})
+    linked = {t["id"] for t in teachers}
+    for w in await run(db.wallets_of_student, user["id"]):  # begona: ommaviy havola orqali tanigan ustozlari
+        tid = w["teacher_id"]
+        if tid in linked or tid == user["id"]:
+            continue
+        is_open = await run(public_open, tid)
+        if not is_open and not w["balance"]:
+            continue
+        free_left = max(0, PUBLIC_FREE - await run(db.public_free_used, tid, user["id"]))
+        card = await run(teacher_card, tid)
+        teachers.append({"id": tid, "name": w["full_name"] or "Ustoz", "kind": "public", "open": is_open,
+                         "free_left": free_left, "free": PUBLIC_FREE, "balance": w["balance"],
+                         "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])),
+                         "packs": await run(essay_packs, tid) if card["number"] else []})
     history = [_practice_view(p) for p in await run(db.practice_of_student, user["id"], 20)]
     return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
+
+
+async def practice_public_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
+    """Begona o'quvchi ilovada: bepullari bo'lsa — ustoz kreditidan; tugagan bo'lsa — o'z kreditidan (yo'q bo'lsa
+    esse saqlanadi va kredit olgach o'zi tekshiriladi). Botdagi ommaviy havola bilan bir xil qoidalar."""
+    if not await run(public_open, teacher_id):
+        raise ApiError(403, "Ustoz ommaviy esse tekshiruvini yopgan")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    await run(db.remember_public, teacher_id, user["id"])
+    if await run(db.public_free_used, teacher_id, user["id"]) < PUBLIC_FREE:
+        if not await ai_allowed(teacher_id, "essays"):
+            raise ApiError(402, "Ustozning AI krediti tugagan — keyinroq urinib ko'ring yoki ustozga ayting")
+        practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public")
+        if "wake_ai" in HOOKS:
+            HOOKS["wake_ai"]()
+        return {"ok": True, "id": practice_id, "status": "pending", "free": True}
+    if not await run(db.wallet_balance, teacher_id, user["id"]) and not await run(essay_packs, teacher_id):
+        raise ApiError(409, "Ustoz hali kredit narxini qo'ymagan")
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", None, "awaiting_credit")
+    _released, teacher_out = await release_waiting(teacher_id, user["id"])
+    status = (await run(db.get_practice, practice_id))["status"]
+    return {"ok": True, "id": practice_id, "status": status, "teacher_out": teacher_out,
+            "balance": await run(db.wallet_balance, teacher_id, user["id"])}
+
+
+async def practice_wallet_order(request: web.Request) -> web.Response:
+    """Ilovadagi «✍️ Esse tekshirish»: begona o'quvchi ustozning kredit paketini oladi."""
+    user = await auth(request)
+    payload = await body(request)
+    teacher_id = to_int(payload.get("teacher_id"), 0, "Ustoz")
+    if await run(db.is_linked, teacher_id, user["id"]):
+        raise ApiError(409, "Siz bu ustozning o'quvchisisiz — esselaringiz bepul")
+    return ok(await wallet_order(teacher_id, user, to_int(payload.get("essays"), 1, "Paket")))
 
 
 async def practice_submit(request: web.Request) -> web.Response:
     user = await auth(request)
     payload = await body(request)
     teacher_id = to_int(payload.get("teacher_id"), 0, "Ustoz")
-    if not await run(db.is_linked, teacher_id, user["id"]):
+    linked = await run(db.is_linked, teacher_id, user["id"])
+    if not linked and (teacher_id == user["id"] or not await run(db.find_user, str(teacher_id))):
         raise ApiError(403, "Siz bu ustozga ulanmagansiz")
     if not essay_ai.essay_enabled():
         raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
@@ -1629,6 +1685,8 @@ async def practice_submit(request: web.Request) -> web.Response:
         raise ApiError(400, f"Esse juda qisqa — kamida {PRACTICE_MIN_WORDS} so'z yozing")
     if len(text) > PRACTICE_MAX_CHARS:
         raise ApiError(400, "Esse juda uzun")
+    if not linked:  # begona — ommaviy havola qoidalari (bepul / kredit)
+        return ok(await practice_public_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
     limit = await run(student_limit, teacher_id)
     if await run(db.practice_used, teacher_id, user["id"], plans.month_key()) >= limit:
         raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
@@ -3299,6 +3357,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/practice", practice_home)
     app.router.add_post("/api/practice", practice_submit)
     app.router.add_get("/api/practice/{practice_id:\\d+}", practice_get)
+    app.router.add_post("/api/practice/wallet-order", practice_wallet_order)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)

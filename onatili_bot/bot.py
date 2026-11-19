@@ -1846,11 +1846,11 @@ async def grade_one(bot: Bot, essay: dict) -> None:
 
 # ---------- Botda esse tekshiruvi ----------
 # Ustozning o'quvchisi (taklif havolasi yoki esse kodi bilan ulangan) — ustoz kreditidan, oylik chegara bilan.
-# Begona (ustozning ommaviy havolasi) — PUBLIC_FREE ta bepul, keyin har esse uchun ustoz kartasiga to'laydi:
-# chek → ustoz botda tasdiqlaydi → AI tekshiradi (ustoz kreditidan). Esse — matn (bir necha xabar bo'lsa ham),
-# rasm(lar) yoki PDF. Matn yuborilgan sari nechta so'z bo'lgani ko'rsatib turiladi.
+# Begona (ustozning ommaviy havolasi) — PUBLIC_FREE ta bepul, keyin ustozdan kredit sotib oladi (bitta chek —
+# bir nechta esse): AI tekshiradi (ustoz kreditidan ham). Esse — matn (bir necha xabar bo'lsa ham),
+# rasm(lar) yoki PDF. Matn yuborilgan sari nechta so'z bo'lgani ko'rsatib turiladi. Ilovada ham — «✍️ Esse tekshirish».
 
-PUBLIC_FREE = 2
+PUBLIC_FREE = webapp.PUBLIC_FREE
 ESSAY_MIN_WORDS = webapp.PRACTICE_MIN_WORDS
 ESSAY_MAX_PHOTOS = 6
 
@@ -2014,6 +2014,8 @@ async def open_public(message: Message, code: str) -> None:
     if not cfg["public"]:
         await message.answer(f"⛔️ {name} hozir ommaviy esse tekshiruvini yopgan.")
         return
+    await asyncio.to_thread(db.remember_user, message.from_user.id, message.from_user.full_name, message.from_user.username)
+    await asyncio.to_thread(db.remember_public, teacher_id, message.from_user.id)  # ilovada ham «✍️ Esse tekshirish»
     free_left = max(0, PUBLIC_FREE - await asyncio.to_thread(db.public_free_used, teacher_id, message.from_user.id))
     balance = await asyncio.to_thread(db.wallet_balance, teacher_id, message.from_user.id)
     packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
@@ -2023,8 +2025,17 @@ async def open_public(message: Message, code: str) -> None:
         + (f"🎁 Bepul: <b>{free_left} / {PUBLIC_FREE}</b> ta qoldi\n" if free_left else "")
         + (f"💳 Kreditingiz: <b>{balance} ta</b> esse\n" if balance else "")
         + f"📦 Kredit: {esc(webapp.packs_text(packs))} so'm — bitta chek, har esse 1 kredit",
-        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("💳 Kredit olish", f"wb:{teacher_id}")],
-                             [("📚 Esse namunalari", "esp:0")]]))
+        reply_markup=public_markup(teacher_id))
+
+
+def public_markup(teacher_id: int) -> InlineKeyboardMarkup:
+    """Ommaviy havola tugmalari; ilova ochiladigan bo'lsa — «✨ Ilovada ochish» (u yerda doim «✍️ Esse tekshirish»)."""
+    markup = inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("💳 Kredit olish", f"wb:{teacher_id}")],
+                     [("📚 Esse namunalari", "esp:0")]])
+    url = app_url(v="practice")
+    if url:
+        markup.inline_keyboard.append([InlineKeyboardButton(text="✨ Ilovada ochish", web_app=WebAppInfo(url=url))])
+    return markup
 
 
 def packs_markup(teacher_id: int, packs: list[dict]) -> InlineKeyboardMarkup:

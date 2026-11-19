@@ -1698,3 +1698,67 @@ class ResultsPdfClarity(ServerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PracticePublic(ServerBase):
+    """Begona o'quvchi ilovada: ommaviy havolani bir marta ochsa — «✍️ Esse tekshirish» (bepullari, krediti, paketlar)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._essay_enabled = essay_ai.essay_enabled
+        essay_ai.essay_enabled = lambda: True
+        db.remember_user(OWNER, "Ustoz Aliyev", None)
+        db.set_setting(f"essay_public:{OWNER}", "1")
+        db.set_setting(f"teacher_card:{OWNER}", "8600 1234 5678 9012")
+        webapp.save_packs(OWNER, 5000, [(5, 20000)])
+
+    async def asyncTearDown(self):
+        essay_ai.essay_enabled = self._essay_enabled
+        await super().asyncTearDown()
+
+    ESSAY = "Kitob o'qish insonni boyitadi. " * 20
+
+    async def send(self):
+        return await self.post("/api/practice", {"teacher_id": OWNER, "topic": "Kitob", "essay": self.ESSAY})
+
+    async def test_stranger_free_then_credit_in_app(self):
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertFalse((await self.get("/api/bootstrap"))[1]["practice"])  # hech bir ustozni tanimaydi
+        db.remember_public(OWNER, OTHER)  # ommaviy havolani botda ochdi
+        self.assertTrue((await self.get("/api/bootstrap"))[1]["practice"])
+        _, home = await self.get("/api/practice")
+        t = home["teachers"][0]
+        self.assertEqual((t["kind"], t["free_left"], t["balance"], [p["essays"] for p in t["packs"]]), ("public", 2, 0, [1, 5]))
+
+        for _ in range(2):
+            status, res = await self.send()
+            self.assertEqual((status, res["status"], res["free"]), (200, "pending", True), res)
+        status, res = await self.send()  # bepullar tugadi, kredit yo'q — saqlanadi
+        self.assertEqual((status, res["status"], res["balance"]), (200, "awaiting_credit", 0))
+        waiting_id = res["id"]
+        t = (await self.get("/api/practice"))[1]["teachers"][0]
+        self.assertEqual((t["free_left"], t["waiting"]), (0, 1))
+
+        status, order = await self.post("/api/practice/wallet-order", {"teacher_id": OWNER, "essays": 5})
+        self.assertEqual((status, order["payment"]["amount"]), (200, 20000), order)
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        await self.post(f"/api/teacher/wallet-payment/{order['payment']['id']}", {"action": "approve"})
+        self.assertEqual(db.get_practice(waiting_id)["status"], "pending")  # kredit tushdi — saqlangan esse tekshiruvda
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 4)
+
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        status, res = await self.send()
+        self.assertEqual((res["status"], res["balance"]), ("pending", 3))
+        db.set_setting(f"essay_public:{OWNER}", "0")  # ustoz yopdi
+        self.assertEqual((await self.send())[0], 403)
+        self.assertEqual((await self.get("/api/practice"))[1]["teachers"][0]["open"], False)  # krediti bor — ko'rinadi
+
+    async def test_linked_student_unchanged(self):
+        db.link_student(OWNER, STUDENT)
+        self.user = {"id": STUDENT, "name": "O'quvchi", "username": None}
+        _, home = await self.get("/api/practice")
+        self.assertEqual(home["teachers"][0]["kind"], "student")
+        status, res = await self.send()
+        self.assertEqual(status, 200, res)
+        self.assertNotIn("status", res)
+        self.assertEqual(db.get_practice(res["id"])["kind"], "student")
