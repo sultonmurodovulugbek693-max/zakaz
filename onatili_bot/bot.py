@@ -1738,7 +1738,8 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
     try:
         words = word_count(practice["text"] or result.get("transcription") or "")
         await bot.send_message(practice["student_id"], practice_result_text(result, words),
-                               reply_markup=inline([[("✍️ Yana esse yuborish", f"ecw:new:{practice['teacher_id']}")]]))
+                               reply_markup=inline([[("✍️ Yana esse yuborish", f"ecw:new:{practice['teacher_id']}")],
+                                                    [("📚 Eng yaxshi esselar", "esp:0")]]))
     except Exception:
         logger.warning("Esse natijasi o'quvchiga yuborilmadi")
 
@@ -1907,7 +1908,7 @@ async def open_public(message: Message, code: str) -> None:
         "AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.\n"
         + (f"🎁 Bepul: <b>{free_left} / {PUBLIC_FREE}</b> ta qoldi\n" if free_left else "")
         + f"💰 Keyin har esse: <b>{plans.money(cfg['price'])} so'm</b> (ustoz kartasiga)",
-        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")]]))
+        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("📚 Esse namunalari", "esp:0")]]))
 
 
 async def essay_kind(teacher_id: int, student_id: int) -> str:
@@ -2139,6 +2140,86 @@ def practice_result_text(result: dict, words: int | None) -> str:
     return "\n".join(lines)[:4000]
 
 
+
+# ---------- Esse namunalari: butun bot bo'yicha 66/75 va undan yuqori esselar ----------
+
+SAMPLE_MIN_75 = 66
+SAMPLES_PER_PAGE = 8
+
+
+def sample_rows() -> list[dict]:
+    raw_min = (SAMPLE_MIN_75 - 27) / 2  # essay_to_75 teskarisi: 66 → 19,5
+    return db.top_essays(raw_min)
+
+
+async def send_samples(message: Message, page: int = 0, edit: bool = False) -> None:
+    rows = await asyncio.to_thread(sample_rows)
+    if not rows:
+        text = f"📚 <b>Esse namunalari</b>\nHali {SAMPLE_MIN_75} va undan yuqori ball olgan esse yo'q."
+        await (message.edit_text(text) if edit else message.answer(text))
+        return
+    pages = (len(rows) + SAMPLES_PER_PAGE - 1) // SAMPLES_PER_PAGE
+    page = max(0, min(page, pages - 1))
+    chunk = rows[page * SAMPLES_PER_PAGE:(page + 1) * SAMPLES_PER_PAGE]
+    lines = [f"📚 <b>Esse namunalari</b> — {SAMPLE_MIN_75}/75 va undan yuqori ({len(rows)} ta)", LINE]
+    buttons = []
+    for row in chunk:
+        score = fmt_num(essay_to_75(row["raw"]))
+        words = word_count(row["text"])
+        topic = (row["topic"] or "Mavzusiz").replace("\n", " ")
+        lines.append(f"🏅 <b>{score}</b> · {words} so'z · {esc(topic[:60])}{'…' if len(topic) > 60 else ''}")
+        buttons.append([(f"{score} · {words} so'z · {topic[:24]}", f"esn:{row['src']}:{row['id']}")])
+    nav = []
+    if page > 0:
+        nav.append(("⬅️", f"esp:{page - 1}"))
+    if page < pages - 1:
+        nav.append(("➡️", f"esp:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+    lines.append(f"\nO'qish uchun bosing 👇{f'  ({page + 1}/{pages})' if pages > 1 else ''}")
+    text, markup = "\n".join(lines), inline(buttons)
+    await (message.edit_text(text, reply_markup=markup) if edit else message.answer(text, reply_markup=markup))
+
+
+@dp.message(Command("namunalar"))
+async def cmd_samples(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await send_samples(message)
+
+
+@dp.callback_query(F.data.startswith("esp:"))
+async def samples_page(callback: CallbackQuery) -> None:
+    try:
+        await send_samples(callback.message, int(callback.data.split(":")[1]), edit=True)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("esn:"))
+async def sample_open(callback: CallbackQuery) -> None:
+    _, src, raw = (callback.data.split(":") + ["", ""])[:3]
+    rows = await asyncio.to_thread(sample_rows)
+    row = next((r for r in rows if r["src"] == src and str(r["id"]) == raw), None)
+    if not row:
+        await callback.answer("Bu esse endi namunalar ro'yxatida yo'q", show_alert=True)
+        return
+    author = (row["name"] or "").split()[0] if row["name"] else ""
+    head = (f"🏅 <b>{fmt_num(essay_to_75(row['raw']))}/{ESSAY_SCALE}</b> · {word_count(row['text'])} so'z"
+            f" · {'Mock essesi' if src == 'm' else 'O' + chr(39) + 'quvchi essesi'}{' · ' + esc(author) if author else ''}\n"
+            f"📌 <b>Mavzu:</b> {esc(row['topic'] or 'Mavzusiz')}\n{LINE}\n")
+    body = esc(row["text"])
+    parts, first = [], 4000 - len(head)
+    parts.append(head + body[:first])
+    rest = body[first:]
+    while rest:
+        parts.append(rest[:4000])
+        rest = rest[4000:]
+    for part in parts:
+        await callback.message.answer(part)
+    await callback.answer()
+
+
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -2232,6 +2313,7 @@ async def main() -> None:
         await bot.set_my_commands([
             BotCommand(command="start", description="Ilovani ochish"),
             BotCommand(command="royxat", description="Oflayn kursga ro'yxatdan o'tish"),
+            BotCommand(command="namunalar", description="Esse namunalari: 66/75 va undan yuqori esselar"),
             BotCommand(command="esse", description="Ustoz: esse tekshiruvi — havolalar, narx, karta"),
             BotCommand(command="kod", description="Esse kodi: ustoz — o'z kodini oladi, o'quvchi — kod bilan ulanadi"),
             BotCommand(command="chiqish", description="Skaner ilovasidagi barcha qurilmalardan chiqish"),

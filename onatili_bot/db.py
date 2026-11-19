@@ -929,6 +929,39 @@ def create_practice(teacher_id: int, student_id: int, topic: str | None, text: s
              json.dumps(photos) if photos else None, price)).fetchone()["id"]
 
 
+def _essay_text(text: str | None, ai_result: str | None) -> str:
+    """Esse matni: yozilgani yoki (rasm/PDF bo'lsa) AI o'qib chiqqani."""
+    if text and text.strip():
+        return text.strip()
+    try:
+        return str((json.loads(ai_result) if ai_result else {}).get("transcription") or "").strip()
+    except (TypeError, ValueError):
+        return ""
+
+
+def top_essays(min_raw: float, limit: int = 60) -> list[dict]:
+    """Eng yaxshi esselar (butun bot bo'yicha): mustaqil (p) va mock (m) esselari, balli yuqoridan.
+    min_raw — 24 ballik shkalada (75 ballikda 66 → 19,5)."""
+    with connect() as conn:
+        practice = conn.execute(
+            "SELECT p.id, p.ai_score AS raw, p.topic, p.text, p.ai_result, u.full_name AS name, p.graded_at AS at "
+            "FROM practice_essays p LEFT JOIN users u ON u.tg_id = p.student_id "
+            "WHERE p.status = 'graded' AND p.ai_score >= ?", (min_raw,)).fetchall()
+        mock = conn.execute(
+            "SELECT e.id, COALESCE(a.essay, e.ai_score) AS raw, t.essay_topic AS topic, e.text, e.ai_result, "
+            "a.student_name AS name, e.graded_at AS at FROM essays e JOIN attempts a ON a.id = e.attempt_id "
+            "JOIN tests t ON t.id = a.test_id WHERE (e.status = 'graded' OR a.essay IS NOT NULL) "
+            "AND COALESCE(a.essay, e.ai_score) >= ?", (min_raw,)).fetchall()
+    rows = [{"src": "p", **dict(r)} for r in practice] + [{"src": "m", **dict(r)} for r in mock]
+    out = []
+    for row in rows:
+        row["text"] = _essay_text(row["text"], row.pop("ai_result"))
+        if row["text"]:
+            out.append(row)
+    out.sort(key=lambda r: (-(r["raw"] or 0), r["at"] or ""))
+    return out[:limit]
+
+
 def public_free_used(teacher_id: int, student_id: int) -> int:
     """Begona o'quvchi shu ustozda nechta bepul esse tekshirtirgan (muvaffaqiyatsizlari hisobga kirmaydi)."""
     with connect() as conn:

@@ -154,6 +154,27 @@ class EssayBot(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("juda qisqa" in str(r[1]) for r in self.replies))
         self.assertEqual(db.practice_of_student(PUPIL), [])
 
+    async def test_samples_list_and_open(self):
+        good = {"score": 22, "criteria": [], "comment": "", "transcription": "Rasmdan o'qilgan matn " * 30}
+        for raw, text in ((22, "A'lo esse " * 140), (19.5, "Yaxshi esse " * 120), (15, "O'rtacha " * 100)):
+            pid = db.create_practice(TEACHER, PUPIL, "Kitob va internet", text, "student")
+            db.save_practice_result(pid, {**good, "score": raw})
+        photo = db.create_practice(TEACHER, STRANGER, None, "", "public", [["f1", "image/jpeg"]])
+        db.save_practice_result(photo, good)
+        db.remember_user(PUPIL, "Lola Karimova", None)
+        rows = bot.sample_rows()
+        self.assertEqual([r["raw"] for r in rows], [22, 22, 19.5])  # 15 (57/75) kirmaydi
+        await bot.send_samples(self.message(STRANGER))
+        text, markup = self.replies[-1][1], self.replies[-1][2]
+        self.assertIn("71</b> · 280 so'z", text)
+        self.assertIn("66</b>", text)
+        await bot.sample_open(self.callback(STRANGER, buttons(markup)[0]))
+        opened = [r[1] for r in self.replies if r[0] == STRANGER and "Mavzu:" in str(r[1])][0]
+        self.assertIn("71/75", opened)
+        self.assertIn("Kitob va internet", opened)
+        self.assertIn("Lola", opened)
+        self.assertIn("A'lo esse", opened)
+
     def test_result_text(self):
         result = {"score": 16, "comment": "Yaxshi", "criteria": [{"key": k, "score": 2, "comment": "ok"} for k in essay_ai.RUBRIC_KEYS]}
         text = bot.practice_result_text(result, 245)
