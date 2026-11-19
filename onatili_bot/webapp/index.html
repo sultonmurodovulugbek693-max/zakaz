@@ -713,7 +713,8 @@ function userBusy() {
 // Bu ekranlarda «Orqaga» kerak emas: bosh sahifa va ilovaga kirish (ular — boshlang'ich nuqta)
 const NO_BACK = new Set(["home", "appHome", "appLogin"]);
 const TABS = {
-  teacher: [["home", "🏠", "Bosh"], ["results", "📊", "Natijalar"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"]],
+  // «📊 Natijalar» — bosh sahifada (katta tugma); panelda «⚙️ Sozlamalar»
+  teacher: [["home", "🏠", "Bosh"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"], ["settings", "⚙️", "Sozlamalar"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
 };
 function paintTabs(view) {
@@ -722,7 +723,7 @@ function paintTabs(view) {
   const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
     key === "plan" ? S.boot.sales : key === "ai" ? !S.boot.sales && S.boot.can_create !== false
-      : key === "students" ? S.boot.can_create !== false : true) : null;
+      : key === "students" || key === "settings" ? S.boot.can_create !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
   bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
@@ -783,7 +784,7 @@ function applyUiTheme(key) {
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
 const RESUMABLE = { student: ["answer", "result", "myresults", "profile"],
-                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written", "results", "classResults", "testResults"] };
+                    teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written", "results", "classResults", "testResults", "settings"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
   if (view === "home") return store("lastView", "");
@@ -1017,6 +1018,7 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
+      <button type="button" class="item" data-go-results><span class="ico">📊</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span><span class="muted">›</span></button>
       ${myTestsHTML(b.tests)}
       ${b.sales ? planCard(b.plan) : creditCard(b)}`}
   </div>`;
@@ -1024,6 +1026,7 @@ VIEWS.home = async () => {
   document.querySelectorAll("[data-go-courses]").forEach(x => x.onclick = () => { haptic("light"); go("courses"); });
   document.querySelectorAll("[data-go-practice]").forEach(x => x.onclick = () => { haptic("light"); go("practice"); });
   document.querySelectorAll("[data-go-ai]").forEach(x => x.onclick = () => { haptic("light"); go("ai"); });
+  document.querySelectorAll("[data-go-results]").forEach(x => x.onclick = () => { haptic("light"); go("results"); });
   document.querySelectorAll("[data-copy-id]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.copyId).then(() => { toast("ID nusxalandi"); haptic("success"); }, () => toast(x.dataset.copyId)));
   document.querySelectorAll("[data-admin]").forEach(x => x.onclick = () => { const u = "https://t.me/" + x.dataset.admin; try { tg.openTelegramLink(u); } catch (e) { location.href = u; } });
   if (S.scrollToTests) { S.scrollToTests = false; const el = document.getElementById("my-tests"); if (el) el.scrollIntoView({ block: "start" }); }
@@ -1847,7 +1850,6 @@ async function aiView(mode) {
       <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
       : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
       <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar test bepul, esse tekshiruvini o'zi to'laydi.</span></div>
-      <button type="button" class="item" data-go-settings><span class="ico">⚙️</span><span><b>Sozlamalar</b><small>Karta, begonalar uchun esse tekshiruvi va kredit narxlari</small></span><span class="muted">›</span></button>
       ${walletPaymentsHTML(wp.payments)}${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}`}
     ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
       <div class="row between"><b>🤖 Kreditingiz</b><span class="credit-n">${r.unlimited ? "♾" : n}</span></div>
@@ -1859,8 +1861,7 @@ async function aiView(mode) {
       <div class="chips" id="packs">${[1, 2, 5, 10].map(k => `<button type="button" class="chip ${k === 1 ? "on" : ""}" data-packs="${k}">${k * r.pack.essays} ta · ${sum(k * r.pack.price)}</button>`).join("")}</div>
       <button type="button" class="btn block" id="buy">Sotib olish</button><div id="pay-box"></div></div>`
       : !r.unlimited ? `<div class="card small muted">Kredit narxi hali belgilanmagan — admin bilan bog'laning.</div>` : ""}
-    <button type="button" class="item" data-goto-students><span class="ico">👥</span><span><b>O'quvchilarim</b><small>Ulash, arizalar va oylik chegara</small></span><span class="muted">›</span></button>
-    <button type="button" class="item" data-go-settings><span class="ico">⚙️</span><span><b>Sozlamalar</b><small>Karta, begonalar uchun esse tekshiruvi va kredit narxlari</small></span><span class="muted">›</span></button>`}
+    <button type="button" class="item" data-goto-students><span class="ico">👥</span><span><b>O'quvchilarim</b><small>Ulash, arizalar va oylik chegara</small></span><span class="muted">›</span></button>`}
     ${isAi ? "" : `<div class="section-title"><h2>Ro'yxat</h2><span class="muted small">${r.students.length} ta</span></div>
     <div class="card"><b>🔗 Ulash</b>
       <span class="muted small">Ulangan o'quvchi test bo'lmasa ham «✍️ Esse tekshirish»da esse yozib tekshirtiradi (kreditingizdan).</span>
@@ -1876,7 +1877,6 @@ async function aiView(mode) {
   </div>`;
   document.querySelectorAll("[data-goto-students]").forEach(x => x.onclick = () => { haptic("light"); go("students"); });
   bindJoins(); bindEssayPayments(); bindWalletPayments();
-  document.querySelectorAll("[data-go-settings]").forEach(x => x.onclick = () => { haptic("light"); go("settings"); });
   let packs = 1;
   document.querySelectorAll("[data-packs]").forEach(x => x.onclick = () => { packs = +x.dataset.packs; haptic("select");
     document.querySelectorAll("[data-packs]").forEach(y => y.classList.toggle("on", y === x)); });
