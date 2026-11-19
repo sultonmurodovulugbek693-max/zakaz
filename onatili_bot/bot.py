@@ -12,6 +12,7 @@ Ishga tushirish:  python bot.py
 """
 
 import asyncio
+import re
 import base64
 import html
 import json
@@ -129,8 +130,35 @@ async def join_teacher(message: Message, code: str) -> None:
     if not teacher_id:
         await message.answer("⌛️ Taklif havolasi noto'g'ri. Ustozingizdan yangisini so'rang.")
         return
+    await link_to_teacher(message, teacher_id, "taklif havolangiz")
+
+
+ESSAY_CODE = re.compile(r"^\s*[EeЕе]\s*-?\s*(\d{5})\s*$")  # E48213 (lotin yoki kirill E)
+
+
+@dp.message(Command("kod"))
+async def cmd_essay_code(message: Message, command: CommandObject) -> None:
+    """/kod — ustozga o'z esse kodi; /kod E48213 — o'quvchi ustozga ulanadi."""
+    if command.args:
+        match = ESSAY_CODE.match(command.args)
+        teacher_id = match and await asyncio.to_thread(db.teacher_of_essay_code, match.group(1))
+        if not teacher_id:
+            await message.answer("❌ Bunday esse kodi yo'q. Ustozingizdan kodni qayta so'rang (masalan: E48213).")
+            return
+        await link_to_teacher(message, teacher_id, "esse kodingiz")
+        return
+    code = await asyncio.to_thread(db.essay_code_of, message.from_user.id)
+    await message.answer(
+        f"🔑 <b>Esse kodingiz: <code>{code}</code></b>\n\n"
+        "O'quvchilaringizga ayting: botga shu kodni yozsa, sizga ulanadi va «✍️ Esse tekshirish»da esse yozib "
+        "AI'da tekshirtira oladi — <b>sizning limitingizdan</b>. Har o'quvchiga oylik chegarani ilovada "
+        "«👥 O'quvchilarim»da qo'yasiz.")
+
+
+async def link_to_teacher(message: Message, teacher_id: int, via: str) -> None:
+    """O'quvchini ustozga ulash (taklif havolasi yoki esse kodi orqali): esselari ustoz limitidan tekshiriladi."""
     if teacher_id == message.from_user.id:
-        await message.answer("Bu sizning taklif havolangiz — uni o'quvchilaringizga yuboring.")
+        await message.answer("Bu sizning o'zingizniki — uni o'quvchilaringizga bering.")
         return
     teacher = await asyncio.to_thread(db.find_user, str(teacher_id))
     name = (teacher or {}).get("full_name") or "ustoz"
@@ -141,7 +169,7 @@ async def join_teacher(message: Message, code: str) -> None:
           "(ustozingiz hisobidan).", reply_markup=app_markup("✍️ Esse tekshirish", v="practice"))
     if fresh:
         try:
-            await message.bot.send_message(teacher_id, f"👤 <b>{esc(message.from_user.full_name)}</b> taklif havolangiz orqali "
+            await message.bot.send_message(teacher_id, f"👤 <b>{esc(message.from_user.full_name)}</b> {via} orqali "
                                                        "ulandi — endi esse tekshirtira oladi (kreditingizdan).")
         except Exception:
             logger.warning("Ustozga ulanish xabari yuborilmadi")
@@ -1725,6 +1753,16 @@ async def grade_one(bot: Bot, essay: dict) -> None:
 @dp.message()
 async def fallback(message: Message, state: FSMContext) -> None:
     await state.clear()
+    match = ESSAY_CODE.match(message.text or "")
+    if match:  # o'quvchi ustozning esse kodini yozdi
+        teacher_id = await asyncio.to_thread(db.teacher_of_essay_code, match.group(1))
+        if teacher_id:
+            await asyncio.to_thread(db.remember_user, message.from_user.id, message.from_user.full_name,
+                                    message.from_user.username)
+            await link_to_teacher(message, teacher_id, "esse kodingiz")
+            return
+        await message.answer("❌ Bunday esse kodi yo'q. Ustozingizdan kodni qayta so'rang.")
+        return
     # Eski pastki tugmalardan biri bosilgan bo'lishi mumkin — tugmalar shu xabar bilan olib tashlanadi
     await message.answer("✨ Hamma ish ilovada — pastdagi «Kirish» tugmasi yoki quyidagi tugma orqali.",
                          reply_markup=ReplyKeyboardRemove())
@@ -1805,6 +1843,7 @@ async def main() -> None:
         await bot.set_my_commands([
             BotCommand(command="start", description="Ilovani ochish"),
             BotCommand(command="royxat", description="Oflayn kursga ro'yxatdan o'tish"),
+            BotCommand(command="kod", description="Esse kodi: ustoz — o'z kodini oladi, o'quvchi — kod bilan ulanadi"),
             BotCommand(command="chiqish", description="Skaner ilovasidagi barcha qurilmalardan chiqish"),
         ])
     except Exception:

@@ -269,6 +269,50 @@ class KeyFix(ServerBase):
         self.assertEqual(status, 400)
 
 
+class EssayCode(unittest.IsolatedAsyncioTestCase):
+    """Ustozning qisqa esse kodi: o'quvchi botga yozsa — ustozga ulanadi (esselari ustoz limitidan)."""
+
+    async def asyncSetUp(self):
+        _env.fresh_db()
+
+    def message(self, text, user_id=OTHER):
+        replies, sent = [], []
+
+        async def answer(value, **_):
+            replies.append(value)
+
+        async def send_message(chat_id, value, **_):
+            sent.append((chat_id, value))
+
+        user = types.SimpleNamespace(id=user_id, full_name="Ali Valiyev", username="ali")
+        msg = types.SimpleNamespace(text=text, from_user=user, answer=answer,
+                                    bot=types.SimpleNamespace(send_message=send_message))
+        return msg, replies, sent
+
+    async def test_code_is_stable_and_links_student(self):
+        code = db.essay_code_of(OWNER)
+        self.assertRegex(code, r"^E\d{5}$")
+        self.assertEqual(db.essay_code_of(OWNER), code)  # doimiy
+        self.assertNotEqual(db.essay_code_of(OTHER), code)
+        self.assertEqual(db.teacher_of_essay_code(code), OWNER)
+        self.assertEqual(db.teacher_of_essay_code("e " + code[1:]), OWNER)
+
+        state = types.SimpleNamespace(clear=lambda: asyncio.sleep(0))
+        msg, replies, sent = self.message(code.lower())
+        await bot.fallback(msg, state)
+        self.assertTrue(db.is_linked(OWNER, OTHER))
+        self.assertIn("ulandingiz", replies[0])
+        self.assertEqual(sent[0][0], OWNER)  # ustozga xabar
+
+        msg, replies, _ = self.message("E00000")
+        await bot.fallback(msg, state)
+        self.assertIn("Bunday esse kodi yo'q", replies[0])
+
+        msg, replies, _ = self.message(code, user_id=OWNER)  # ustoz o'z kodini yozdi
+        await bot.fallback(msg, state)
+        self.assertIn("o'zingizniki", replies[0])
+
+
 class ClassFromId(ServerBase):
     """Titul qaysi testda skanerlansa ham o'quvchi va uning sinfi doimiy ID'dan aniqlanadi."""
 

@@ -1574,6 +1574,32 @@ def take_limit_notice(tg_id: int, month: str) -> bool:
                                  (tg_id, month)).rowcount)
 
 
+# ---------- Ustozning esse kodi ----------
+# Qisqa doimiy kod (E + 5 raqam): o'quvchi botga yozsa — ustozga ulanadi, esselari ustoz limitidan tekshiriladi
+
+def essay_code_of(teacher_id: int) -> str:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (f"essay_code:{teacher_id}",)).fetchone()
+        if row:
+            return row["value"]
+        for _ in range(200):
+            code = f"E{random.randint(10000, 99999)}"
+            if not conn.execute("SELECT 1 FROM settings WHERE key = ?", (f"essay_code_owner:{code}",)).fetchone():
+                break
+        else:
+            raise RuntimeError("Bo'sh esse kodi topilmadi")
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (f"essay_code:{teacher_id}", code))
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (f"essay_code_owner:{code}", str(teacher_id)))
+    return code
+
+
+def teacher_of_essay_code(code: str) -> int | None:
+    code = "E" + "".join(ch for ch in str(code) if ch.isdigit())
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (f"essay_code_owner:{code}",)).fetchone()
+    return int(row["value"]) if row else None
+
+
 # ---------- Sozlamalar (admin bot orqali o'zgartiradi) ----------
 
 def get_settings() -> dict:

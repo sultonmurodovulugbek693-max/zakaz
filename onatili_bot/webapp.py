@@ -1290,6 +1290,7 @@ async def link_view(request: web.Request) -> web.Response:
     unlimited = plans.ai_unlimited(user["id"])
     return ok({
         "invite_url": f"https://t.me/{username}?start={invite_code(user['id'])}" if username else None,
+        "essay_code": await run(db.essay_code_of, user["id"]),
         "students": [{"id": s["student_id"], "name": s["full_name"] or "O'quvchi", "username": s["username"],
                       "used": s["used"]} for s in students],
         "limit": await run(student_limit, user["id"]),

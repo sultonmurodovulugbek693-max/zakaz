@@ -1861,6 +1861,8 @@ async function aiView(mode) {
     <div class="card"><b>🔗 Ulash</b>
       <span class="muted small">Ulangan o'quvchi test bo'lmasa ham «✍️ Esse tekshirish»da esse yozib tekshirtiradi (kreditingizdan).</span>
       ${r.invite_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="share" style="flex:1">📨 Taklif havolasini yuborish</button><button type="button" class="btn plain" id="copy-invite">📋</button></div>` : ""}
+      ${r.essay_code ? `<div class="row between" style="gap:8px"><span>🔑 Esse kodi: <b style="font-size:1.25em;letter-spacing:.06em">${esc(r.essay_code)}</b></span><button type="button" class="btn plain sm" id="copy-code">📋 Nusxa</button></div>
+      <span class="muted small">O'quvchi botga shu kodni yozsa — sizga ulanadi. Doskaga yozish yoki aytib berish oson.</span>` : ""}
       <div class="row" style="gap:8px"><input class="input" id="add-ref" placeholder="@username yoki Telegram ID" autocomplete="off" style="flex:1"><button type="button" class="btn" id="add">Qo'shish</button></div>
       <span class="muted small">@username bilan qo'shish uchun o'quvchi avval botga /start bosgan bo'lishi kerak.</span>
       <div class="row between" style="gap:8px"><span class="small">Har o'quvchiga oyiga</span>
@@ -1889,6 +1891,8 @@ async function aiView(mode) {
     try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
   };
   const copyInvite = document.getElementById("copy-invite");
+  const copyCode = document.getElementById("copy-code");
+  if (copyCode) copyCode.onclick = () => navigator.clipboard.writeText(r.essay_code).then(() => { toast("Kod nusxalandi"); haptic("success"); }, () => toast(r.essay_code));
   if (copyInvite) copyInvite.onclick = () => navigator.clipboard.writeText(r.invite_url).then(() => { toast("Havola nusxalandi"); haptic("success"); }, () => toast(r.invite_url));
   const add = document.getElementById("add"), ref = document.getElementById("add-ref");
   if (add) add.onclick = async () => {
