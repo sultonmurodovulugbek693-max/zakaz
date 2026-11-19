@@ -1654,11 +1654,11 @@ VIEWS.teacher = async ({ id, tab }) => {
   const files = `<div class="card"><h2>Fayllar</h2><div class="files">
       <button class="btn ghost sm" id="sheets2">📄 Titul</button>
       <button class="btn ghost sm" data-send="key">🔑 Kalit</button>
-      ${n ? `<button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
+      ${n ? `<button class="btn ghost sm" data-send="rating">🏆 Reyting rasmi</button><button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button>` : ""}
       ${n && milliy ? `<button class="btn ghost sm" id="certs-all">🎓 Sertifikatlar</button>` : ""}</div>
       <span class="muted small">Fayllar Telegram chatga yuboriladi. Kelmasa — to'g'ridan-to'g'ri yuklab oling:</span>
       <div class="files-dl"><button type="button" class="btn plain sm" data-dl="${t.id}:sheets">📥 Titul</button>${t.sheet_style === "official" ? `<button type="button" class="btn plain sm" data-dl="${t.id}:essay">📥 Esse varaqlari</button>` : ""}<button type="button" class="btn plain sm" data-dl="${t.id}:key">📥 Kalit</button>
-      ${n ? `<button type="button" class="btn plain sm" data-dl="${t.id}:results">📥 Natijalar PDF</button><button type="button" class="btn plain sm" data-dl="${t.id}:excel">📥 Excel</button>` : ""}</div></div>
+      ${n ? `<button type="button" class="btn plain sm" data-dl="${t.id}:results">📥 Natijalar PDF</button><button type="button" class="btn plain sm" data-dl="${t.id}:rating">📥 Reyting</button><button type="button" class="btn plain sm" data-dl="${t.id}:excel">📥 Excel</button>` : ""}</div></div>
     <div class="card"><h2>Foydali</h2><div class="list">
       ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}
       <button class="item" id="copy-test"><span class="ico">📋</span><span><b>Boshqa guruh uchun nusxa</b><small>Yangi kod, kalitlar o'sha — qayta kiritish shart emas</small></span></button></div></div>`;
@@ -2596,7 +2596,7 @@ VIEWS.testResults = async ({ id, cls }) => {
     ${milliy ? gradeBarHTML(rows) : ""}
     ${rows.length ? `<div class="card"><h2>Fayllar</h2><div class="files">
         ${milliy ? `<button class="btn sm" id="certs">🎓 Sertifikatlar · ${rows.length}</button>` : ""}
-        <button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button></div>
+        <button class="btn ghost sm" data-send="rating">🏆 Reyting rasmi</button><button class="btn ghost sm" data-send="results">📊 Natijalar PDF</button><button class="btn ghost sm" data-send="excel">📗 Excel</button></div>
         <span class="muted small">${milliy ? `🎓 Har o'quvchiga bitta sahifa — mock sertifikat (A4, chop etishga tayyor)${r.class ? `, faqat ${esc(r.class.name)} sinfi` : ""}. ` : ""}${r.class ? "PDF va Excel — butun test bo'yicha. " : ""}Fayllar Telegram chatga yuboriladi.</span></div>` : ""}
     <div class="section-title"><h2>O'rinlar</h2>${rows.length ? `<span class="muted small">o'quvchini bosing</span>` : ""}</div>
     <div class="list">${list || `<div class="card empty"><div class="big">👀</div>${r.class ? "Bu sinf o'quvchilari hali bu testda qatnashmagan." : "Hali hech kim javob yubormagan."}</div>`}</div>

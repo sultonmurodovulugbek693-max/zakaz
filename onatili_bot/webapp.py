@@ -1174,7 +1174,7 @@ async def send_pdf(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
     kind = (await body(request)).get("kind")
-    if kind not in ("key", "results", "excel"):
+    if kind not in ("key", "results", "excel", "rating"):
         raise ApiError(400, "Noma'lum hujjat")
     try:
         sent = await deliver(HOOKS["send_pdf"](user["id"], test, kind), f"Fayl ({kind}), test {test['id']}")
@@ -1437,7 +1437,7 @@ async def join_decide(request: web.Request) -> web.Response:
 # sarlavha (initData) yubora olmaydi — shuning uchun ruxsat havolaning o'zida
 
 DOWNLOAD_TTL = 600
-FILE_KINDS = ("key", "results", "excel", "sheets", "essay")
+FILE_KINDS = ("key", "results", "excel", "sheets", "essay", "rating")
 
 
 def _sign(payload: str) -> str:
@@ -1461,6 +1461,12 @@ def build_file(test: dict, kind: str) -> tuple[bytes, str, str]:
         name = f"{'esse' if kind == 'essay' else 'titullar'}_{test['code']}.pdf"
         return sheet.sheets_pdf(test, list(keys), students, 0 if students else 1, part), name, "application/pdf"
     attempts = db.list_attempts(test["id"])
+    if kind == "rating":
+        import rating
+        images = rating.rating_images(test, attempts)
+        if not images:
+            raise ApiError(400, "Reyting uchun hali natija yo'q")
+        return rating.rating_pdf(images), f"reyting_{test['code']}.pdf", "application/pdf"
     if kind == "excel":
         import excel
         return (excel.results_xlsx(test, attempts), f"natijalar_{test['code']}.xlsx",

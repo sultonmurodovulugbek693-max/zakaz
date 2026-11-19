@@ -19,6 +19,7 @@ import db
 import essay_ai
 import plans
 import structure
+import rating
 import webapp
 
 OWNER, STUDENT, OTHER = 111, 222, 333
@@ -26,7 +27,7 @@ OWNER, STUDENT, OTHER = 111, 222, 333
 
 class FakeBot:
     def __init__(self, flood_once=False):
-        self.messages, self.documents, self.flood_once = [], [], flood_once
+        self.messages, self.documents, self.photos, self.flood_once = [], [], [], flood_once
 
     async def send_message(self, chat_id, text, **_):
         if self.flood_once:
@@ -36,6 +37,12 @@ class FakeBot:
 
     async def send_document(self, chat_id, document, **_):
         self.documents.append((chat_id, getattr(document, "filename", "")))
+
+    async def send_photo(self, chat_id, photo, **_):
+        self.photos.append((chat_id, getattr(photo, "filename", "")))
+
+    async def send_media_group(self, chat_id, media, **_):
+        self.photos.extend((chat_id, getattr(m.media, "filename", "")) for m in media)
 
 
 class AppLogin(unittest.TestCase):
@@ -192,6 +199,33 @@ class ServerFixes(ServerBase):
         status, _ = await self.post(f"/api/test/{test['code']}/essay",
                                     {"number": "0007", "name": "Ali Valiyev", "essay": "so'z " * 40})
         self.assertEqual(status, 200)  # ID bo'shadi — haqiqiy egasi yubora oladi
+
+
+class RatingImages(ServerBase):
+    """Reyting va statistika rasmlari (albom) + PDF; ilovadagi «🏆 Reyting rasmi» tugmasi."""
+
+    async def test_rating_album_and_pdf(self):
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        labels = [item["label"] for item in test["items"]]
+        for k in range(6):
+            wrong = labels[k * 4:k * 4 + 3 + k * 2]
+            db.save_attempt(test["id"], 1000 + k, f"O'quvchi {k}", "A", {},
+                            {"test_correct": 30 - k, "written_correct": 5, "auto_total": 44, "wrong": wrong, "points": 40 - k})
+        self.bot.documents.clear()
+        status, res = await self.post(f"/api/teacher/test/{test['id']}/send", {"kind": "rating"})
+        self.assertEqual(status, 200)
+        await asyncio.sleep(0.2)
+        self.assertEqual(len(self.bot.photos), 2)  # reyting + statistika
+        self.assertTrue(all(name.endswith(".png") for _, name in self.bot.photos))
+        self.assertEqual([n for _, n in self.bot.documents], [f"reyting_{test['code']}.pdf"])
+        images = rating.rating_images(test, db.list_attempts(test["id"]))
+        self.assertEqual(images[0][1:4], b"PNG")
+        self.assertTrue(rating.rating_pdf(images).startswith(b"%PDF"))
+
+    async def test_rating_without_results(self):
+        _, r = await self.create("online", fmt="milliy")
+        self.assertEqual(rating.rating_images(db.get_test(r["id"]), []), [])
 
 
 class ClassFromId(ServerBase):

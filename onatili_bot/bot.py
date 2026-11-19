@@ -34,6 +34,7 @@ from aiogram.types import (
     ErrorEvent,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     MenuButtonWebApp,
     Message,
     ReplyKeyboardRemove,
@@ -47,6 +48,7 @@ import ops
 import places as places_data
 import plans
 import pdfs
+import rating
 import sheet
 import sheet_styles
 import subscription
@@ -1067,7 +1069,9 @@ async def settings_save(message: Message, state: FSMContext) -> None:
 # ---------- Ilova chaqiradigan amallar (webapp.HOOKS) ----------
 
 async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
-    """Kalit (key), natijalar (results) PDF'i yoki natijalar Excel'ini (excel) chatga yuboradi."""
+    """Kalit (key), natijalar (results) PDF'i, natijalar Excel'i (excel) yoki reyting rasmlari (rating)."""
+    if kind == "rating":
+        return await send_rating(bot, chat_id, test)
     keys = await asyncio.to_thread(db.get_keys, test["id"])
     if kind == "key":
         content = await asyncio.to_thread(pdfs.answer_key_pdf, test, keys)
@@ -1083,6 +1087,28 @@ async def send_pdf(bot: Bot, chat_id: int, test: dict, kind: str) -> None:
     # protect_content ishlatilmaydi: himoyalangan PDF'ni Telegram saqlash/tashqi ilovada ochishga bermaydi —
     # telefonda kalit «kelgan, lekin ochilmaydi» bo'lib qolardi
     await bot.send_document(chat_id, BufferedInputFile(content, filename=name), caption=caption)
+
+
+async def send_rating(bot: Bot, chat_id: int, test: dict) -> None:
+    """Reyting rasmi (o'quvchilar ko'p bo'lsa — bir necha varaq) + statistika rasmi albom bo'lib, ortidan PDF."""
+    attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+    images = await asyncio.to_thread(rating.rating_images, test, attempts)
+    if not images:
+        await bot.send_message(chat_id, f"🏆 <b>{esc(test['title'])}</b>: reyting uchun hali natija yo'q.")
+        return
+    caption = f"🏆 <b>{esc(test['title'])}</b> — reyting va statistika"
+    for start in range(0, len(images), 10):  # Telegram albomida ko'pi bilan 10 ta rasm
+        chunk = images[start:start + 10]
+        files = [BufferedInputFile(image, filename=f"reyting_{test['code']}_{start + k + 1}.png") for k, image in enumerate(chunk)]
+        first = caption if start == 0 else None
+        if len(files) == 1:
+            await bot.send_photo(chat_id, files[0], caption=first)
+        else:
+            await bot.send_media_group(chat_id, [InputMediaPhoto(media=f, caption=first if k == 0 else None)
+                                                 for k, f in enumerate(files)])
+    pdf = await asyncio.to_thread(rating.rating_pdf, images)
+    await bot.send_document(chat_id, BufferedInputFile(pdf, filename=f"reyting_{test['code']}.pdf"),
+                            caption="📄 Reyting va statistika — PDF (chop etish yoki guruhga tashlash uchun)")
 
 
 async def send_sheets(bot: Bot, chat_id: int, test: dict, students: list[dict], blanks: int) -> None:
@@ -1240,6 +1266,10 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
         await send_pdf(bot, owner_chat, test, "results")
     except Exception:
         logger.exception("Natijalar PDF'i yuborilmadi: test %s", test["id"])
+    try:
+        await send_rating(bot, owner_chat, test)
+    except Exception:
+        logger.exception("Reyting rasmlari yuborilmadi: test %s", test["id"])
     return sent
 
 
