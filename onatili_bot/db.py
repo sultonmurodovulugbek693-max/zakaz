@@ -496,6 +496,12 @@ def init() -> None:
         conn.execute("UPDATE tests SET sheet_style = 'columns' WHERE sheet_style = 'dtm'")
 
 
+def ping() -> None:
+    """Bazaga eng oddiy so'rov — /health?db=1 tarmoq kechikishini o'lchaydi."""
+    with connect() as conn:
+        conn.execute("SELECT 1").fetchone()
+
+
 def backend_name() -> str:
     return "PostgreSQL" if POSTGRES else f"SQLite ({DB_PATH})"
 

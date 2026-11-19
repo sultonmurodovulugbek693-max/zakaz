@@ -3297,8 +3297,31 @@ async def service_worker(_request: web.Request) -> web.Response:
     return response
 
 
-async def health(_request: web.Request) -> web.Response:
-    return web.Response(text="Bot ishlayapti")
+async def health(request: web.Request) -> web.Response:
+    """?db=1 — bazagacha (masalan Neon) bitta so'rov necha ms ketishini ham ko'rsatadi (sekinlikni tekshirish uchun)."""
+    if request.query.get("db") != "1":
+        return web.Response(text="Bot ishlayapti")
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        await run(db.ping)
+        times.append(round((time.perf_counter() - started) * 1000))
+    return web.Response(text=f"Bot ishlayapti · baza ({db.backend_name()}): {', '.join(map(str, times))} ms")
+
+
+@web.middleware
+async def timing(request: web.Request, handler):
+    """Har API javobiga Server-Timing (serverda necha ms ketgani); 1,5 s dan sekinlari logga yoziladi."""
+    started = time.perf_counter()
+    response = await handler(request)
+    ms = round((time.perf_counter() - started) * 1000)
+    try:
+        response.headers["Server-Timing"] = f"app;dur={ms}"
+    except Exception:
+        pass
+    if ms > 1500 and request.path.startswith("/api/"):
+        logger.warning("Sekin so'rov: %s %s — %s ms", request.method, request.path, ms)
+    return response
 
 
 # So'rovlarni cheklash (IP bo'yicha, daqiqasiga). Maktab WiFi'sida 30+ o'quvchi bitta IP'dan kiradi —
@@ -3347,7 +3370,7 @@ async def errors(request: web.Request, handler):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[rate_limit, errors], client_max_size=14 * 1024 * 1024)
+    app = web.Application(middlewares=[timing, rate_limit, errors], client_max_size=14 * 1024 * 1024)
     app.router.add_get("/", index)
     app.router.add_get("/app", index)
     app.router.add_get("/health", health)

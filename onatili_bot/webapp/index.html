@@ -555,6 +555,25 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .m-cf { position: fixed; z-index: 70; width: 8px; height: 12px; border-radius: 2px; pointer-events: none; animation: m-boom 1.2s cubic-bezier(.1,.7,.3,1) forwards; }
 @keyframes m-boom { from { transform: translate(-50%, -50%); } to { transform: translate(var(--x), var(--y)) rotate(var(--r)); opacity: 0; } }
 .success .bigcode { animation: m-pop .6s cubic-bezier(.34,1.56,.64,1) .7s backwards; }
+/* Kredit narxlari: [− son +] [narx] [chegirma] [o'chirish] */
+.pk-row { display: grid; grid-template-columns: minmax(104px, 1.15fr) minmax(0, 1.4fr) 34px 38px; gap: 6px; align-items: center; animation: m-rise .3s cubic-bezier(.2,.8,.2,1) backwards; }
+.pk-row.pk-head { animation: none; }
+.pk-row.out { animation: m-out .26s ease-in forwards; }
+@keyframes m-out { to { opacity: 0; transform: translateX(30px); } }
+.pk-step { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; border: 1.5px solid var(--line); background: var(--bg); border-radius: 16px; overflow: hidden; }
+.pk-step:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.pk-step .input { border: 0; background: transparent; box-shadow: none; padding: 13px 0; text-align: center; font-weight: 700; min-width: 0; }
+.pk-step .input:focus { box-shadow: none; }
+.pk-step .input.bump { animation: m-pop .3s cubic-bezier(.34,1.56,.64,1); }
+.pk-step button { height: 100%; border: 0; background: transparent; color: var(--accent); font: 800 20px var(--font-body); cursor: pointer; transition: background .2s, transform .15s; }
+.pk-step button:active { background: var(--accent-soft); transform: scale(.9); }
+.pk-price { min-width: 0; padding-left: 12px; padding-right: 10px; }
+.pk-disc { text-align: center; color: var(--good); font-weight: 700; font-size: 12px; }
+.pk-head .pk-disc { color: inherit; }
+.pk-del { width: 38px; height: 38px; border: 0; border-radius: 12px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; transition: background .2s, color .2s, transform .15s; }
+.pk-del:hover, .pk-del:focus-visible { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.pk-del:active { transform: scale(.9); }
+.pk-del svg.ic { width: 18px; height: 18px; }
 /* Chiziqli belgilar */
 svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; vertical-align: -.2em; }
 /* «Natijalar» — to'q karta: suzuvchi nur, o'sib chiquvchi ustunchalar */
@@ -702,6 +721,20 @@ async function api(path, data) {
   return json;
 }
 
+// Tablar ma'lumotini oldindan yuklash: server uzoqda (har so'rov ~0,4 s), shuning uchun ilova ochilgach
+// pastki paneldagi bo'limlar ma'lumoti orqada xotiraga olinadi — tab bosilganda sahifa darhol chiqadi
+function warmTabs() {
+  const b = S.boot; if (!b || b.subscribe) return;
+  const paths = S.role === "teacher" && b.can_create !== false
+    ? ["/api/teacher/classes", "/api/teacher/link", "/api/teacher/joins", "/api/teacher/essay-payments",
+       "/api/teacher/wallet-payments", "/api/teacher/settings", "/api/teacher/results"]
+    : b.practice ? ["/api/practice"] : [];
+  paths.filter(p => !MEM.has(p) && !NO_MEM.test(p)).forEach(path =>
+    fetch(path, { headers: authHeaders() }).then(r => r.ok ? r.json() : null)
+      .then(json => { if (json && !MEM.has(path)) MEM.set(path, { text: JSON.stringify(json), at: Date.now() }); })
+      .catch(() => {}));
+}
+
 // Internet yo'q bo'lsa — shu so'rovning oxirgi saqlangan javobi (skaner internetsiz ham ochilsin).
 // pick — saqlanadigan qismi (localStorage kichik: faqat kerakligi)
 async function apiCached(path, pick = x => x) {
@@ -767,6 +800,8 @@ async function render(soft = false) {
     showBack(S.stack.length > 0 || (!tabbed && !NO_BACK.has(view)));
     if (soft) { window.scrollTo(0, Math.min(y, document.body.scrollHeight)); requestAnimationFrame(() => $app.classList.remove("soft")); }
     S.soft = false;
+    // Birinchi chizishdan keyin (rol bo'yicha bir marta) — tablar ma'lumoti orqada yuklanadi
+    if (tabbed && S.boot && S.warmed !== S.role) { S.warmed = S.role; setTimeout(warmTabs, 700); }
   }
 }
 const rerender = () => render(true);
@@ -2263,9 +2298,14 @@ function bindEssayPayments() {
 const PACK_DEFAULTS = [1, 2, 5, 10, 30, 50], PACK_ROWS_MAX = 10;
 // Bitta qator: kredit soni va narxi (narxi bo'sh qator saqlanmaydi)
 function packRowHTML(p) {
-  return `<div class="row pk-row" style="gap:8px"><input class="input" data-pk-n inputmode="numeric" value="${p.essays || ""}" placeholder="Kredit" style="flex:1" aria-label="Kredit soni">
-    <input class="input" data-pk-p inputmode="numeric" value="${p.price ? sum(p.price) : ""}" placeholder="Narxi (so'm)" style="flex:1.6" aria-label="Narxi">
-    <span class="small muted" style="min-width:44px">${p.discount ? `−${p.discount}%` : ""}</span></div>`;
+  // Kredit soni: − / + bilan o'zgaradi (yoki yoziladi); qator oxirida o'chirish tugmasi
+  return `<div class="pk-row"><div class="pk-step">
+      <button type="button" data-pk-dec aria-label="Kreditni kamaytirish">−</button>
+      <input class="input" data-pk-n inputmode="numeric" value="${p.essays || ""}" placeholder="Kredit" aria-label="Kredit soni">
+      <button type="button" data-pk-inc aria-label="Kreditni ko'paytirish">+</button></div>
+    <input class="input pk-price" data-pk-p inputmode="numeric" value="${p.price ? sum(p.price) : ""}" placeholder="Narxi (so'm)" aria-label="Narxi">
+    <span class="pk-disc small muted">${p.discount ? `−${p.discount}%` : ""}</span>
+    <button type="button" class="pk-del" data-pk-del aria-label="Qatorni o'chirish">${ico("trash")}</button></div>`;
 }
 // ---------- ⚙️ Sozlamalar (ustoz): karta, begonalar uchun esse tekshiruvi, kredit narxlari ----------
 VIEWS.settings = async () => {
@@ -2325,7 +2365,7 @@ function packsCardHTML(r) {
     .sort((a, b) => a.essays - b.essays).slice(0, PACK_ROWS_MAX);
   return `<div class="section-title"><h2>📦 Kredit narxlari</h2><span class="muted small">${saved.length ? `${saved.length} ta narx` : "narx yo'q"}</span></div>
     <div class="card" id="packs-card"><span class="muted small">1 kredit = 1 esse. O'quvchi bitta chek bilan bir nechta kredit oladi — keyingi esselari chek so'ramaydi.</span>
-      <div class="row small muted" style="gap:8px"><b style="flex:1">Kredit</b><b style="flex:1.6">Narxi (so'm)</b><span style="min-width:44px">Chegirma</span></div>
+      <div class="pk-row pk-head small muted"><b>Kredit</b><b>Narxi (so'm)</b><span class="pk-disc">Cheg.</span><span></span></div>
       <div id="pk-rows" style="display:grid;gap:8px">${rows.map(packRowHTML).join("")}</div>
       <span class="muted small">Narxi yozilmagan qator sotilmaydi. Chegirma 1 kreditlik narxga nisbatan o'zi hisoblanadi.</span>
       <button type="button" class="btn ghost block" id="pk-add" ${rows.length >= PACK_ROWS_MAX ? "hidden" : ""}>➕ Qator qo'shish</button>
@@ -2336,10 +2376,26 @@ function bindPacksCard() {
   const digits = v => String(v || "").replace(/\D/g, "");
   const box = document.getElementById("pk-rows"), add = document.getElementById("pk-add");
   add.onclick = () => {
-    box.insertAdjacentHTML("beforeend", packRowHTML({})); haptic("light");
-    const fresh = box.lastElementChild.querySelector("[data-pk-n]"); if (fresh) fresh.focus();
+    // Yangi qator: oxirgi kredit sonidan kattaroq son taklif qilinadi
+    const last = [...box.querySelectorAll("[data-pk-n]")].reduce((m, x) => Math.max(m, +digits(x.value) || 0), 0);
+    box.insertAdjacentHTML("beforeend", packRowHTML({ essays: last ? last + 1 : 1 })); haptic("light");
+    const fresh = box.lastElementChild.querySelector("[data-pk-p]"); if (fresh) fresh.focus();
     add.hidden = box.children.length >= PACK_ROWS_MAX;
   };
+  // − / + va o'chirish: yangi qo'shilgan qatorlarda ham ishlashi uchun bitta tinglovchi
+  box.onclick = e => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    const row = btn.closest(".pk-row"), input = row.querySelector("[data-pk-n]");
+    if (btn.hasAttribute("data-pk-del")) {
+      haptic("light"); row.classList.add("out");
+      setTimeout(() => { row.remove(); add.hidden = box.children.length >= PACK_ROWS_MAX; }, 260);
+      return;
+    }
+    const step = btn.hasAttribute("data-pk-inc") ? 1 : btn.hasAttribute("data-pk-dec") ? -1 : 0; if (!step) return;
+    input.value = Math.min(999, Math.max(1, (+digits(input.value) || 0) + step)); haptic("select");
+    input.classList.remove("bump"); void input.offsetWidth; input.classList.add("bump");
+  };
+  box.oninput = e => { if (e.target.matches("[data-pk-n]")) e.target.value = digits(e.target.value).slice(0, 3); };
   save.onclick = async () => {
     const packs = [...box.querySelectorAll(".pk-row")].map(row => ({ essays: +digits(row.querySelector("[data-pk-n]").value) || 0,
       price: +digits(row.querySelector("[data-pk-p]").value) || 0 })).filter(p => p.price);
