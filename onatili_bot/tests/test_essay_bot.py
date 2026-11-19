@@ -35,6 +35,10 @@ class FakeBot:
     async def send_document(self, chat_id, document, caption=None, reply_markup=None, **_):
         self.sent.append((chat_id, caption, reply_markup))
 
+    async def download(self, file_id):
+        import io
+        return io.BytesIO(f"rasm-{file_id}".encode())
+
 
 def buttons(markup):
     return [b.callback_data for row in (markup.inline_keyboard if markup else []) for b in row]
@@ -61,6 +65,10 @@ class EssayBot(unittest.IsolatedAsyncioTestCase):
     def message(self, user_id, text=None, photo=None, document=None):
         async def answer(value, reply_markup=None, **_):
             self.replies.append((user_id, value, reply_markup))
+
+            async def delete():
+                return True
+            return types.SimpleNamespace(delete=delete)  # Telegram yuborilgan xabarni qaytaradi
 
         user = types.SimpleNamespace(id=user_id, full_name=f"User {user_id}", username=None)
         return types.SimpleNamespace(text=text, from_user=user, answer=answer, bot=self.bot,
@@ -96,7 +104,7 @@ class EssayBot(unittest.IsolatedAsyncioTestCase):
         # Ustoz: narx va karta, keyin ommaviy
         state = self.state(TEACHER)
         await bot.essay_setup_button(self.callback(TEACHER, "ecs:pub"), state)
-        self.assertTrue(any("Avval esse narxi va kartani kiriting" in str(r[1]) for r in self.replies))
+        self.assertTrue(any("Avval esse narxi (yoki paket) va kartani kiriting" in str(r[1]) for r in self.replies))
         await bot.essay_setup_button(self.callback(TEACHER, "ecs:price"), state)
         await bot.essay_setup_price(self.message(TEACHER, "15 000"), state)
         await bot.essay_setup_button(self.callback(TEACHER, "ecs:card"), state)
@@ -120,21 +128,125 @@ class EssayBot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.public_free_used(TEACHER, STRANGER), 2)
         self.assertEqual(db.get_credits(TEACHER) if not plans.SALES_ENABLED else 10, 8 if not plans.SALES_ENABLED else 10)
 
-        # 3-esse — to'lov so'raladi
-        state = await self.write_essay(STRANGER)
-        self.assertTrue(any("To'lov: 15 000 so'm" in str(r[1]) for r in self.replies))
-        practice = db.practice_awaiting_pay(STRANGER)
-        self.assertEqual((practice["price"], practice["status"]), (15000, "awaiting_pay"))
-        await bot.essay_receipt(self.message(STRANGER, photo="chek-1"), state)
-        to_teacher = [s for s in self.bot.sent if s[0] == TEACHER and "to'lovi" in str(s[1])]
-        self.assertEqual(buttons(to_teacher[-1][2]), [f"ecp:ok:{practice['id']}", f"ecp:no:{practice['id']}"])
-        self.assertEqual(db.get_practice(practice["id"])["status"], "awaiting_check")
+        # 3-esse — saqlanadi va kredit taklif qilinadi (har esse uchun alohida chek yo'q)
+        await self.write_essay(STRANGER)
+        offer = [r for r in self.replies if r[0] == STRANGER and "Essengiz saqlandi" in str(r[1])]
+        self.assertEqual(buttons(offer[-1][2]), [f"wbp:{TEACHER}:1"])
+        waiting = db.practice_awaiting_credit(TEACHER, STRANGER)
+        self.assertEqual(len(waiting), 1)
+        self.assertEqual(db.public_free_used(TEACHER, STRANGER), 2)  # kredit kutayotgani bepullarga kirmaydi
 
-        await bot.essay_payment_decision(self.callback(STRANGER, f"ecp:ok:{practice['id']}"))  # begona tasdiqlay olmaydi
-        self.assertEqual(db.get_practice(practice["id"])["status"], "awaiting_check")
-        await bot.essay_payment_decision(self.callback(TEACHER, f"ecp:ok:{practice['id']}"))
-        self.assertEqual(db.get_practice(practice["id"])["status"], "pending")  # AI navbatida
-        self.assertTrue(any(s[0] == STRANGER and "To'lov tasdiqlandi" in s[1] for s in self.bot.sent))
+    async def setup_public(self, price="5000", packs="5 22 000\n10 - 40000"):
+        state = self.state(TEACHER)
+        await bot.essay_setup_button(self.callback(TEACHER, "ecs:price"), state)
+        await bot.essay_setup_price(self.message(TEACHER, price), state)
+        await bot.essay_setup_button(self.callback(TEACHER, "ecs:packs"), state)
+        await bot.essay_setup_packs(self.message(TEACHER, packs), state)
+        await bot.essay_setup_button(self.callback(TEACHER, "ecs:card"), state)
+        await bot.essay_setup_card(self.message(TEACHER, "8600 1234 5678 9012 Aliyev Vali"), state)
+        await bot.essay_setup_button(self.callback(TEACHER, "ecs:pub"), state)
+
+    def hooks(self):
+        """Bot ↔ webapp: matnlar FakeBot'ga, AI chekni «o'qiydi» (tarmoqsiz)."""
+        saved = dict(webapp.HOOKS), essay_ai.enabled, essay_ai.read_receipt
+        webapp.HOOKS.update(send_text=lambda chat_id, text: self.bot.send_message(chat_id, text),
+                            wallet_receipt_notice=lambda *a: bot.wallet_receipt_notice(self.bot, *a),
+                            wake_ai=lambda: None)
+        essay_ai.enabled = lambda: True
+        self.receipt = {}
+
+        async def read(image, mime="image/jpeg"):
+            return dict(self.receipt)
+        essay_ai.read_receipt = read
+
+        def restore():
+            webapp.HOOKS.clear()
+            webapp.HOOKS.update(saved[0])
+            essay_ai.enabled, essay_ai.read_receipt = saved[1], saved[2]
+        self.addCleanup(restore)
+
+    def good_receipt(self, amount):
+        self.receipt = {"is_receipt": True, "success": True, "amount": amount, "date": plans.now().strftime("%Y-%m-%d"),
+                        "recipient_card": "8600 **** **** 9012", "recipient_name": "ALIYEV VALI", "transaction_id": f"TX{amount}",
+                        "looks_edited": False}
+
+    async def test_packs_parsed_with_spaces_and_discount(self):
+        await self.setup_public()
+        packs = webapp.essay_packs(TEACHER)
+        self.assertEqual([(p["essays"], p["price"], p["discount"]) for p in packs],
+                         [(1, 5000, 0), (5, 22000, 12), (10, 40000, 20)])
+        state = self.state(TEACHER)
+        await bot.essay_setup_button(self.callback(TEACHER, "ecs:packs"), state)
+        await bot.essay_setup_packs(self.message(TEACHER, "1 3000"), state)  # 1 talik — paket emas
+        self.assertTrue(any("2–100" in str(r[1]) for r in self.replies))
+        await bot.essay_setup_packs(self.message(TEACHER, "0"), state)  # paketlarni o'chirish
+        self.assertEqual([p["essays"] for p in webapp.essay_packs(TEACHER)], [1])
+
+    async def test_credit_bought_once_then_essays_without_receipt(self):
+        self.hooks()
+        await self.setup_public()
+        code = webapp.public_code(TEACHER)
+        await bot.open_public(self.message(STRANGER), code)
+        self.assertIn(f"wb:{TEACHER}", buttons(self.replies[-1][2]))
+        await self.write_essay(STRANGER)
+        await self.write_essay(STRANGER)
+        await self.write_essay(STRANGER)  # bepullar tugagan — saqlanadi, kredit kutadi
+        waiting = db.practice_awaiting_credit(TEACHER, STRANGER)[0]
+        offer = [r for r in self.replies if r[0] == STRANGER and "Essengiz saqlandi" in str(r[1])][-1]
+        self.assertEqual(buttons(offer[2]), [f"wbp:{TEACHER}:1", f"wbp:{TEACHER}:5", f"wbp:{TEACHER}:10"])
+
+        await bot.wallet_pack_button(self.callback(STRANGER, f"wbp:{TEACHER}:5"))
+        self.assertTrue(any(s[0] == STRANGER and "22 000 so'm" in s[1] and "8600 1234 5678 9012" in s[1] for s in self.bot.sent))
+        pay = db.open_wallet_payment(STRANGER)
+        self.assertEqual((pay["essays"], pay["amount"], pay["status"]), (5, 22000, "open"))
+
+        self.good_receipt(22000)
+        await bot.receipt_received(self.message(STRANGER, photo="chek-1"))
+        self.assertEqual(db.get_wallet_payment(pay["id"])["status"], "paid")
+        self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 4)  # 5 − saqlangan esse
+        released = db.get_practice(waiting["id"])
+        self.assertEqual((released["status"], released["wallet"]), ("pending", 1))
+        self.assertTrue(any(s[0] == STRANGER and "Kredit qo'shildi: +5" in s[1] for s in self.bot.sent))
+        to_teacher = [s for s in self.bot.sent if s[0] == TEACHER and "Esse krediti" in str(s[1])]
+        self.assertEqual(buttons(to_teacher[-1][2]), [f"wp:no:{pay['id']}"])  # AI tasdiqladi — faqat bekor qilish
+
+        await self.write_essay(STRANGER)  # 4-esse — chek so'ralmaydi
+        self.assertTrue(any("1 kredit yechildi, qoldi: <b>3 ta</b>" in str(r[1]) for r in self.replies if r[0] == STRANGER))
+        self.assertEqual(db.public_free_used(TEACHER, STRANGER), 2)
+
+        # Shu chek ikkinchi marta — AI tasdiqlamaydi (ustozga)
+        await bot.wallet_pack_button(self.callback(STRANGER, f"wbp:{TEACHER}:1"))
+        self.good_receipt(22000)
+        await bot.receipt_received(self.message(STRANGER, photo="chek-1"))
+        second = db.open_wallet_payment(STRANGER)
+        self.assertEqual(second["status"], "review")
+        self.assertIn("oldin ishlatilgan", db.get_wallet_payment(second["id"])["note"])
+        await bot.decide_wallet_payment_button(self.callback(STRANGER, f"wp:ok:{second['id']}"))  # begona — yo'q
+        self.assertEqual(db.get_wallet_payment(second["id"])["status"], "review")
+        await bot.decide_wallet_payment_button(self.callback(TEACHER, f"wp:no:{second['id']}"))
+        self.assertEqual(db.get_wallet_payment(second["id"])["status"], "rejected")
+        self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 3)
+
+        # Ustoz AI tasdiqlagan birinchi to'lovni bekor qiladi — berilgan kredit qaytib olinadi (0 dan pastga emas)
+        await bot.decide_wallet_payment_button(self.callback(TEACHER, f"wp:no:{pay['id']}"))
+        self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 0)
+
+    async def test_failed_check_returns_credit(self):
+        db.wallet_add(TEACHER, STRANGER, 1)
+        pid = db.create_practice(TEACHER, STRANGER, None, "matn " * 80, "public", None, "awaiting_credit")
+        self.assertEqual(await webapp.release_waiting(TEACHER, STRANGER), (1, False))
+        self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 0)
+        grade, essay_ai.grade = essay_ai.grade, None
+
+        async def broken(*_):
+            raise essay_ai.AIError("o'qib bo'lmadi", retry=False)
+        essay_ai.grade = broken
+        try:
+            await bot.grade_practice(self.bot, db.get_practice(pid))
+        finally:
+            essay_ai.grade = grade
+        self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 1)
+        self.assertTrue(any("kreditingiz qaytarildi" in s[1] for s in self.bot.sent if s[0] == STRANGER))
 
     async def test_closed_public_and_linked_student(self):
         code = webapp.public_code(TEACHER)

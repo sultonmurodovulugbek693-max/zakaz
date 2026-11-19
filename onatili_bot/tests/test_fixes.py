@@ -1063,6 +1063,37 @@ class EssayPaid(ServerBase):
         self.assertIsNone((await self.info(test))[1]["essay_warning"])
         self.assertTrue(await webapp.essay_ai_ok(test, STUDENT))
 
+    async def test_wallet_credit_opens_mock_essay(self):
+        """Begona o'quvchi ustozdan kredit paketi oladi: mock essesi chek so'ramaydi, 1 kredit yechiladi."""
+        test = await self.paid_mock()
+        status, r = await self.post("/api/teacher/packs", {"price": 5000, "packs": [{"essays": 5, "price": 20000}]})
+        self.assertEqual(status, 200, r)
+        self.assertEqual([(p["essays"], p["discount"]) for p in r["packs"]], [(1, 0), (5, 20)])
+        self.assertEqual((await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 3000}]}))[0], 400)
+
+        await self.as_student(OTHER)
+        _, info = await self.info(test)
+        self.assertEqual([p["essays"] for p in info["essay_pay"]["packs"]], [1, 5])
+        status, order = await self.post(f"/api/test/{test['code']}/wallet-order", {"essays": 5})
+        self.assertEqual((status, order["payment"]["amount"]), (200, 20000), order)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/wallet-order", {"essays": 3}))[0], 409)  # bunday paket yo'q
+
+        await self.post(f"/api/teacher/wallet-payment/{order['payment']['id']}", {"action": "approve"})  # begona — 404
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 0)
+        await self.as_owner()
+        status, _ = await self.post(f"/api/teacher/wallet-payment/{order['payment']['id']}", {"action": "approve"})
+        self.assertEqual((status, db.wallet_balance(OWNER, OTHER)), (200, 5))
+        self.assertEqual((await self.post(f"/api/teacher/wallet-payment/{order['payment']['id']}", {"action": "approve"}))[0], 409)
+
+        await self.as_student(OTHER)
+        _, info = await self.info(test)
+        self.assertIsNone(info["essay_pay"])
+        self.assertEqual(info["wallet"], {"balance": 5})
+        status, res = await self.submit(test, self.ESSAY)
+        self.assertEqual(status, 200, res)
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 4)
+        self.assertEqual(db.get_essay(res["attempt_id"])["status"], "pending")  # AI tekshiradi
+
     async def test_pack_needs_active_subscription(self):
         """Obuna tugagan: paketdagi kredit ishlatilmaydi — can_use_ai ham «yo'q» deydi (use_ai bilan bir xil)."""
         db.add_credits(OWNER, 3)

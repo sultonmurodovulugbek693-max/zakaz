@@ -1181,6 +1181,7 @@ VIEWS.answer = async ({ code }) => {
       ${t.essay_topic ? `<div class="card"><div class="topic">${esc(t.essay_topic)}</div></div>` : ""}${essayPayHTML(t.essay_pay)}` : ""}
     ${t.fmt === "milliy" && !t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai && !t.essay_warning ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
       ${t.essay_warning ? `<div class="card" style="border:1.5px solid var(--warn)"><span class="small">⚠️ ${esc(t.essay_warning)}</span></div>` : ""}
+      ${t.wallet ? `<div class="card"><span class="small">💳 Kreditingiz: <b>${t.wallet.balance} ta</b> — esse bilan yuborsangiz 1 kredit yechiladi (chek kerak emas).</span></div>` : ""}
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
         <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
         <div class="counter" id="essay-count"></div></div>
@@ -1830,10 +1831,11 @@ VIEWS.students = () => aiView("students");
 // mode: "ai" — kredit va sotib olish; "students" — o'quvchilarim (arizalar, ulash, oylik chegara)
 async function aiView(mode) {
   loading();
-  let r, j = { joins: [] }, ep = { payments: [] };
+  let r, j = { joins: [] }, ep = { payments: [] }, wp = { payments: [] };
   try {
-    [r, j, ep] = await Promise.all([api("/api/teacher/link"), mode === "students" ? api("/api/teacher/joins") : Promise.resolve(j),
-      mode === "students" ? api("/api/teacher/essay-payments") : Promise.resolve(ep)]);
+    [r, j, ep, wp] = await Promise.all([api("/api/teacher/link"), mode === "students" ? api("/api/teacher/joins") : Promise.resolve(j),
+      mode === "students" ? api("/api/teacher/essay-payments") : Promise.resolve(ep),
+      mode === "students" ? api("/api/teacher/wallet-payments") : Promise.resolve(wp)]);
   } catch (e) { return fail(e); }
   const isAi = mode === "ai";
   const n = r.credits, buy = !r.unlimited && r.card_ready;
@@ -1845,7 +1847,7 @@ async function aiView(mode) {
       <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
       : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
       <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar test bepul, esse tekshiruvini o'zi to'laydi.</span></div>
-      ${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}`}
+      ${walletPaymentsHTML(wp.payments)}${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}${packsCardHTML(r)}`}
     ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
       <div class="row between"><b>🤖 Kreditingiz</b><span class="credit-n">${r.unlimited ? "♾" : n}</span></div>
       <span class="muted small">${r.unlimited ? "Sizda AI cheksiz." : n ? `Yana <b>${n} ta</b> o'quvchi essesini tekshirtira olasiz.` : "Kredit yo'q — esselar AI'da tekshirilmaydi, o'zingiz baholaysiz."}</span>
@@ -1871,7 +1873,7 @@ async function aiView(mode) {
     <div class="list">${students || `<div class="card empty"><div class="big">👥</div>Hali o'quvchi ulanmagan — taklif havolasini yuboring.</div>`}</div>`}
   </div>`;
   document.querySelectorAll("[data-goto-students]").forEach(x => x.onclick = () => { haptic("light"); go("students"); });
-  bindJoins(); bindEssayPayments();
+  bindJoins(); bindEssayPayments(); bindWalletPayments(); bindPacksCard();
   let packs = 1;
   document.querySelectorAll("[data-packs]").forEach(x => x.onclick = () => { packs = +x.dataset.packs; haptic("select");
     document.querySelectorAll("[data-packs]").forEach(y => y.classList.toggle("on", y === x)); });
@@ -2003,14 +2005,38 @@ function essayPayHTML(p) {
     ${review ? `<span class="small">⏳ Chekingiz tekshirilmoqda — kutib turing, tasdiqlansa bot xabar beradi.</span>`
       : rejected ? `<span class="small">❌ Chek tasdiqlanmadi${p.note ? `: ${esc(p.note)}` : ""}. To'g'ri chekni botga qayta yuboring.</span>`
       : `<span class="muted small">Test bepul. Esseni yuklashdan oldin uning tekshiruvini to'lang — AI imtihondagidek 75 ballik shkalada tekshiradi.</span>`}
-    <span class="small">1. «Botda to'lash» — bot karta va summani yozadi<br>2. To'lab, chek skrinshotini botga yuboring<br>3. To'g'ri bo'lsa esse maydoni ochiladi</span>
-    ${review ? "" : `<button type="button" class="btn block" id="pw-bot">💳 Botda to'lash</button>`}
+    <span class="small">1. To'lov turini tanlang — bot karta va summani yozadi<br>2. To'lab, chek skrinshotini botga yuboring<br>3. To'g'ri bo'lsa esse maydoni ochiladi</span>
+    ${walletPacksHTML(p)}
+    ${review ? "" : `<button type="button" class="btn ${(p.packs || []).length ? "ghost" : ""} block" id="pw-bot">💳 Faqat shu esse — ${sum(p.price)} so'm</button>`}
     <button type="button" class="btn ghost block" id="pw-check">🔄 To'ladim — tekshirish</button>
     <span class="muted small">Belgilagan javoblaringiz saqlanadi. To'lamasangiz — testni essesiz yuborishingiz mumkin.</span></div>`;
+}
+// Kredit paketlari: bitta chek — bir nechta esse (shu ustozning hamma mocklari va bot orqali tekshiruv uchun)
+function walletPacksHTML(p) {
+  const packs = p.packs || [];
+  if (!packs.length) return "";
+  if (p.wallet_status === "review") return `<span class="small">⏳ Kredit chekingiz tekshirilmoqda — tasdiqlansa esse maydoni ochiladi.</span>`;
+  return `<div class="field"><label>📦 Kredit olish <span class="muted">— keyingi esselar chek so'ramaydi</span></label>
+    <div class="chips" id="wallet-packs">${packs.map((x, i) => `<button type="button" class="chip ${i === packs.length - 1 ? "on" : ""}" data-wpack="${x.essays}">${x.essays} ta · ${sum(x.price)}${x.discount ? ` <b>−${x.discount}%</b>` : ""}</button>`).join("")}</div>
+    <button type="button" class="btn block" id="pw-wallet">💳 Kredit sotib olish</button></div>`;
 }
 function bindEssayPay(code, p, reload) {
   const check = document.getElementById("pw-check"); if (!check) return;
   check.onclick = () => { haptic("light"); reload(); };
+  let essays = +((document.querySelector("[data-wpack].on") || {}).dataset || {}).wpack || 1;
+  document.querySelectorAll("[data-wpack]").forEach(x => x.onclick = () => { essays = +x.dataset.wpack; haptic("select");
+    document.querySelectorAll("[data-wpack]").forEach(y => y.classList.toggle("on", y === x)); });
+  const wallet = document.getElementById("pw-wallet");
+  if (wallet) wallet.onclick = async () => {
+    wallet.disabled = true;
+    try {
+      const r = await api(`/api/test/${code}/wallet-order`, { essays }); haptic("success");
+      toast("Botga karta va summa yuborildi — chekni o'sha yerga yuboring");
+      const bot = r.bot || p.bot;
+      if (bot) { try { tg.openTelegramLink(`https://t.me/${bot}`); } catch (e) { window.open(`https://t.me/${bot}`, "_blank"); } }
+    } catch (e) { toast(e.message); haptic("error"); }
+    wallet.disabled = false;
+  };
   const btn = document.getElementById("pw-bot");
   if (btn) btn.onclick = async () => {
     btn.disabled = true;
@@ -2099,6 +2125,60 @@ function bindEssayPayments() {
   };
   document.querySelectorAll("[data-epok]").forEach(x => x.onclick = decide(x.dataset.epok, "approve"));
   document.querySelectorAll("[data-epno]").forEach(x => x.onclick = decide(x.dataset.epno, "reject"));
+}
+
+// Begonalar uchun esse krediti: ustoz 1 ta esse narxini va paketlarni (nechta esse — narxi) o'zi qo'yadi
+function packsCardHTML(r) {
+  const packs = r.essay_packs || [], single = packs.find(p => p.essays === 1), multi = packs.filter(p => p.essays > 1);
+  const rows = [...multi, {}, {}, {}, {}].slice(0, 4);
+  return `<div class="section-title"><h2>📦 Begonalar uchun kredit</h2><span class="muted small">${packs.length ? `${packs.length} ta narx` : "narx yo'q"}</span></div>
+    <div class="card" id="packs-card"><span class="muted small">Ommaviy havola orqali kelgan o'quvchi 2 ta bepul esse tekshirtiradi, keyin kredit sotib oladi: bitta chek — bir nechta esse, har esse 1 kredit. Pul kartangizga tushadi.${r.my_card && r.my_card.number ? ` Karta: <b>${esc(r.my_card.number)}</b>` : " ⚠️ Karta hali kiritilmagan — botda /esse → «💳 Karta»."}</span>
+      <div class="field"><label for="pk-single">1 ta esse narxi (so'm)</label><input class="input" id="pk-single" inputmode="numeric" value="${single ? single.price : ""}" placeholder="Masalan 5000"></div>
+      <label class="small">Paketlar <span class="muted">— bo'sh qatorlar hisobga olinmaydi</span></label>
+      ${rows.map((p, i) => `<div class="row" style="gap:8px"><input class="input" data-pk-n="${i}" inputmode="numeric" value="${p.essays || ""}" placeholder="Esse soni" style="flex:1">
+        <input class="input" data-pk-p="${i}" inputmode="numeric" value="${p.price || ""}" placeholder="Narxi (so'm)" style="flex:1.4">
+        <span class="small muted" style="min-width:44px">${p.discount ? `−${p.discount}%` : ""}</span></div>`).join("")}
+      <button type="button" class="btn block" id="pk-save">Saqlash</button></div>`;
+}
+function bindPacksCard() {
+  const save = document.getElementById("pk-save"); if (!save) return;
+  const digits = v => String(v || "").replace(/\D/g, "");
+  save.onclick = async () => {
+    const packs = [...document.querySelectorAll("[data-pk-n]")].map(n => ({ essays: +digits(n.value) || 0,
+      price: +digits(document.querySelector(`[data-pk-p="${n.dataset.pkN}"]`).value) || 0 })).filter(p => p.essays || p.price);
+    save.disabled = true;
+    try {
+      await api("/api/teacher/packs", { price: +digits(document.getElementById("pk-single").value) || 0, packs });
+      haptic("success"); toast("✅ Narxlar saqlandi"); rerender();
+    } catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+}
+// Kredit paketi to'lovlari (chek yuborilganlar): AI shubhali deganlari — ustoz tasdiqlaydi
+function walletPaymentsHTML(list) {
+  if (!list.length) return "";
+  const review = list.filter(x => x.status === "review").length;
+  const tag = s => s === "review" ? `<span class="pill-tag wait">⏳ tekshiring</span>` : s === "paid" ? `<span class="pill-tag done">✅</span>` : `<span class="pill-tag bad">❌</span>`;
+  return `<div class="section-title"><h2>💳 Kredit to'lovlari</h2><span class="muted small">${review ? `${review} ta tekshirilmagan` : "hammasi ko'rilgan"}</span></div>
+    <div class="list">${list.slice(0, 20).map(x => `<div class="card" style="gap:8px">
+      <div class="row between"><b>💳 ${esc(x.full_name || "O'quvchi")} · ${x.essays} ta · ${sum(x.amount)} so'm</b>${tag(x.status)}</div>
+      <small class="muted">${esc(x.created_at || "")}${x.username ? ` · @${esc(x.username)}` : ""}${x.status === "review" && x.note ? `<br>🤖 AI: ${esc(x.note)}` : ""}</small>
+      <div class="row" style="gap:8px"><button type="button" class="btn ghost sm" data-wprc="${x.id}">🖼 Chek</button>
+      ${x.status === "review" ? `<button type="button" class="btn sm" data-wpok="${x.id}">✅ Tasdiqlash</button><button type="button" class="btn ghost sm" data-wpno="${x.id}">✕ Rad</button>`
+        : x.status === "paid" ? `<button type="button" class="btn ghost sm" data-wpno="${x.id}">✕ Bekor qilish</button>` : ""}</div></div>`).join("")}</div>`;
+}
+function bindWalletPayments() {
+  document.querySelectorAll("[data-wprc]").forEach(x => x.onclick = async () => {
+    try { const r = await api(`/api/teacher/wallet-payment/${x.dataset.wprc}/receipt`); openModal("🧾 Chek", `<img src="${r.image}" alt="Chek" style="width:100%;border-radius:12px">`); }
+    catch (e) { toast(e.message); }
+  });
+  const decide = (id, action) => async () => {
+    if (action === "reject" && !(await confirmBox("To'lovni rad etasizmi? Berilgan kredit (ishlatilmagani) qaytarib olinadi."))) return;
+    try { await api(`/api/teacher/wallet-payment/${id}`, { action }); haptic("success");
+      toast(action === "approve" ? "✅ Tasdiqlandi — o'quvchiga kredit qo'shildi" : "❌ Rad etildi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); }
+  };
+  document.querySelectorAll("[data-wpok]").forEach(x => x.onclick = decide(x.dataset.wpok, "approve"));
+  document.querySelectorAll("[data-wpno]").forEach(x => x.onclick = decide(x.dataset.wpno, "reject"));
 }
 
 // O'qituvchi: «O'quvchisiman» arizalari («👥 O'quvchilarim» ichida)

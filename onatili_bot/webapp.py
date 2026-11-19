@@ -295,6 +295,7 @@ async def test_info(request: web.Request) -> web.Response:
         "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
         "essay_pay": None if previous else await essay_pay_info(test, user),
         "essay_warning": None if previous else await essay_warning(test, user),
+        "wallet": None if previous else await wallet_view(test, user),
         "readers": essay_ai.readers() if test["fmt"] == "milliy" else [],  # esse rasmini o'qiydigan AI'lar
     })
 
@@ -336,9 +337,22 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
     pay = await run(db.essay_payment_of, test["id"], user["id"])
     if pay and pay["status"] == "paid":
         return None
+    if await run(db.wallet_balance, test["owner_id"], user["id"]) > 0:  # ustozdan olingan kredit bor — 1 kredit yechiladi
+        return None
+    wallet = await run(db.open_wallet_payment, user["id"])
     return {"price": price, "card": card["number"], "holder": card["holder"], "status": pay["status"] if pay else None,
             "note": pay["note"] if pay and pay["status"] == "rejected" else None,
+            "packs": await run(essay_packs, test["owner_id"]),  # kredit paketlari — keyingi esselar chek so'ramaydi
+            "wallet_status": wallet["status"] if wallet and wallet["teacher_id"] == test["owner_id"] else None,
             "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
+
+
+async def wallet_view(test: dict, user: dict) -> dict | None:
+    """Begona o'quvchining shu ustozdagi krediti (bo'lsa): esse maydonida «1 kredit yechiladi» deb ko'rsatiladi."""
+    if test["fmt"] != "milliy" or not await is_outsider(test, user["id"]):
+        return None
+    balance = await run(db.wallet_balance, test["owner_id"], user["id"])
+    return {"balance": balance} if balance > 0 else None
 
 
 # ---------- Qog'ozdagi esse rasmi → matn (onlayn mock): ilovada yoki botda; qaysi AI o'qishini o'quvchi tanlaydi ----------
@@ -450,7 +464,9 @@ async def essay_ai_ok(test: dict, student_id: int) -> bool:
         return False
     if await is_outsider(test, student_id):
         pay = await run(db.essay_payment_of, test["id"], student_id)
-        return bool(pay and pay["status"] == "paid")  # ustoz krediti ishlatilmaydi
+        if pay and pay["status"] == "paid":
+            return True  # ustoz krediti ishlatilmaydi
+        return await run(db.wallet_use, test["owner_id"], student_id)  # yoki o'quvchining shu ustozdagi 1 krediti
     return await ai_allowed(test["owner_id"], "essays")
 
 
@@ -602,6 +618,234 @@ async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> di
         except Exception:
             logger.warning("To'lov qarori o'quvchiga yuborilmadi", exc_info=True)
     return {"ok": True, "status": "paid" if approve else "rejected", "title": pay["title"]}
+
+
+# ---------- Begonaning esse krediti: paket bir marta to'lanadi, keyin har esse — 1 kredit (chek har safar emas) ----------
+# Kredit har ustozda alohida (pul o'sha ustoz kartasiga tushadi). Narxlarni ustoz o'zi qo'yadi: 1 ta esse narxi
+# (essay_price) va 2–100 talik paketlar (essay_packs). Botdagi ommaviy havola va onlayn mock — ikkalasi shu kreditdan.
+
+MAX_PACKS = 4  # 1 talikdan tashqari nechta paket
+PACK_PRICE_MIN, PACK_PRICE_MAX = 1000, 5_000_000
+
+
+def essay_packs(teacher_id: int) -> list[dict]:
+    """Ustozning paketlari: [{essays, price, discount}], 1 talik (esse narxi) birinchi. Chegirma — 1 talikka nisbatan."""
+    saved = db.get_settings()
+    single = int(saved.get(f"essay_price:{teacher_id}") or 0)
+    out = [{"essays": 1, "price": single}] if single else []
+    try:
+        raw = json.loads(saved.get(f"essay_packs:{teacher_id}") or "[]")
+    except ValueError:
+        raw = []
+    for item in raw if isinstance(raw, list) else []:
+        try:
+            essays, price = int(item[0]), int(item[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 2 <= essays <= 100 and PACK_PRICE_MIN <= price <= PACK_PRICE_MAX and all(p["essays"] != essays for p in out):
+            out.append({"essays": essays, "price": price})
+    out.sort(key=lambda p: p["essays"])
+    for p in out:
+        full = single * p["essays"]
+        p["discount"] = round(100 - p["price"] * 100 / full) if single and p["essays"] > 1 and p["price"] < full else 0
+    return out
+
+
+def clean_packs(rows) -> list[list[int]]:
+    """Ustoz kiritgan paketlar [(nechta esse, narx), ...] → saqlanadigan ro'yxat. Xato bo'lsa — ValueError (sababi bilan)."""
+    out: list[list[int]] = []
+    for essays, price in rows:
+        try:
+            essays, price = int(essays), int(price)
+        except (TypeError, ValueError):
+            raise ValueError("Paket: esse soni va narxi son bo'lsin")
+        if not 2 <= essays <= 100:
+            raise ValueError("Paketdagi esselar soni 2–100 bo'lsin (1 talik — «Esse narxi»)")
+        if not PACK_PRICE_MIN <= price <= PACK_PRICE_MAX:
+            raise ValueError(f"Paket narxi {plans.money(PACK_PRICE_MIN)} – {plans.money(PACK_PRICE_MAX)} so'm bo'lsin")
+        if any(p[0] == essays for p in out):
+            raise ValueError(f"{essays} talik paket ikki marta yozilgan")
+        out.append([essays, price])
+    if len(out) > MAX_PACKS:
+        raise ValueError(f"Ko'pi bilan {MAX_PACKS} ta paket")
+    return sorted(out)
+
+
+def save_packs(teacher_id: int, single: int | None, rows) -> list[dict]:
+    """1 ta esse narxi (None — o'zgarmaydi) va paketlar saqlanadi."""
+    packs = clean_packs(rows)
+    if single is not None:
+        if single and not PACK_PRICE_MIN <= single <= 1_000_000:
+            raise ValueError("1 ta esse narxi 1 000 – 1 000 000 so'm bo'lsin")
+        db.set_setting(f"essay_price:{teacher_id}", str(single))
+    db.set_setting(f"essay_packs:{teacher_id}", json.dumps(packs))
+    return essay_packs(teacher_id)
+
+
+def packs_text(packs: list[dict]) -> str:
+    """Bot xabari uchun: «1 ta — 5 000 · 5 ta — 22 000 (−12%)»."""
+    return " · ".join(f"{p['essays']} ta — {plans.money(p['price'])}" + (f" (−{p['discount']}%)" if p["discount"] else "")
+                      for p in packs) or "narx qo'yilmagan"
+
+
+async def wallet_order(teacher_id: int, student: dict, essays: int) -> dict:
+    """O'quvchi paket tanladi: to'lov ochiladi, bot karta va summani yozadi — chek skrinshotini shu yerga yuboradi."""
+    if teacher_id == student["id"]:
+        raise ApiError(400, "O'zingizdan kredit sotib ololmaysiz")
+    pack = next((p for p in await run(essay_packs, teacher_id) if p["essays"] == essays), None)
+    card = await run(teacher_card, teacher_id)
+    if not pack or not card["number"]:
+        raise ApiError(409, "Ustoz bu paketni sotmayapti — narx yoki karta qo'yilmagan")
+    await run(db.remember_user, student["id"], student.get("name"), student.get("username"))
+    pay = await run(db.start_wallet_payment, teacher_id, student["id"], pack["essays"], pack["price"])
+    if pay["status"] == "review":
+        raise ApiError(409, "Oldingi chekingiz hali tekshirilmoqda — tasdiqlangach yangi paket olasiz")
+    if "send_text" in HOOKS:
+        teacher = await run(db.find_user, str(teacher_id)) or {}
+        try:
+            await HOOKS["send_text"](
+                student["id"], f"💳 <b>Esse krediti · {pack['essays']} ta</b> — {html.escape(teacher.get('full_name') or 'ustoz')}\n"
+                f"Summa: <b>{plans.money(pack['price'])} so'm</b>\nKarta: <code>{html.escape(card['number'])}</code>"
+                + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
+                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
+                  "kredit darhol qo'shiladi. Har esse — 1 kredit, muddati yo'q.")
+        except Exception:
+            logger.warning("Kredit to'lovi ko'rsatmasi yuborilmadi", exc_info=True)
+    return {"ok": True, "payment": pay, "card": card,
+            "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
+
+
+async def release_waiting(teacher_id: int, student_id: int) -> tuple[int, bool]:
+    """Kredit kutayotgan esselar (eng eskisidan): har biriga 1 kredit va ustozning 1 AI krediti → AI navbatiga.
+    Qaytaradi: (nechtasi navbatga qo'yildi, ustozning AI krediti tugaganmi)."""
+    released, teacher_out = 0, False
+    for practice in await run(db.practice_awaiting_credit, teacher_id, student_id):
+        if not await run(db.wallet_use, teacher_id, student_id):
+            break
+        if not await ai_allowed(teacher_id, "essays"):
+            await run(db.wallet_add, teacher_id, student_id, 1)  # AI tekshirmaydi — kredit yechilmaydi
+            teacher_out = True
+            break
+        await run(db.set_practice_wallet, practice["id"], "pending")
+        released += 1
+    if released and "wake_ai" in HOOKS:
+        HOOKS["wake_ai"]()
+    return released, teacher_out
+
+
+async def credited(pay: dict, balance: int, by_ai: bool) -> None:
+    """Kredit qo'shildi: o'quvchiga xabar va kutib turgan esselari tekshiruvga."""
+    released, teacher_out = await release_waiting(pay["teacher_id"], pay["student_id"])
+    balance -= released
+    text = (f"✅ <b>Kredit qo'shildi: +{pay['essays']} ta</b>" + (" (chek AI'da tasdiqlandi)" if by_ai else "")
+            + f"\n💳 Balans: <b>{max(0, balance)} ta</b> esse")
+    if released:
+        text += f"\n⏳ Saqlab qo'yilgan {released} ta essengiz tekshirilmoqda — natija shu yerga keladi."
+    elif teacher_out:
+        text += ("\n⚠️ Ustozning AI krediti hozir tugagan — saqlangan essengiz kutib turibdi (kredit yechilmadi). "
+                 "Ustozga ayting; keyingi esse yuborganingizda birinchi bo'lib tekshiriladi.")
+    else:
+        text += "\nEndi «✍️ Esse yuborish» — har esse 1 kredit, chek kerak emas."
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](pay["student_id"], text)
+        except Exception:
+            logger.warning("Kredit xabari o'quvchiga yuborilmadi", exc_info=True)
+
+
+async def check_wallet_receipt(payment_id: int, data: bytes, mime: str) -> dict:
+    """Botga yuborilgan kredit cheki: AI to'g'ri desa — kredit darhol; aks holda ustozga, o'quvchiga «kutib turing»."""
+    pay = await run(db.get_wallet_payment, payment_id)
+    if not pay:
+        raise ApiError(404, "To'lov topilmadi")
+    if pay["status"] in ("paid", "review"):
+        return {"ok": True, "status": pay["status"], "reasons": []}
+    digest = hashlib.sha256(data).hexdigest()
+    good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["teacher_id"]))
+    if await run(db.receipt_used, digest, txn, payment_id, "wallet_payments"):
+        good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
+    await run(db.save_wallet_receipt, payment_id, base64.b64encode(data).decode(), mime, digest, txn, "; ".join(reasons))
+    balance = await run(db.pay_wallet_payment, payment_id, ("review",)) if good else None
+    if balance is not None:
+        await credited(pay, balance, by_ai=True)
+    elif "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](pay["student_id"], f"⏳ <b>Chek tekshirilmoqda — kutib turing</b> · {pay['essays']} ta kredit\n"
+                                                        "Avtomatik tasdiqlanmadi, ustoz ko'rib chiqadi va bot xabar beradi.")
+        except Exception:
+            logger.warning("Chek holati o'quvchiga yuborilmadi", exc_info=True)
+    if "wallet_receipt_notice" in HOOKS:
+        try:
+            await HOOKS["wallet_receipt_notice"](payment_id, balance is not None, reasons, data)
+        except Exception:
+            logger.warning("Kredit cheki ustozga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "paid" if balance is not None else "review", "reasons": reasons}
+
+
+async def decide_wallet_payment(payment_id: int, approve: bool, by_id: int) -> dict:
+    """Ustoz (yoki admin): kredit chekini tasdiqlaydi yoki rad etadi / AI tasdiqlaganini bekor qiladi (kredit qaytib olinadi)."""
+    pay = await run(db.get_wallet_payment, payment_id)
+    if not pay or (pay["teacher_id"] != by_id and by_id not in ADMIN_IDS):
+        raise ApiError(404, "To'lov topilmadi")
+    if approve:
+        balance = await run(db.pay_wallet_payment, payment_id, ("open", "review", "rejected"))
+        if balance is None:
+            raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        await credited(pay, balance, by_ai=False)
+    else:
+        if not await run(db.reject_wallet_payment, payment_id, ("open", "review", "paid")):
+            raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        if "send_text" in HOOKS:
+            try:
+                await HOOKS["send_text"](pay["student_id"], f"❌ <b>Kredit to'lovi tasdiqlanmadi</b> · {pay['essays']} ta\n"
+                                         "Chek mos kelmadi (summa, sana yoki karta). To'g'ri chekni qayta yuboring yoki ustozga yozing.")
+            except Exception:
+                logger.warning("Kredit qarori o'quvchiga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "paid" if approve else "rejected", "essays": pay["essays"],
+            "name": pay["full_name"] or "O'quvchi"}
+
+
+async def wallet_order_for_test(request: web.Request) -> web.Response:
+    """Onlayn mock: begona o'quvchi ustozning kredit paketini oladi (shu ustozning hamma mocklari va ommaviy havolasi uchun)."""
+    user = await auth(request)
+    test = await _paid_test(request, user)
+    return ok(await wallet_order(test["owner_id"], user, to_int((await body(request)).get("essays"), 1, "Paket")))
+
+
+async def packs_save(request: web.Request) -> web.Response:
+    user = await auth(request)
+    payload = await body(request)
+    rows = payload.get("packs") or []
+    if not isinstance(rows, list):
+        raise ApiError(400, "Paketlar noto'g'ri")
+    rows = [(p.get("essays"), p.get("price")) for p in rows if isinstance(p, dict) and (p.get("essays") or p.get("price"))]
+    single = None if payload.get("price") is None else to_int(payload.get("price"), 0, "Esse narxi")
+    try:
+        packs = await run(save_packs, user["id"], single, rows)
+    except ValueError as error:
+        raise ApiError(400, str(error))
+    return ok({"ok": True, "packs": packs})
+
+
+async def wallet_payments_list(request: web.Request) -> web.Response:
+    user = await auth(request)
+    return ok({"payments": await run(db.wallet_payments_for_teacher, user["id"])})
+
+
+async def wallet_payment_receipt(request: web.Request) -> web.Response:
+    user = await auth(request)
+    pay = await run(db.get_wallet_payment, int(request.match_info["payment_id"]))
+    if not pay or pay["teacher_id"] != user["id"] or not pay["receipt"]:
+        raise ApiError(404, "Chek topilmadi")
+    return ok({"image": _image_data_url(pay["receipt"], pay["mime"])})
+
+
+async def wallet_payment_decide(request: web.Request) -> web.Response:
+    user = await auth(request)
+    action = (await body(request)).get("action")
+    if action not in ("approve", "reject"):
+        raise ApiError(400, "Amal noto'g'ri")
+    return ok(await decide_wallet_payment(int(request.match_info["payment_id"]), action == "approve", user["id"]))
 
 
 def clean_answers(test: dict, raw: dict) -> dict:
@@ -1313,6 +1557,9 @@ async def link_view(request: web.Request) -> web.Response:
         "unlimited": unlimited, "ai": essay_ai.essay_enabled(),
         "pack": offer, "card_ready": bool(card["number"]) and bool(offer["price"]),
         "payment": await run(db.open_payment, user["id"]),
+        # Begonalar uchun: esse narxi, kredit paketlari va ustoz kartasi (pul shunga tushadi)
+        "essay_packs": await run(essay_packs, user["id"]),
+        "my_card": await run(teacher_card, user["id"]),
     })
 
 
@@ -3041,6 +3288,11 @@ def create_app() -> web.Application:
     app.router.add_get("/api/teacher/essay-payments", essay_payments_list)
     app.router.add_get("/api/teacher/essay-payment/{payment_id:\\d+}/receipt", essay_payment_receipt)
     app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)
+    app.router.add_post("/api/test/{code:\\d{5}}/wallet-order", wallet_order_for_test)
+    app.router.add_post("/api/teacher/packs", packs_save)
+    app.router.add_get("/api/teacher/wallet-payments", wallet_payments_list)
+    app.router.add_get("/api/teacher/wallet-payment/{payment_id:\\d+}/receipt", wallet_payment_receipt)
+    app.router.add_post("/api/teacher/wallet-payment/{payment_id:\\d+}", wallet_payment_decide)
     app.router.add_post("/api/teacher/link", link_add)
     app.router.add_post("/api/teacher/link/remove", link_remove)
     app.router.add_post("/api/teacher/link/limit", link_limit)

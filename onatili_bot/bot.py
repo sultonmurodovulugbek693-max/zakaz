@@ -555,6 +555,11 @@ async def receipt_received(message: Message) -> None:
         await essay_page_received(message, scan)
         return
     essay_pay = await asyncio.to_thread(db.open_essay_payment, message.from_user.id)
+    wallet_pay = await asyncio.to_thread(db.open_wallet_payment, message.from_user.id)
+    # Ikkalasi ochiq bo'lsa — oxirgi boshlangani (o'quvchi hozir shuni to'layapti)
+    if wallet_pay and (not essay_pay or (wallet_pay["created_at"] or "") >= (essay_pay.get("created_at") or "")):
+        await wallet_receipt_received(message, wallet_pay)
+        return
     if essay_pay:
         await essay_receipt_received(message, essay_pay)
         return
@@ -662,6 +667,73 @@ async def essay_receipt_received(message: Message, pay: dict) -> None:
             await wait.delete()
         except TelegramBadRequest:
             pass
+
+
+async def wallet_receipt_received(message: Message, pay: dict) -> None:
+    """Esse krediti paketi cheki: AI tekshiradi (sana, summa, karta) — to'g'ri bo'lsa kredit darhol qo'shiladi."""
+    if pay["status"] == "review":
+        await message.answer(f"⏳ Chekingiz ustozda · {pay['essays']} ta kredit. Kutib turing — tasdiqlansa bot xabar beradi.")
+        return
+    if message.document and not (message.document.mime_type or "").startswith("image/"):
+        await message.answer("🧾 Chekni rasm (skrinshot) ko'rinishida yuboring.")
+        return
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    mime = "image/jpeg" if message.photo else message.document.mime_type
+    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    try:
+        data = (await message.bot.download(file_id)).read()
+        await webapp.check_wallet_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
+    except Exception:
+        logger.exception("Kredit cheki tekshirilmadi")
+        await message.answer("⚠️ Chekni tekshirib bo'lmadi — birozdan keyin qayta yuboring.")
+    finally:
+        try:
+            await wait.delete()
+        except TelegramBadRequest:
+            pass
+
+
+async def wallet_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: list[str], photo: bytes) -> None:
+    """Ustozga (pul uning kartasiga): kredit cheki va AI xulosasi. AI tasdiqlagan bo'lsa — «Bekor qilish»,
+    aks holda «Tasdiqlash / Rad etish»."""
+    pay = await asyncio.to_thread(db.get_wallet_payment, payment_id)
+    if not pay:
+        return
+    who = esc(pay["full_name"] or str(pay["student_id"])) + (f" (@{esc(pay['username'])})" if pay["username"] else "")
+    caption = (f"🧾 <b>Esse krediti</b> · {pay['essays']} ta\n{LINE}\n👤 {who} · <code>{pay['student_id']}</code>\n"
+               f"💳 {plans.money(pay['amount'])} so'm\n"
+               + ("🤖 AI: ✅ chek to'g'ri — kredit qo'shildi" if good else
+                  "🤖 AI: ⚠️ " + esc("; ".join(reasons) or "tekshirilmadi") + "\nTekshirib, qaror qiling:"))
+    markup = inline([[("❌ Bekor qilish", f"wp:no:{payment_id}")]] if good else
+                    [[("✅ Tasdiqlash", f"wp:ok:{payment_id}"), ("❌ Rad etish", f"wp:no:{payment_id}")]])
+    try:
+        await bot.send_photo(pay["teacher_id"], BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+        return
+    except Exception:  # ustoz botni bloklagan — adminga (ilovada «👥 O'quvchilarim»da ham turadi)
+        logger.warning("Kredit cheki ustozga yuborilmadi: %s", pay["teacher_id"])
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_photo(admin_id, BufferedInputFile(photo, filename="chek.jpg"),
+                                 caption=caption + "\n<i>Ustozga yetkazilmadi — siz qaror qilishingiz mumkin</i>",
+                                 reply_markup=markup)
+        except Exception:
+            logger.warning("Kredit cheki adminga ham yuborilmadi: %s", admin_id)
+
+
+@dp.callback_query(F.data.startswith("wp:"))
+async def decide_wallet_payment_button(callback: CallbackQuery) -> None:
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    try:
+        await webapp.decide_wallet_payment(int(raw or 0), action == "ok", callback.from_user.id)
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("✅ Tasdiqlandi" if action == "ok" else "❌ Rad etildi")
+    note = "✅ Tasdiqlandi — kredit qo'shildi" if action == "ok" else "❌ Rad etildi / bekor qilindi"
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}", reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
 
 async def essay_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: list[str], photo: bytes) -> None:
@@ -1724,9 +1796,13 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
         give_up = not error.retry or practice["tries"] + 1 >= ESSAY_MAX_TRIES
         await asyncio.to_thread(db.practice_failed, practice["id"], str(error), give_up)
         if give_up:
+            paid = bool(practice.get("wallet"))
+            if paid:  # o'quvchining krediti bilan — kredit o'quvchiga qaytadi
+                await asyncio.to_thread(db.wallet_add, practice["teacher_id"], practice["student_id"], 1)
             try:
-                await bot.send_message(practice["student_id"], "❗️ AI esseni tekshira olmadi — ustoz krediti qaytarildi. "
-                                       "Rasm bo'lsa, yorug' joyda tekis qilib qayta yuboring.")
+                await bot.send_message(practice["student_id"], "❗️ AI esseni tekshira olmadi — "
+                                       + ("kreditingiz qaytarildi. " if paid else "ustoz krediti qaytarildi. ")
+                                       + "Rasm bo'lsa, yorug' joyda tekis qilib qayta yuboring.")
             except Exception:
                 pass
         if give_up and not plans.ai_unlimited(practice["teacher_id"]):
@@ -1788,6 +1864,7 @@ class EssayCheck(StatesGroup):
 class EssaySetup(StatesGroup):
     price = State()
     card = State()
+    packs = State()
 
 
 def essay_setup(teacher_id: int) -> dict:
@@ -1810,17 +1887,19 @@ async def send_essay_setup(bot: Bot, chat_id: int) -> None:
     own = f"https://t.me/{username}?start={webapp.invite_code(chat_id)}"
     public = f"https://t.me/{username}?start={webapp.public_code(chat_id)}"
     card = f"<code>{esc(cfg['card'])}</code>" + (f" ({esc(cfg['holder'])})" if cfg["holder"] else "") if cfg["card"] else "qo'yilmagan"
+    packs = await asyncio.to_thread(webapp.essay_packs, chat_id)
     text = (f"✍️ <b>Esse tekshiruvi</b>\n{LINE}\n"
             f"👥 <b>O'quvchilaringiz uchun</b> — bepul, kreditingizdan (har biriga oyiga {limit} ta):\n{own}\n"
             f"yoki botga kod: <code>{code}</code>\n\n"
             f"🌐 <b>Begonalar uchun</b> — {'✅ ochiq' if cfg['public'] else '⛔️ yopiq'}:\n{public}\n"
-            f"{PUBLIC_FREE} ta bepul, keyin har esse <b>{plans.money(cfg['price']) + ' so' + chr(39) + 'm' if cfg['price'] else 'narx qo' + chr(39) + 'yilmagan'}</b> "
-            "— pul kartangizga, chekni siz tasdiqlaysiz.\n"
+            f"{PUBLIC_FREE} ta bepul, keyin o'quvchi <b>kredit</b> sotib oladi (bitta chek — bir nechta esse):\n"
+            f"📦 {esc(webapp.packs_text(packs))}\n"
+            "Pul kartangizga tushadi, chekni AI tekshiradi (shubhali bo'lsa — siz tasdiqlaysiz).\n"
             f"💳 Karta: {card}\n\n"
             f"🤖 AI krediti: <b>{credits}</b> — har tekshirilgan esse 1 kredit (begonalarniki ham).\n"
             "Mock narxi alohida — test yaratishda qo'yiladi.")
     markup = inline([[("⛔️ Ommaviyni yopish" if cfg["public"] else "🌐 Ommaviyni ochish", "ecs:pub")],
-                     [("💰 Esse narxi", "ecs:price"), ("💳 Karta", "ecs:card")]])
+                     [("💰 1 esse narxi", "ecs:price"), ("📦 Paketlar", "ecs:packs")], [("💳 Karta", "ecs:card")]])
     await bot.send_message(chat_id, text, reply_markup=markup, disable_web_page_preview=True)
 
 
@@ -1837,8 +1916,8 @@ async def essay_setup_button(callback: CallbackQuery, state: FSMContext) -> None
     action, tid = callback.data.split(":")[1], callback.from_user.id
     if action == "pub":
         cfg = await asyncio.to_thread(essay_setup, tid)
-        if not cfg["public"] and (not cfg["price"] or not cfg["card"]):
-            await callback.answer("Avval esse narxi va kartani kiriting", show_alert=True)
+        if not cfg["public"] and (not await asyncio.to_thread(webapp.essay_packs, tid) or not cfg["card"]):
+            await callback.answer("Avval esse narxi (yoki paket) va kartani kiriting", show_alert=True)
             return
         await asyncio.to_thread(db.set_setting, f"essay_public:{tid}", "0" if cfg["public"] else "1")
         await callback.answer("⛔️ Ommaviy tekshiruv yopildi" if cfg["public"] else "🌐 Ommaviy tekshiruv ochildi")
@@ -1847,6 +1926,13 @@ async def essay_setup_button(callback: CallbackQuery, state: FSMContext) -> None
     if action == "price":
         await state.set_state(EssaySetup.price)
         await callback.message.answer("💰 Bitta esse tekshiruvi narxini yozing (so'mda), masalan: <code>15000</code>")
+    elif action == "packs":
+        await state.set_state(EssaySetup.packs)
+        await callback.message.answer(
+            "📦 <b>Kredit paketlari</b> — har qatorga: <i>nechta esse</i> va <i>narxi</i> (so'mda), masalan:\n"
+            "<code>5 22000\n10 40000</code>\n\n"
+            f"Ko'pi bilan {webapp.MAX_PACKS} ta paket, har biri 2–100 ta esse. 1 talik narx — «💰 1 esse narxi».\n"
+            "Paketlarni o'chirish uchun: <code>0</code>")
     else:
         await state.set_state(EssaySetup.card)
         await callback.message.answer("💳 Karta raqami va egasining ismini yozing, masalan:\n"
@@ -1863,6 +1949,32 @@ async def essay_setup_price(message: Message, state: FSMContext) -> None:
     await asyncio.to_thread(db.set_setting, f"essay_price:{message.from_user.id}", str(price))
     await state.clear()
     await message.answer(f"✅ Esse narxi: {plans.money(price)} so'm")
+    await send_essay_setup(message.bot, message.from_user.id)
+
+
+@dp.message(EssaySetup.packs)
+async def essay_setup_packs(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    rows = []
+    if text != "0":
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            # «5 22000», «5 ta - 22 000 so'm», «10: 40.000» — birinchi son esselar, qolgan raqamlar narx
+            match = re.match(r"^\s*(\d+)\D+(\d[\d\s.,]*)", line)
+            price = re.sub(r"\D", "", match.group(2)) if match else ""
+            if not match or not price:
+                await message.answer(f"«{esc(line.strip())}» — tushunmadim. Har qatorga: nechta esse va narxi, "
+                                     "masalan <code>5 22000</code>. Qayta yozing:")
+                return
+            rows.append((match.group(1), price))
+    try:
+        packs = await asyncio.to_thread(webapp.save_packs, message.from_user.id, None, rows)
+    except ValueError as error:
+        await message.answer(f"⚠️ {esc(str(error))}. Qayta yozing:")
+        return
+    await state.clear()
+    await message.answer(f"✅ Paketlar saqlandi: {esc(webapp.packs_text(packs))}")
     await send_essay_setup(message.bot, message.from_user.id)
 
 
@@ -1903,12 +2015,49 @@ async def open_public(message: Message, code: str) -> None:
         await message.answer(f"⛔️ {name} hozir ommaviy esse tekshiruvini yopgan.")
         return
     free_left = max(0, PUBLIC_FREE - await asyncio.to_thread(db.public_free_used, teacher_id, message.from_user.id))
+    balance = await asyncio.to_thread(db.wallet_balance, teacher_id, message.from_user.id)
+    packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
     await message.answer(
         f"✍️ <b>{name} — esse tekshiruvi</b>\n{LINE}\n"
         "AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.\n"
         + (f"🎁 Bepul: <b>{free_left} / {PUBLIC_FREE}</b> ta qoldi\n" if free_left else "")
-        + f"💰 Keyin har esse: <b>{plans.money(cfg['price'])} so'm</b> (ustoz kartasiga)",
-        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("📚 Esse namunalari", "esp:0")]]))
+        + (f"💳 Kreditingiz: <b>{balance} ta</b> esse\n" if balance else "")
+        + f"📦 Kredit: {esc(webapp.packs_text(packs))} so'm — bitta chek, har esse 1 kredit",
+        reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("💳 Kredit olish", f"wb:{teacher_id}")],
+                             [("📚 Esse namunalari", "esp:0")]]))
+
+
+def packs_markup(teacher_id: int, packs: list[dict]) -> InlineKeyboardMarkup:
+    return inline([[(f"{p['essays']} ta — {plans.money(p['price'])} so'm" + (f" (−{p['discount']}%)" if p["discount"] else ""),
+                     f"wbp:{teacher_id}:{p['essays']}")] for p in packs])
+
+
+@dp.callback_query(F.data.startswith("wb:"))
+async def wallet_buy_button(callback: CallbackQuery) -> None:
+    """«💳 Kredit olish»: ustozning paketlari tugma bo'lib chiqadi."""
+    teacher_id = int(callback.data.split(":")[1])
+    packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
+    if not packs or not (await asyncio.to_thread(essay_setup, teacher_id))["card"]:
+        await callback.answer("Ustoz hali kredit narxini qo'ymagan", show_alert=True)
+        return
+    balance = await asyncio.to_thread(db.wallet_balance, teacher_id, callback.from_user.id)
+    await callback.message.answer(f"💳 <b>Esse krediti</b>{f' · hozir {balance} ta' if balance else ''}\n"
+                                  "Paketni tanlang — bot karta va summani yozadi, chekni shu yerga yuborasiz:",
+                                  reply_markup=packs_markup(teacher_id, packs))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("wbp:"))
+async def wallet_pack_button(callback: CallbackQuery) -> None:
+    _, teacher, essays = (callback.data.split(":") + ["", ""])[:3]
+    user = callback.from_user
+    try:
+        await webapp.wallet_order(int(teacher), {"id": user.id, "name": user.full_name, "username": user.username},
+                                  int(essays or 1))  # karta va summa xabarini o'zi yuboradi
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("💳 Karta va summa yuborildi")
 
 
 async def essay_kind(teacher_id: int, student_id: int) -> str:
@@ -2046,19 +2195,28 @@ async def submit_essay(message: Message, state: FSMContext, user) -> None:
                              "AI tekshirmoqda, odatda 20–60 soniya. Natija shu yerga keladi.")
         return
     cfg = await asyncio.to_thread(essay_setup, teacher_id)
-    if not cfg["public"] or not cfg["price"] or not cfg["card"]:
+    packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
+    has_credit = await asyncio.to_thread(db.wallet_balance, teacher_id, user.id) > 0
+    if not has_credit and (not cfg["public"] or not packs or not cfg["card"]):
         await state.clear()
         await message.answer("⛔️ Ustoz hozir pullik tekshiruvni yopgan.")
         return
-    practice_id = await asyncio.to_thread(db.create_practice, teacher_id, user.id, data.get("topic"), text, kind, photos,
-                                          "awaiting_pay", cfg["price"])
-    await state.set_state(EssayCheck.receipt)
-    await state.update_data(practice_id=practice_id)
-    await message.answer(
-        f"💳 <b>To'lov: {plans.money(cfg['price'])} so'm</b>\n{LINE}\n"
-        f"Karta: <code>{esc(cfg['card'])}</code>{' (' + esc(cfg['holder']) + ')' if cfg['holder'] else ''}\n\n"
-        f"Bepul {PUBLIC_FREE} ta tekshiruv ishlatilgan. Pulni o'tkazib, <b>chek rasmini shu yerga yuboring</b> — "
-        "ustoz tasdiqlashi bilan esse tekshiriladi. Esse saqlab qo'yildi.")
+    # Bepullar tugagan: esse saqlanadi va kreditdan tekshiriladi; kredit bo'lmasa — kredit olgach o'zi tekshiriladi
+    await asyncio.to_thread(db.create_practice, teacher_id, user.id, data.get("topic"), text, kind, photos, "awaiting_credit")
+    await state.clear()
+    released, teacher_out = await webapp.release_waiting(teacher_id, user.id)
+    words = f" ({word_count(text)} so'z)" if text else ""
+    if released:
+        left = await asyncio.to_thread(db.wallet_balance, teacher_id, user.id)
+        await message.answer(f"⏳ <b>Esse qabul qilindi</b>{words} — 1 kredit yechildi, qoldi: <b>{left} ta</b>.\n"
+                             "AI tekshirmoqda, odatda 20–60 soniya. Natija shu yerga keladi.")
+    elif teacher_out:
+        await message.answer("⚠️ Ustozning AI krediti hozir tugagan — kreditingiz yechilmadi, essengiz saqlab qo'yildi. "
+                             "Ustozga ayting; keyingi esse yuborganingizda birinchi bo'lib shu esse tekshiriladi.")
+    else:
+        await message.answer(f"💳 <b>Essengiz saqlandi</b>{words}\n{LINE}\nBepul {PUBLIC_FREE} ta tekshiruv ishlatilgan. "
+                             "Kredit oling — to'lov tasdiqlanishi bilan esse o'zi tekshiriladi. Keyingi esselar chek so'ramaydi:",
+                             reply_markup=packs_markup(teacher_id, packs))
 
 
 async def practice_receipt(message: Message, practice: dict) -> None:
@@ -2293,6 +2451,7 @@ async def main() -> None:
         bot_username=lambda: bot_username(bot),
         wake_ai=AI_WAKE.set,
         essay_receipt_notice=lambda *a: essay_receipt_notice(bot, *a),
+        wallet_receipt_notice=lambda *a: wallet_receipt_notice(bot, *a),
         essay_scan_start=lambda *a: essay_scan_start(bot, *a),
         essay_scan_notice=lambda *a: essay_scan_notice(bot, *a),
         join_notice=lambda *a: join_notice(bot, *a),

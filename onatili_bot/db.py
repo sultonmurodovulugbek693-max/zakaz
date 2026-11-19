@@ -363,6 +363,31 @@ SCHEMA = [
         created_at TEXT,
         UNIQUE (tg_id, region, district)
     )""",
+    # Begona o'quvchining esse krediti — har ustozda alohida (pul o'sha ustoz kartasiga tushgan): 1 kredit = 1 esse
+    f"""CREATE TABLE IF NOT EXISTS essay_wallets (
+        teacher_id {BIG} NOT NULL,
+        student_id {BIG} NOT NULL,
+        balance    INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        PRIMARY KEY (teacher_id, student_id)
+    )""",
+    # Kredit paketi to'lovi: o'quvchi paket tanlaydi → ustoz kartasiga o'tkazadi → chekni botga yuboradi →
+    # AI tekshiradi (to'g'ri — paid, shubhali — review, ustoz qaror qiladi). status: open | review | paid | rejected
+    f"""CREATE TABLE IF NOT EXISTS wallet_payments (
+        id           {ID},
+        teacher_id   {BIG} NOT NULL,
+        student_id   {BIG} NOT NULL,
+        essays       INTEGER NOT NULL,
+        amount       INTEGER NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'open',
+        receipt      TEXT,
+        mime         TEXT,
+        receipt_hash TEXT,
+        txn          TEXT,
+        note         TEXT,
+        created_at   TEXT,
+        decided_at   TEXT
+    )""",
 ]
 
 # Eski bazalar uchun keyin qo'shilgan ustunlar
@@ -390,6 +415,7 @@ MIGRATIONS = [
     ("tests", "price", "INTEGER NOT NULL DEFAULT 0"),
     ("tests", "check_mode", "TEXT NOT NULL DEFAULT 'free'"),  # oflayn yozma javoblar: free — Gemini/qo'lda, paid — Claude (kreditdan)  # begona o'quvchi shu mock essesini tekshirish uchun to'laydi (so'm)  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
     ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
+    ("practice_essays", "wallet", "INTEGER NOT NULL DEFAULT 0"),  # begonaning esse krediti bilan (tekshirilmasa — qaytadi)
 ]
 
 
@@ -984,7 +1010,7 @@ def public_free_used(teacher_id: int, student_id: int) -> int:
     with connect() as conn:
         return conn.execute(
             "SELECT COUNT(*) AS n FROM practice_essays WHERE teacher_id = ? AND student_id = ? AND kind = 'public' "
-            "AND price = 0 AND status <> 'failed'", (teacher_id, student_id)).fetchone()["n"]
+            "AND price = 0 AND wallet = 0 AND status NOT IN ('failed', 'awaiting_credit')", (teacher_id, student_id)).fetchone()["n"]
 
 
 def set_practice_status(practice_id: int, status: str, receipt: str | None = None) -> None:
@@ -1117,7 +1143,8 @@ def open_essay_payment(student_id: int) -> dict | None:
     """Botga chek yuborilganda: o'quvchining eng oxirgi to'lanmagan esse to'lovi."""
     with connect() as conn:
         return _row(conn.execute(
-            "SELECT p.id, p.test_id, p.amount, p.status, t.title, t.code FROM essay_payments p JOIN tests t ON t.id = p.test_id "
+            "SELECT p.id, p.test_id, p.amount, p.status, p.created_at, t.title, t.code FROM essay_payments p "
+            "JOIN tests t ON t.id = p.test_id "
             "WHERE p.student_id = ? AND p.status IN ('open', 'rejected', 'review') ORDER BY p.created_at DESC, p.id DESC LIMIT 1",
             (student_id,)).fetchone())
 
@@ -1138,13 +1165,161 @@ def save_essay_receipt(payment_id: int, receipt: str, mime: str, receipt_hash: s
                      (receipt, mime, receipt_hash, txn, note, status, _now() if status == "paid" else None, payment_id))
 
 
-def receipt_used(receipt_hash: str, txn: str | None, payment_id: int) -> bool:
-    """Shu chek (rasm yoki tranzaksiya raqami) boshqa to'lovda ishlatilganmi."""
+def receipt_used(receipt_hash: str, txn: str | None, payment_id: int, table: str = "essay_payments") -> bool:
+    """Shu chek (rasm yoki tranzaksiya raqami) boshqa to'lovda ishlatilganmi — mock esse to'lovlari va kredit
+    paketlari birga tekshiriladi (bitta chek ikkalasiga ishlatilmasin). table — shu to'lov qaysi jadvalda."""
+    with connect() as conn:
+        for name in ("essay_payments", "wallet_payments"):
+            if conn.execute(
+                f"SELECT 1 FROM {name} WHERE id <> ? AND status IN ('paid', 'review') AND "
+                "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
+                (payment_id if name == table else -1, receipt_hash, txn or "", txn or "")).fetchone():
+                return True
+    return False
+
+
+# ---------- Begonaning esse krediti (ustoz bo'yicha hamyon) ----------
+
+def wallet_balance(teacher_id: int, student_id: int) -> int:
+    with connect() as conn:
+        row = conn.execute("SELECT balance FROM essay_wallets WHERE teacher_id = ? AND student_id = ?",
+                           (teacher_id, student_id)).fetchone()
+    return row["balance"] if row else 0
+
+
+def wallet_add(teacher_id: int, student_id: int, essays: int) -> int:
+    """Kredit qo'shish (manfiy — ayirish, 0 dan pastga tushmaydi). Qaytaradi — yangi qoldiq."""
+    with connect() as conn:
+        return _wallet_add(conn, teacher_id, student_id, essays)
+
+
+def _wallet_add(conn, teacher_id: int, student_id: int, essays: int) -> int:
+    if essays < 0:  # ayirish — bor qoldiqdan, 0 dan pastga emas
+        conn.execute("UPDATE essay_wallets SET balance = CASE WHEN balance + ? < 0 THEN 0 ELSE balance + ? END, "
+                     "updated_at = ? WHERE teacher_id = ? AND student_id = ?",
+                     (essays, essays, _now(), teacher_id, student_id))
+        row = conn.execute("SELECT balance FROM essay_wallets WHERE teacher_id = ? AND student_id = ?",
+                           (teacher_id, student_id)).fetchone()
+        return row["balance"] if row else 0
+    return conn.execute(
+        "INSERT INTO essay_wallets (teacher_id, student_id, balance, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(teacher_id, student_id) DO UPDATE SET balance = essay_wallets.balance + excluded.balance, "
+        "updated_at = excluded.updated_at RETURNING balance", (teacher_id, student_id, essays, _now())).fetchone()["balance"]
+
+
+def wallet_use(teacher_id: int, student_id: int) -> bool:
+    """1 kredit yechiladi — yetmasa False (bitta so'rovda: ikki esse bitta kreditni ikki marta olmaydi)."""
     with connect() as conn:
         return bool(conn.execute(
-            "SELECT 1 FROM essay_payments WHERE id <> ? AND status IN ('paid', 'review') AND "
-            "(receipt_hash = ? OR (? <> '' AND txn = ?)) LIMIT 1",
-            (payment_id, receipt_hash, txn or "", txn or "")).fetchone())
+            "UPDATE essay_wallets SET balance = balance - 1, updated_at = ? WHERE teacher_id = ? AND student_id = ? "
+            "AND balance >= 1", (_now(), teacher_id, student_id)).rowcount)
+
+
+def wallets_of_student(student_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT w.teacher_id, w.balance, u.full_name FROM essay_wallets w LEFT JOIN users u ON u.tg_id = w.teacher_id "
+            "WHERE w.student_id = ? AND w.balance > 0 ORDER BY w.updated_at DESC", (student_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+_WALLET_COLS = "id, teacher_id, student_id, essays, amount, status, txn, note, created_at, decided_at"
+
+
+def start_wallet_payment(teacher_id: int, student_id: int, essays: int, amount: int) -> dict:
+    """Paket tanlandi: shu ustozdagi ochiq (chek yuborilmagan yoki rad etilgan) to'lov yangilanadi, bo'lmasa yangisi.
+    Chek tekshirilayotgan (review) to'lov o'zgarmaydi — o'shani qaytaradi."""
+    with connect() as conn:
+        busy = _row(conn.execute(
+            f"SELECT {_WALLET_COLS} FROM wallet_payments WHERE teacher_id = ? AND student_id = ? AND status = 'review' "
+            "ORDER BY id DESC LIMIT 1", (teacher_id, student_id)).fetchone())
+        if busy:
+            return busy
+        conn.execute("DELETE FROM wallet_payments WHERE teacher_id = ? AND student_id = ? AND status IN ('open', 'rejected') "
+                     "AND receipt IS NULL", (teacher_id, student_id))
+        conn.execute("UPDATE wallet_payments SET status = 'closed' WHERE teacher_id = ? AND student_id = ? "
+                     "AND status IN ('open', 'rejected')", (teacher_id, student_id))
+        return _row(conn.execute(
+            f"INSERT INTO wallet_payments (teacher_id, student_id, essays, amount, status, created_at) "
+            f"VALUES (?, ?, ?, ?, 'open', ?) RETURNING {_WALLET_COLS}",
+            (teacher_id, student_id, essays, amount, _now())).fetchone())
+
+
+def open_wallet_payment(student_id: int) -> dict | None:
+    """Botga chek yuborilganda: o'quvchining eng oxirgi to'lanmagan kredit to'lovi."""
+    with connect() as conn:
+        return _row(conn.execute(
+            f"SELECT {_WALLET_COLS} FROM wallet_payments WHERE student_id = ? AND status IN ('open', 'rejected', 'review') "
+            "ORDER BY id DESC LIMIT 1", (student_id,)).fetchone())
+
+
+def get_wallet_payment(payment_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT p.*, u.full_name, u.username, t.full_name AS teacher_name FROM wallet_payments p "
+            "LEFT JOIN users u ON u.tg_id = p.student_id LEFT JOIN users t ON t.tg_id = p.teacher_id WHERE p.id = ?",
+            (payment_id,)).fetchone())
+
+
+def save_wallet_receipt(payment_id: int, receipt: str, mime: str, receipt_hash: str, txn: str | None, note: str) -> None:
+    """Chek saqlanadi va «review» (ustoz ko'radi). AI to'g'ri desa — keyin pay_wallet_payment bilan «paid»."""
+    with connect() as conn:
+        conn.execute("UPDATE wallet_payments SET receipt = ?, mime = ?, receipt_hash = ?, txn = ?, note = ?, status = 'review' "
+                     "WHERE id = ?", (receipt, mime, receipt_hash, txn, note, payment_id))
+
+
+def pay_wallet_payment(payment_id: int, allowed: tuple[str, ...]) -> int | None:
+    """To'lov tasdiqlandi: holat «paid» va o'quvchiga kredit — bitta tranzaksiyada (ikki marta qo'shilmaydi).
+    Qaytaradi — yangi qoldiq; holat mos kelmasa (allaqachon ko'rilgan) — None."""
+    marks = ", ".join("?" * len(allowed))
+    with connect() as conn:
+        pay = _row(conn.execute(f"SELECT * FROM wallet_payments WHERE id = ? AND status IN ({marks})",
+                                (payment_id, *allowed)).fetchone())
+        if not pay or not conn.execute(
+                f"UPDATE wallet_payments SET status = 'paid', decided_at = ? WHERE id = ? AND status IN ({marks})",
+                (_now(), payment_id, *allowed)).rowcount:
+            return None
+        return _wallet_add(conn, pay["teacher_id"], pay["student_id"], pay["essays"])
+
+
+def reject_wallet_payment(payment_id: int, allowed: tuple[str, ...]) -> bool:
+    """Rad etish (yoki AI tasdiqlaganini bekor qilish — berilgan kredit qaytarib olinadi, ishlatilgani qoladi)."""
+    marks = ", ".join("?" * len(allowed))
+    with connect() as conn:
+        pay = _row(conn.execute(f"SELECT * FROM wallet_payments WHERE id = ? AND status IN ({marks})",
+                                (payment_id, *allowed)).fetchone())
+        if not pay or not conn.execute(
+                f"UPDATE wallet_payments SET status = 'rejected', decided_at = ? WHERE id = ? AND status IN ({marks})",
+                (_now(), payment_id, *allowed)).rowcount:
+            return False
+        if pay["status"] == "paid":
+            _wallet_add(conn, pay["teacher_id"], pay["student_id"], -pay["essays"])
+        return True
+
+
+def wallet_payments_for_teacher(teacher_id: int, limit: int = 30) -> list[dict]:
+    """Ustozga kelgan kredit to'lovlari (chek yuborilganlari): tekshirilmaganlari birinchi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id, p.essays, p.amount, p.status, p.note, p.created_at, p.student_id, u.full_name, u.username "
+            "FROM wallet_payments p LEFT JOIN users u ON u.tg_id = p.student_id "
+            "WHERE p.teacher_id = ? AND p.receipt IS NOT NULL AND p.status <> 'closed' "
+            "ORDER BY CASE p.status WHEN 'review' THEN 0 ELSE 1 END, p.id DESC LIMIT ?", (teacher_id, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def practice_awaiting_credit(teacher_id: int, student_id: int) -> list[dict]:
+    """Kredit kutayotgan esselar (o'quvchi kredit olganda — eng eskisidan boshlab tekshiriladi)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM practice_essays WHERE teacher_id = ? AND student_id = ? "
+                            "AND status = 'awaiting_credit' ORDER BY id", (teacher_id, student_id)).fetchall()
+    return [_practice(row) for row in rows]
+
+
+def set_practice_wallet(practice_id: int, status: str) -> None:
+    """Esse kredit bilan to'landi: holat (pending) va «kredit bilan» belgisi (tekshirilmasa — kredit qaytadi)."""
+    with connect() as conn:
+        conn.execute("UPDATE practice_essays SET status = ?, wallet = 1 WHERE id = ?", (status, practice_id))
 
 
 ESSAY_SCAN_PAGES = 4
