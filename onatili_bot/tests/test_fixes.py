@@ -8,6 +8,7 @@ import json
 import time
 import types
 import unittest
+from datetime import timedelta
 
 import _env
 
@@ -730,6 +731,35 @@ class OfficialSheet(ServerBase):
         status, _ = await self.post(f"/api/teacher/test/{test['id']}/announce", {})
         self.assertEqual(status, 200)
 
+    async def test_rescan_keeps_essay_score(self):
+        """1-varaq qayta skanerlansa — o'qituvchi kiritgan esse bahosi yo'qolmaydi (natija yopilib qolmaydi)."""
+        test = await self.make()
+        answers = {str(i): "A" for i in range(1, 36)}
+        _, first = await self.upload(test, {"uid": "s1", "number": "7", "variant": "A", "answers": answers})
+        await self.post(f"/api/teacher/essay/{first['attempt_id']}", {"score75": 63})
+        _, again = await self.upload(test, {"uid": "s2", "number": "7", "variant": "A", "answers": {**answers, "1": "B"}})
+        self.assertNotEqual(again["attempt_id"], first["attempt_id"])
+        self.assertFalse(again["essay_pending"])
+        self.assertIsNotNone(again["points"])
+        self.assertEqual(webapp.essay_to_75(db.get_attempt(again["attempt_id"])["essay"]), 63)
+
+    async def test_paid_check_queues_written_from_phone_scanner(self):
+        """«💎 Pullik tekshiruv»: telefon skaneridan kelgan yozma kataklar ham AI navbatiga (kreditdan), «qo'lda» emas."""
+        _, r = await self.create("offline", fmt="milliy")
+        db.set_sheet_style(r["id"], "standard")  # bitta varaqli titul: yozma kataklar 1-varaqda
+        db.set_check_mode(r["id"], "paid")
+        test = db.get_test(r["id"])
+        db.add_students(test["id"], ["Ali Valiyev"], ["A"], [7])
+        db.add_credits(OWNER, 2)
+        paid, essay_ai.paid_enabled = essay_ai.paid_enabled, lambda: True
+        try:
+            _, res = await self.upload(test, {"uid": "w1", "number": "7", "variant": "A",
+                                              "answers": {str(i): "A" for i in range(1, 36)}}, b"\xff\xd8 yozma")
+        finally:
+            essay_ai.paid_enabled = paid
+        self.assertTrue(res["written_queued"])
+        self.assertEqual(db.get_written_job(res["attempt_id"])["status"], "pending")
+
     async def test_no_bot_essay_for_paper_test(self):
         test = await self.make()
         self.user = {"id": STUDENT, "name": "Ali", "username": None}
@@ -1025,10 +1055,21 @@ class EssayPaid(ServerBase):
         self.assertEqual((await self.post(f"/api/test/{test['code']}/essay-pay", {}))[0], 409)  # to'lov kerak emas
         status, data = await self.info(test)
         self.assertIsNone(data["essay_pay"])
-        self.assertIn("limiti tugagan", data["essay_warning"])  # ustozda kredit yo'q
+        self.assertIsNone(data["essay_warning"])  # obunaning oylik limiti bor — AI tekshiradi (kredit bo'lmasa ham)
+        db.set_setting("ai_essays", 0)  # oylik limit tugadi, kredit yo'q
+        self.assertIn("limiti tugagan", (await self.info(test))[1]["essay_warning"])
+        self.assertFalse(await webapp.essay_ai_ok(test, STUDENT))
         db.add_credits(OWNER, 3)
         self.assertIsNone((await self.info(test))[1]["essay_warning"])
         self.assertTrue(await webapp.essay_ai_ok(test, STUDENT))
+
+    async def test_pack_needs_active_subscription(self):
+        """Obuna tugagan: paketdagi kredit ishlatilmaydi — can_use_ai ham «yo'q» deydi (use_ai bilan bir xil)."""
+        db.add_credits(OWNER, 3)
+        self.assertTrue(plans.can_use_ai(OWNER))
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.assertFalse(plans.can_use_ai(OWNER))
+        self.assertFalse(plans.use_ai(OWNER, "essays"))
 
     async def test_bot_photo_handler(self):
         """Botga rasm: ochiq esse to'lovi bo'lsa — yuklab oladi va AI tekshiradi; to'g'ri bo'lsa — paid."""

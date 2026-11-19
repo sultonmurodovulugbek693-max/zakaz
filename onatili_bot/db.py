@@ -854,6 +854,23 @@ def essay_failed(attempt_id: int, error: str, give_up: bool) -> None:
         )
 
 
+def restore_essay(attempt_id: int, essay: dict | None, score: float | None) -> None:
+    """Titul qayta skanerlandi (natija yangi qatorga): eski esse — matni, rasmlari, AI bahosi va o'qituvchi
+    bahosi — yangi natijaga o'tadi. Esse qayta tekshirilmaydi (kredit ikkinchi marta yechilmaydi)."""
+    with connect() as conn:
+        if essay:
+            conn.execute("DELETE FROM essays WHERE attempt_id = ?", (attempt_id,))
+            conn.execute(
+                "INSERT INTO essays (attempt_id, text, photos, status, ai_score, ai_result, provider, cost, tries, error, "
+                "created_at, graded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (attempt_id, essay["text"], json.dumps(essay["photos"] or []), essay["status"], essay["ai_score"],
+                 json.dumps(essay["ai_result"], ensure_ascii=False) if essay["ai_result"] else None, essay["provider"],
+                 essay["cost"] or 0, essay["tries"] or 0, essay["error"], essay["created_at"], essay["graded_at"]),
+            )
+        if score is not None:
+            conn.execute("UPDATE attempts SET essay = ? WHERE id = ?", (score, attempt_id))
+
+
 def add_essay_cost(attempt_id: int, cost: float) -> None:
     with connect() as conn:
         conn.execute("UPDATE essays SET cost = cost + ? WHERE attempt_id = ?", (cost, attempt_id))

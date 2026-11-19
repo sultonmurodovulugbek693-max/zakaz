@@ -1985,7 +1985,7 @@ function bindEssayScan(code, essayEl, changed, remember) {
 function essayPriceHTML(st) {
   const b = S.boot || {}, card = b.my_card || {};
   if (st.card == null) { st.card = card.number || ""; st.holder = card.holder || ""; }
-  const out = b.ai && b.ai_credits === 0;
+  const out = b.ai && b.essay_ai_ok === false;  // kredit 0, lekin obunaning oylik limiti bo'lsa — tugamagan
   return `<div class="card"><b>📝 Esse tekshiruvi</b>
     <span class="muted small">«👥 O'quvchilarim»dagilar essesi kreditingizdan tekshiriladi${b.ai_credits != null ? ` (qoldi: <b>${b.ai_credits}</b> ta)` : ""}. Boshqalar esseni yuklashdan oldin shu narxni kartangizga to'lab, chekni botga yuboradi — AI tekshiradi.</span>
     ${out ? `<span class="small" style="color:var(--bad)">⚠️ AI esse limitingiz tugagan — o'quvchilaringiz essesini AI tekshirmaydi, o'zingiz baholaysiz.</span>` : ""}
@@ -2282,7 +2282,8 @@ const sum = n => String(n == null ? 0 : n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")
 
 // AI esse krediti (obuna yopiq paytida): o'quvchilar essesi shundan tekshiriladi; tugasa — o'qituvchi o'zi baholaydi
 function creditCard(b) {
-  if (b.can_create === false || b.ai_credits == null || !b.ai) return "";
+  // Obuna sotilayotganda kredit — faqat qo'shimcha paket (obuna kartasida ko'rinadi): «kredit yo'q» deb chalg'itmasin
+  if (b.sales || b.can_create === false || b.ai_credits == null || !b.ai) return "";
   const n = b.ai_credits, low = n <= 10;
   return `<div class="card credit-card ${low ? "low" : ""}"><div class="row between"><b>🤖 AI esse krediti</b><span class="credit-n">${n}</span></div>
     <span class="muted small">${n ? `Yana <b>${n} ta</b> o'quvchi essesini tekshirtira olasiz (1 esse = 1 kredit).${low ? " Kredit oz qoldi." : ""}`

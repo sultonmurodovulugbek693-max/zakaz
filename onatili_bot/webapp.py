@@ -191,6 +191,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "can_create": SALES_ENABLED or plans.is_free(user["id"]),  # test yarata oladimi
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
         "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
+        # o'quvchilar essesini hozir AI tekshira oladimi (kredit yoki obunaning oylik limiti) — «tugagan» ogohlantirishi uchun
+        "essay_ai_ok": await run(plans.can_use_ai, user["id"], "essays"),
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         "practice": bool(await run(db.teachers_of, user["id"])) and essay_ai.essay_enabled(),
         "my_card": await run(teacher_card, user["id"]),
@@ -301,9 +303,9 @@ async def essay_warning(test: dict, user: dict) -> str | None:
     """Ustozning o'quvchisi: esse ustoz limitidan — limit tugagan bo'lsa ogohlantirish (esseni ustoz o'zi baholaydi)."""
     if test["fmt"] != "milliy" or not essay_ai.essay_enabled() or test["owner_id"] == user["id"]:
         return None
-    if await is_outsider(test, user["id"]) or await run(plans.ai_unlimited, test["owner_id"]):
+    if await is_outsider(test, user["id"]):
         return None
-    if await run(db.get_credits, test["owner_id"]) > 0:
+    if await run(plans.can_use_ai, test["owner_id"], "essays"):  # kredit yoki obunaning oylik limiti
         return None
     return "Ustozingizning esse tekshirish limiti tugagan — essengizni AI tekshirmaydi, ustoz o'zi baholaydi."
 
@@ -2423,14 +2425,13 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
     variant = payload.get("variant")
     if variant not in keys:
         raise ApiError(400, "Variantni tanlang")
-    student = None
+    student, carried = None, None
     if payload.get("student_id"):
         student = await run(db.get_student, test["id"], to_int(payload["student_id"], 0, "O'quvchi"))
         if not student:
             raise ApiError(404, "O'quvchi topilmadi")
-        if student["attempt_id"]:
-            await keep_written_page(test, student)
-            await run(db.delete_attempt, student["attempt_id"])  # qayta skanerlash — eski natija almashtiriladi
+        if student["attempt_id"]:  # qayta skanerlash — eski natija almashtiriladi
+            carried = await drop_old_attempt(test, student)
         if student["variant"] != variant:
             await run(db.update_student, test["id"], student["id"], None, variant)
     else:
@@ -2442,8 +2443,7 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
             student = None  # boshqa bola shu ID'ni xato bo'yagan — natijasi ustiga yozilmasin, alohida qo'shiladi
         if student:  # bu ID test ro'yxatida bor — o'sha o'quvchi (ikkinchi nusxa ochilmaydi)
             if student["attempt_id"]:
-                await keep_written_page(test, student)
-                await run(db.delete_attempt, student["attempt_id"])
+                carried = await drop_old_attempt(test, student)
             if student["variant"] != variant:
                 await run(db.update_student, test["id"], student["id"], None, variant)
         else:
@@ -2462,13 +2462,30 @@ async def save_scanned(test: dict, payload: dict) -> tuple[dict, dict]:
     if attempt is None:
         raise ApiError(409, "Bu o'quvchining natijasi allaqachon bor")
     await run(db.link_student_attempt, student["id"], attempt["id"])
-    if test["fmt"] == "milliy":
+    if carried:  # eski natijaning essesi (va o'qituvchi bahosi) — qayta tekshirmasdan
+        await run(db.restore_essay, attempt["id"], *carried)
+        attempt = await run(db.get_attempt, attempt["id"])
+    elif test["fmt"] == "milliy":
         await link_offline_essay(test, student["number"], attempt["id"])
     if two_pages(test):  # 2-varaq avval skanerlangan bo'lsa — yozma kataklar rasmi shu natijaga
         waiting = await run(db.take_written_pending, test["id"], student["number"])
         if waiting:
             await attach_written(test, attempt, waiting["image"], waiting["mime"])
     return attempt, student
+
+
+async def drop_old_attempt(test: dict, student: dict) -> tuple[dict | None, float | None] | None:
+    """Qayta skanerlashdan oldin eski natija o'chiriladi. Qaytaradi: (esse, o'qituvchi bahosi) — yangi natijaga
+    o'tkazish uchun (aks holda kiritilgan esse bahosi yo'qolar, botdagi esse kreditdan qayta tekshirilar edi)."""
+    old_id = student["attempt_id"]
+    old = await run(db.get_attempt, old_id)
+    essay = await run(db.get_essay, old_id)
+    if essay and essay["status"] == "none":
+        essay = None
+    score = old["essay"] if old else None
+    await keep_written_page(test, student)
+    await run(db.delete_attempt, old_id)
+    return (essay, score) if essay or score is not None else None
 
 
 def two_pages(test: dict) -> bool:
@@ -2656,7 +2673,8 @@ async def store_written_image(test: dict, attempt: dict, image) -> None:
         base64.b64decode(data, validate=True)
     except ValueError:
         return
-    await run(db.create_written_job, attempt["id"], test["id"], data, head[5:head.index(";")][:20], "manual")
+    # Skaner yozma javoblarni o'qimagan bo'lsa (pullik tekshiruv yoki AI xato bergan) — AI navbatiga, aks holda qo'lda
+    await attach_written(test, attempt, data, head[5:head.index(";")])
 
 
 async def scan_save(request: web.Request) -> web.Response:
@@ -2781,14 +2799,12 @@ async def scan_upload(request: web.Request) -> web.Response:
     if uid:
         _STUDENT_OF[uid] = student["id"]
         await run(db.save_upload, uid, test["id"], student["id"])
-    labels = [i["label"] for i in text_items(test["items"])]
-    # O'qituvchi hamma yozma javobni o'zi kiritgan bo'lsa — AI kerak emas
-    need_ai = [label for label in labels if not (payload.get("answers") or {}).get(label)]
     queued = False
-    if written:  # AI o'qiydi (bepul ro'yxat) yoki o'qituvchi keyin rasmga qarab belgilaydi
-        queued = bool(need_ai) and await written_ai(test["owner_id"])
-        await run(db.create_written_job, attempt["id"], test["id"], base64.b64encode(written).decode(),
-                  str(payload.get("written_mime") or "image/jpeg")[:20], "pending" if queued else "manual")
+    if written and text_items(test["items"]):
+        # AI o'qiydi (bepul ro'yxat yoki «💎 pullik tekshiruv» — kreditdan) yoki o'qituvchi keyin rasmga qarab belgilaydi.
+        # Hamma yozma javob kiritilgan bo'lsa — AI kerak emas
+        queued = await attach_written(test, attempt, base64.b64encode(written).decode(),
+                                      str(payload.get("written_mime") or "image/jpeg"))
     essay_status = await attach_essay(user, test, attempt, essays) if essays else None
     if photos:
         number = student.get("number")
