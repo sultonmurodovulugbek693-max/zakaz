@@ -500,6 +500,98 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .t-paper { --r: 4px; box-shadow: 0 1px 0 #d9c9a3, 0 3px 0 #efe3c4, 0 4px 0 #d9c9a3, 0 14px 30px rgba(80,55,20,.2); } .t-paper .pattern { background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(120,80,20,.14)), repeating-linear-gradient(0deg, transparent 0 27px, rgba(120,80,20,.07) 27px 28px); }
 .t-space .pattern { background: radial-gradient(1px 1px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 70% 15%, #fff, transparent), radial-gradient(1.5px 1.5px at 85% 60%, #fff, transparent), radial-gradient(1px 1px at 40% 80%, #fff, transparent), radial-gradient(1px 1px at 10% 70%, #fff, transparent), radial-gradient(1.5px 1.5px at 55% 45%, #cbb8ff, transparent), radial-gradient(circle at 100% 0, rgba(140,90,255,.45), transparent 55%), #0d0a24; animation: twinkle 4s ease-in-out infinite alternate; }
 @keyframes twinkle { to { filter: brightness(1.35); } }
+
+/* ---------- Harakat qatlami (prototip dizayni): rang faqat tokenlardan — ilova dizaynlari (UI_THEMES) bilan ham ishlaydi ---------- */
+/* Ekran ochilganda bloklar ketma-ket ko'tariladi (soft chizishda #app.soft o'chiradi) */
+.view > :not(.skeleton):not(.flash):not(.sticky-bottom):not(.sheet-progress) { animation: m-rise .5s cubic-bezier(.2,.8,.2,1) var(--md, 0s) backwards; }
+.view > :nth-child(2) { --md: .05s; } .view > :nth-child(3) { --md: .1s; } .view > :nth-child(4) { --md: .15s; }
+.view > :nth-child(5) { --md: .2s; } .view > :nth-child(6) { --md: .25s; } .view > :nth-child(n+7) { --md: .3s; }
+@keyframes m-rise { from { opacity: 0; transform: translateY(14px); } }
+/* Bosilgan joydan to'lqin */
+.btn, .act, .quick-action, .big-act, .tab { position: relative; overflow: hidden; }
+.m-rp { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: currentColor; opacity: .22; transform: scale(0); animation: m-rip .65s ease-out forwards; pointer-events: none; }
+@keyframes m-rip { to { transform: scale(4); opacity: 0; } }
+/* Bosh karta: suzuvchi rang dog'lari, statistikalar sakrab chiqadi */
+.hero-card::before { animation: m-drift 9s ease-in-out infinite alternate; }
+.hero-card::after { content: ""; position: absolute; left: -60px; bottom: -110px; width: 220px; height: 220px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--lime) 30%, transparent), transparent 70%); pointer-events: none; animation: m-drift 12s ease-in-out infinite alternate-reverse; }
+@keyframes m-drift { to { transform: translate(-50px, 40px) scale(1.2); } }
+.hero-logo i { animation: m-pop .6s cubic-bezier(.34,1.56,.64,1) .1s backwards; }
+.hero-stat { animation: m-pop .55s cubic-bezier(.34,1.56,.64,1) backwards; }
+.hero-stat:nth-child(1) { animation-delay: .2s; } .hero-stat:nth-child(2) { animation-delay: .3s; } .hero-stat:nth-child(3) { animation-delay: .4s; }
+@keyframes m-pop { from { opacity: 0; transform: scale(.6); } }
+.quick-action i, .act-ico, .big-act i { transition: transform .35s cubic-bezier(.34,1.56,.64,1); }
+.quick-action:hover i, .act:hover .act-ico, .big-act:hover i { transform: translateY(-3px) rotate(-6deg); }
+/* Pastki panel: sirpanuvchi tabletka, chiziqli belgilar */
+.tabbar > div { position: relative; }
+.tab-ind { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 14px; background: color-mix(in srgb, var(--accent-2) 32%, transparent); transition: transform .5s cubic-bezier(.34,1.4,.64,1), width .5s cubic-bezier(.34,1.4,.64,1); pointer-events: none; }
+.tab { z-index: 1; }
+.tab.on { background: transparent; color: var(--ink); }
+.tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .4s cubic-bezier(.34,1.56,.64,1); }
+.tab.on svg { stroke: var(--accent); transform: translateY(-2px); }
+/* Bildirishnoma: prujina bilan chiqadi, pastida vaqt chizig'i */
+.toast { display: flex; gap: 10px; align-items: center; width: max-content; max-width: min(92vw, 420px); overflow: hidden; border-radius: 16px; padding: 12px 16px 13px 12px; box-shadow: 0 14px 30px -12px rgba(0,0,0,.45); transition: opacity .25s, transform .45s cubic-bezier(.34,1.56,.64,1); z-index: 60; }
+.toast i { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.toast::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--accent-2); transform-origin: left; transform: scaleX(0); }
+.toast.show::after { animation: m-tbar 2.6s linear forwards; }
+@keyframes m-tbar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* Jonli skaner: burchak qavslari va lazer chizig'i */
+.cam-guide { border: 0; background:
+  linear-gradient(#00e05f, #00e05f) 0 0 / 28px 3px, linear-gradient(#00e05f, #00e05f) 0 0 / 3px 28px,
+  linear-gradient(#00e05f, #00e05f) 100% 0 / 28px 3px, linear-gradient(#00e05f, #00e05f) 100% 0 / 3px 28px,
+  linear-gradient(#00e05f, #00e05f) 0 100% / 28px 3px, linear-gradient(#00e05f, #00e05f) 0 100% / 3px 28px,
+  linear-gradient(#00e05f, #00e05f) 100% 100% / 28px 3px, linear-gradient(#00e05f, #00e05f) 100% 100% / 3px 28px;
+  background-repeat: no-repeat; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+.cam-guide::after { content: ""; position: absolute; left: 4%; right: 4%; top: 0; height: 2px; border-radius: 2px; background: #00e05f; box-shadow: 0 0 14px 3px rgba(0,224,95,.8); animation: m-sweep 2.6s linear infinite; }
+.cam-guide::before { content: ""; position: absolute; left: 4%; right: 4%; top: 0; height: 60px; background: linear-gradient(to top, rgba(0,224,95,.22), transparent); animation: m-sweep-glow 2.6s linear infinite; }
+@keyframes m-sweep { 0% { top: 2%; opacity: 0; } 6%, 94% { opacity: 1; } 100% { top: 98%; opacity: 0; } }
+@keyframes m-sweep-glow { 0% { top: calc(2% - 60px); opacity: 0; } 6%, 94% { opacity: 1; } 100% { top: calc(98% - 60px); opacity: 0; } }
+.cam.got { animation: m-got .5s cubic-bezier(.34,1.56,.64,1); }
+@keyframes m-got { 40% { transform: scale(.98); } }
+/* So'z o'lchagich: esse ostidagi chiziq 30 so'zdan keyin yashil */
+.counter.m-bar { display: grid; gap: 6px; }
+.counter.m-bar::before { content: ""; height: 6px; border-radius: 99px; background: linear-gradient(var(--warn), var(--warn)) 0 0 / var(--wp, 0%) 100% no-repeat, var(--line); transition: background-size .3s; }
+.counter.m-bar.ok::before { background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--wp, 0%) 100% no-repeat, var(--line); }
+/* Muvaffaqiyat: konfetti */
+.m-cf { position: fixed; z-index: 70; width: 8px; height: 12px; border-radius: 2px; pointer-events: none; animation: m-boom 1.2s cubic-bezier(.1,.7,.3,1) forwards; }
+@keyframes m-boom { from { transform: translate(-50%, -50%); } to { transform: translate(var(--x), var(--y)) rotate(var(--r)); opacity: 0; } }
+.success .bigcode { animation: m-pop .6s cubic-bezier(.34,1.56,.64,1) .7s backwards; }
+/* Chiziqli belgilar */
+svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; vertical-align: -.2em; }
+/* «Natijalar» — to'q karta: suzuvchi nur, o'sib chiquvchi ustunchalar */
+.item.results-go { position: relative; overflow: hidden; isolation: isolate; background: var(--hero); color: #fff; border-color: transparent; box-shadow: 0 18px 34px -22px rgba(11,31,42,.8); }
+.item.results-go::before { content: ""; position: absolute; z-index: -1; right: -50px; top: -90px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(0,200,83,.45), transparent 70%); animation: m-drift 8s ease-in-out infinite alternate; }
+.item.results-go .ico { background: var(--lime); color: #0b1f2a; border-radius: 14px; }
+.item.results-go .ico svg.ic { width: 22px; height: 22px; stroke-width: 2.4; }
+.item.results-go small { color: #b7cbbf; }
+.rg-end { display: flex; align-items: center; gap: 8px; color: var(--lime); }
+.rg-end svg.ic { width: 18px; height: 18px; transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+.item.results-go:hover .rg-end svg.ic { transform: translateX(3px); }
+.rg-spark { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
+.rg-spark i { width: 5px; height: var(--h); border-radius: 3px; background: rgba(255,255,255,.25); transform-origin: bottom; animation: m-grow .7s cubic-bezier(.34,1.56,.64,1) backwards; animation-delay: calc(var(--k) * 60ms + .35s); }
+.rg-spark i:last-child { background: var(--lime); }
+@keyframes m-grow { from { transform: scaleY(0); } }
+@media (max-width: 360px) { .rg-spark { display: none; } }
+/* «Testlarim» kartalari: ketma-ket chiqadi, holat — nuqtali tabletka */
+.tgrid > .tcard { animation: m-pop .5s cubic-bezier(.34,1.56,.64,1) backwards; }
+.tgrid > .tcard:nth-child(2) { animation-delay: .06s; } .tgrid > .tcard:nth-child(3) { animation-delay: .12s; } .tgrid > .tcard:nth-child(4) { animation-delay: .18s; }
+.tgrid > .tcard:nth-child(5) { animation-delay: .24s; } .tgrid > .tcard:nth-child(n+6) { animation-delay: .3s; }
+.tcard { transition: transform .25s cubic-bezier(.34,1.56,.64,1), border-color .2s, box-shadow .25s; }
+.tcard:hover { transform: translateY(-3px); box-shadow: 0 16px 30px -18px color-mix(in srgb, var(--accent) 60%, transparent); }
+.tcard:active { transform: scale(.97); }
+.tcard::before { height: 4px; }
+.tcard.is-open::before { background: linear-gradient(90deg, var(--warn) 0 40%, color-mix(in srgb, var(--warn) 45%, #fff) 50%, var(--warn) 60% 100%) 0 0 / 250% 100%; animation: m-shim 2.4s linear infinite; }
+@keyframes m-shim { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+.tcard .t-mode { display: inline-flex; align-items: center; gap: 5px; }
+.tcard .t-stats span { display: inline-flex; align-items: center; gap: 4px; }
+.tcard .del-test { display: grid; place-items: center; color: var(--muted); }
+.tcard .del-test svg.ic { width: 17px; height: 17px; }
+.tcard .del-test:hover { color: var(--bad); }
+.tcard .t-status { justify-self: start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: 99px; background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.tcard.is-done .t-status { background: color-mix(in srgb, var(--good) 15%, transparent); }
+.tcard .t-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.tcard.is-live .t-status i { animation: m-ping 1.4s ease-out infinite; }
+@keyframes m-ping { from { box-shadow: 0 0 0 0 currentColor; } to { box-shadow: 0 0 0 6px transparent; } }
+.tcard .t-scan { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -545,7 +637,7 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").match
 function sentToast(r, what) { toast(r && r.pending ? `📨 ${what} yuborilmoqda — bir necha soniyada chatda bo'ladi` : `✅ ${what} chatga yuborildi`); }
 function haptic(kind = "light") { try { kind === "select" ? tg.HapticFeedback.selectionChanged() : ["success", "error", "warning"].includes(kind) ? tg.HapticFeedback.notificationOccurred(kind) : tg.HapticFeedback.impactOccurred(kind); } catch (e) {} }
 let toastTimer;
-function toast(text) { const t = document.getElementById("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
+function toast(text) { const t = document.getElementById("toast"); t.innerHTML = '<i aria-hidden="true"></i><span></span>'; t.lastChild.textContent = text; t.classList.remove("show"); void t.offsetWidth; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
 function confirmBox(text) { return new Promise(res => { if (tg && tg.showConfirm) { try { tg.showConfirm(text, ok => res(!!ok)); return; } catch (e) {} } res(window.confirm(text)); }); }
 function store(key, value) { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (e) { return null; } }
 
@@ -717,6 +809,29 @@ const TABS = {
   teacher: [["home", "🏠", "Bosh"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"], ["settings", "⚙️", "Sozlamalar"]],
   student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
 };
+// Panel belgilari (chiziqli SVG); ro'yxatda yo'q bo'lim emoji bilan qoladi
+const TAB_ICONS = {
+  home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/>',
+  classes: '<path d="M3 21h18M5 21V9l7-5 7 5v12"/><path d="M9 21v-5h6v5M10 11h4"/>',
+  students: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6 6 0 0 1 3.5 5.5"/>',
+  plan: '<path d="M6 3h12l4 6-10 12L2 9Z"/><path d="M2 9h20M12 21 8 9l4-6 4 6Z"/>',
+  ai: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><path d="M12 7.5 13.6 10.4 16.5 12 13.6 13.6 12 16.5 10.4 13.6 7.5 12 10.4 10.4Z"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+  myresults: '<path d="M6 20V10M12 20V4M18 20v-7"/>',
+  profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+};
+// Faol bo'lim tabletkasi oldingi joyidan yangisiga sirpanadi
+function placeTabInd(ix) {
+  const wrap = document.querySelector("#tabbar > div"), ind = wrap && wrap.querySelector(".tab-ind");
+  const tabs = wrap ? wrap.querySelectorAll(".tab") : [];
+  if (!ind || !tabs[ix]) return;
+  const put = (el, anim) => { ind.style.transition = anim ? "" : "none"; ind.style.width = el.offsetWidth + "px"; ind.style.transform = `translateX(${el.offsetLeft}px)`; };
+  const prev = tabs[S.tabIx];
+  if (prev && S.tabIx !== ix && !reduceMotion) { put(prev, false); requestAnimationFrame(() => requestAnimationFrame(() => put(tabs[ix], true))); }
+  else put(tabs[ix], false);
+  S.tabIx = ix;
+}
+window.addEventListener("resize", () => { if (S.tabIx != null) { const ix = S.tabIx; S.tabIx = null; placeTabInd(ix); } });
 function paintTabs(view) {
   const bar = document.getElementById("tabbar");
   // Rol tanlash va majburiy obuna ekranlarida panel chiqmaydi
@@ -726,8 +841,10 @@ function paintTabs(view) {
       : key === "students" || key === "settings" ? S.boot.can_create !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
-  bar.firstElementChild.innerHTML = tabs.map(([key, icon, label]) =>
-    `<button type="button" class="tab ${key === view ? "on" : ""}" data-tab-to="${key}"><i>${icon}</i>${label}</button>`).join("");
+  const wrap = bar.firstElementChild;
+  wrap.innerHTML = `<span class="tab-ind" aria-hidden="true"></span>` + tabs.map(([key, icon, label]) =>
+    `<button type="button" class="tab ${key === view ? "on" : ""}" data-tab-to="${key}">${TAB_ICONS[key] ? `<svg viewBox="0 0 24 24" aria-hidden="true">${TAB_ICONS[key]}</svg>` : `<i>${icon}</i>`}${label}</button>`).join("");
+  placeTabInd(tabs.findIndex(([key]) => key === view));
   bar.querySelectorAll("[data-tab-to]").forEach(x => x.onclick = () => {
     const to = x.dataset.tabTo;
     if (to === S.current.view) return window.scrollTo({ top: 0, behavior: "smooth" });
@@ -914,14 +1031,25 @@ const testItem = t => `<div class="item test-item ${t.closed ? "is-done" : "is-o
     <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>`;
 
 // Bosh sahifadagi test kartochkasi (o'qituvchi): holat rangi, kod (bosilsa nusxa), qatnashchilar va o'rtacha
-const testTile = t => `<div class="tcard test-item ${t.closed ? "is-done" : "is-open"}" data-test="${t.id}" data-kind="${t.closed ? "done" : "open"} ${t.mode === "offline" ? "offline" : "online"}" role="button" tabindex="0">
-    <div class="t-top"><span class="t-mode">${t.mode === "offline" ? "📄 Oflayn" : "📱 Onlayn"}</span>
-      <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">🗑</button></div>
+// Kichik chiziqli belgilar (test kartasi, natijalar kartasi)
+const ICO = {
+  sheet: '<path d="M6 2h9l5 5v15H6Z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>',
+  phone: '<rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6 6 0 0 1 3.5 5.5"/>',
+  scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/>',
+  bars: '<path d="M6 20V10M12 20V4M18 20v-7"/>',
+  arrow: '<path d="m9 6 6 6-6 6"/>',
+};
+const ico = k => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICO[k]}</svg>`;
+const testTile = t => `<div class="tcard test-item ${t.closed ? "is-done" : "is-open"}${!t.closed && t.students ? " is-live" : ""}" data-test="${t.id}" data-kind="${t.closed ? "done" : "open"} ${t.mode === "offline" ? "offline" : "online"}" role="button" tabindex="0">
+    <div class="t-top"><span class="t-mode">${t.mode === "offline" ? ico("sheet") + "Oflayn" : ico("phone") + "Onlayn"}</span>
+      <button type="button" class="del-test" data-del-test="${t.id}" data-title="${esc(t.title)}" aria-label="Testni o'chirish">${ico("trash")}</button></div>
     <div class="t-title">${esc(t.title)}</div>
     <button type="button" class="t-code" data-copy-code="${t.code}" title="Kodni nusxalash">${t.code}</button>
-    <div class="t-stats"><span>👥 <b>${t.students}</b></span>${t.avg != null ? `<span>o'rt. <b>${num(t.avg)}</b></span>` : ""}</div>
-    <span class="t-status">${t.closed ? "✓ E'lon qilingan" : t.students ? "● Javob yig'ilmoqda" : "○ Javob kutilmoqda"}</span>
-    ${!t.closed && t.mode === "offline" ? `<button type="button" class="t-scan" data-scan-test="${t.id}">📷 Skaner</button>` : ""}</div>`;
+    <div class="t-stats"><span>${ico("users")}<b>${t.students}</b></span>${t.avg != null ? `<span>o'rt. <b>${num(t.avg)}</b></span>` : ""}</div>
+    <span class="t-status"><i aria-hidden="true"></i>${t.closed ? "E'lon qilingan" : t.students ? "Javob yig'ilmoqda" : "Javob kutilmoqda"}</span>
+    ${!t.closed && t.mode === "offline" ? `<button type="button" class="t-scan" data-scan-test="${t.id}">${ico("scan")}Skaner</button>` : ""}</div>`;
 
 const TEST_SEGS = [["all", "Hammasi"], ["open", "Ochiq"], ["done", "E'lon qilingan"], ["online", "Onlayn"], ["offline", "Oflayn"]];
 const TESTS_SHOWN = 6;
@@ -997,7 +1125,7 @@ VIEWS.home = async () => {
         <button type="button" class="role-chip" data-switch-role title="Rolni almashtirish">
           <span>${role === "student" ? "🎓" : "👩‍🏫"}</span><b>${role === "student" ? "O'quvchi" : "O'qituvchi"}</b><i>⇄</i></button></div>
       <div class="hero-hello">Salom, ${esc(first)} 👋<small>${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</small></div>
-      <div class="hero-stats">${stats.map(([n, label, sun]) => `<div class="hero-stat ${sun ? "is-sun" : ""}"><b>${n}</b><small>${label}</small></div>`).join("")}</div>
+      <div class="hero-stats">${stats.map(([n, label, sun]) => `<div class="hero-stat ${sun ? "is-sun" : ""}"><b data-count="${n}">${n}</b><small>${label}</small></div>`).join("")}</div>
     </section>`;
   // Bosh sahifa — asosiy amal; ro'yxatlarning to'lig'i pastki paneldagi alohida bo'limlarda
   const recent = role === "student" ? b.attempts.slice(0, 4) : [];
@@ -1018,7 +1146,8 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
-      <button type="button" class="item" data-go-results><span class="ico">📊</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span><span class="muted">›</span></button>
+      <button type="button" class="item results-go" data-go-results><span class="ico">${ico("bars")}</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span>
+        <span class="rg-end" aria-hidden="true"><span class="rg-spark">${[30, 46, 38, 62, 52, 78, 100].map((h, k) => `<i style="--h:${h}%;--k:${k}"></i>`).join("")}</span>${ico("arrow")}</span></button>
       ${myTestsHTML(b.tests)}
       ${b.sales ? planCard(b.plan) : creditCard(b)}`}
   </div>`;
@@ -4291,6 +4420,50 @@ VIEWS.appHome = async () => {
   else if (q.get("v") === "practice") { S.role = "student"; S.stack = []; go("practice"); }
   else if (q.get("c")) { go("answer", { code: q.get("c") }); }
   else { resumeView(); render(); }  // birinchi kirishda — rol tanlash, keyin — oxirgi sahifa
+})();
+
+// ---------- Harakat qatlami: to'lqinli tugmalar, konfetti, so'z o'lchagich, sanovchi raqamlar ----------
+(function motion() {
+  // Bosilgan joydan to'lqin tarqaladi
+  document.addEventListener("pointerdown", e => {
+    if (reduceMotion) return;
+    const el = e.target.closest(".btn, .act, .quick-action, .big-act, .tab, .t-scan");
+    if (!el || el.disabled) return;
+    const r = el.getBoundingClientRect(), s = document.createElement("span");
+    s.className = "m-rp"; s.style.left = (e.clientX - r.left) + "px"; s.style.top = (e.clientY - r.top) + "px";
+    el.appendChild(s); setTimeout(() => s.remove(), 700);
+  }, { passive: true });
+
+  // Esse maydoni ostidagi so'z sanog'i chiziqqa aylanadi: 30 so'zgacha sariq, keyin yashil, 300 da to'ladi
+  function wordBar(ta) {
+    const c = ta.parentElement && ta.parentElement.querySelector(".counter"); if (!c) return;
+    const n = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
+    c.classList.add("m-bar"); c.classList.toggle("ok", n >= 30);
+    c.style.setProperty("--wp", Math.min(100, n / 300 * 100).toFixed(1) + "%");
+  }
+  document.addEventListener("input", e => { if (e.target.matches && e.target.matches("textarea")) wordBar(e.target); });
+
+  function confetti(anchor) {
+    if (reduceMotion) return;
+    const r = anchor.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const colors = ["var(--accent)", "var(--accent-2)", "var(--warn)", "var(--good)", "var(--ink)"];
+    for (let k = 0; k < 28; k++) {
+      const s = document.createElement("span"), ang = Math.random() * Math.PI * 2, d = 70 + Math.random() * 110;
+      s.className = "m-cf"; s.style.left = cx + "px"; s.style.top = cy + "px"; s.style.background = colors[k % colors.length];
+      s.style.setProperty("--x", `calc(-50% + ${Math.cos(ang) * d}px)`);
+      s.style.setProperty("--y", `calc(-50% + ${Math.sin(ang) * d + 40}px)`);
+      s.style.setProperty("--r", (Math.random() * 1080 - 540) + "deg");
+      document.body.appendChild(s); setTimeout(() => s.remove(), 1300);
+    }
+  }
+
+  // Har yangi ekran: raqamlar sanaladi, esse chizig'i chiziladi, muvaffaqiyat ekranida konfetti
+  new MutationObserver(() => {
+    if (!$app.classList.contains("soft")) countUp($app);  // jim yangilanishda raqamlar noldan qayta sanalmasin
+    $app.querySelectorAll("textarea").forEach(wordBar);
+    const ok = $app.querySelector(".success .check");
+    if (ok && !ok.dataset.boom) { ok.dataset.boom = "1"; setTimeout(() => confetti(ok), 900); }
+  }).observe($app, { childList: true });
 })();
 </script>
 </body>
