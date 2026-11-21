@@ -556,6 +556,54 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 @keyframes m-boom { from { transform: translate(-50%, -50%); } to { transform: translate(var(--x), var(--y)) rotate(var(--r)); opacity: 0; } }
 .success .bigcode { animation: m-pop .6s cubic-bezier(.34,1.56,.64,1) .7s backwards; }
 /* Kredit narxlari: [− son +] [narx] [chegirma] [o'chirish] */
+/* «Bugungi mock» kartasi — har mavzuda bir xil (to'q ko'k, sariq urg'u), skrinshotdagidek */
+.mock-card { --mk-y: #ffd84d; position: relative; overflow: hidden; display: grid; gap: 10px; padding: 18px 16px 16px; border-radius: 26px;
+  background: radial-gradient(120% 70% at 100% 0%, #2b3a78 0 32%, transparent 33%), linear-gradient(160deg, #17204a, #10183a); color: #f3f5ff;
+  box-shadow: 0 18px 40px -22px #0b1233; animation: m-rise .45s cubic-bezier(.2,.8,.2,1) backwards; }
+.mock-card h2 { margin: 2px 0 0; font-size: 26px; color: #fff; }
+.mock-card .mk-title, .mock-card .mk-sub { color: #b9c0e6; font-size: 13px; }
+.mk-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mk-badge { background: var(--mk-y); color: #1b1b1b; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; padding: 7px 13px; border-radius: 99px; }
+.mk-open { display: inline-flex; gap: 6px; align-items: center; border: 1px solid #3b4680; color: #dfe3ff; font-size: 12.5px; padding: 6px 11px; border-radius: 99px; }
+.mk-open i { width: 7px; height: 7px; border-radius: 50%; background: var(--mk-y); animation: mk-blink 1.4s ease-in-out infinite; }
+@keyframes mk-blink { 50% { opacity: .25; } }
+.mk-times, .mk-labels { position: relative; height: 20px; font-size: 15px; }
+.mk-labels { font-size: 12px; color: #b9c0e6; height: 16px; }
+.mk-times > *, .mk-labels > * { position: absolute; left: 0; white-space: nowrap; }
+.mk-times .mid, .mk-labels .mid { transform: translateX(-50%); color: var(--mk-y); }
+.mk-times .end, .mk-labels .end { left: auto; right: 0; color: #ffb3a1; }
+.mk-labels .mid { color: #ffe9a3; }
+.mk-track { position: relative; height: 10px; border-radius: 99px; background: linear-gradient(90deg, #6f78ff, #b48cff 55%, #ff8f7a); }
+.mk-track > i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: rgba(255,255,255,.35); transition: width 1s linear; }
+.mk-track span { position: absolute; top: 50%; width: 16px; height: 16px; border-radius: 50%; transform: translate(-50%, -50%); border: 3px solid #fff; background: #10183a; }
+.mk-track .d1 { left: 0; transform: translate(-10%, -50%); } .mk-track .d2 { background: var(--mk-y); border-color: #2b2b2b; } .mk-track .d3 { left: auto; right: 0; transform: translate(10%, -50%); background: #ff6b57; }
+.mk-note { margin: 2px 0; color: #dfe3ff; font-size: 14px; line-height: 1.45; }
+.mk-cd { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mk-cd > div { display: grid; place-items: center; gap: 2px; padding: 12px 4px; border-radius: 18px; background: rgba(255,255,255,.07); }
+.mk-cd b { font-size: 30px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+.mk-cd small { color: #b9c0e6; font-size: 12px; }
+.mk-cd .sec { background: rgba(255,216,77,.12); } .mk-cd .sec b { color: var(--mk-y); }
+.mk-people { display: flex; align-items: center; gap: 10px; }
+.mk-people .faces { display: flex; }
+.mk-people .faces i { width: 34px; height: 34px; margin-left: -8px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-body, inherit);
+  font-style: normal; color: #fff; background: hsl(calc(var(--n, 0) * 70 + 210) 55% 45%); border: 2px solid #17204a; }
+.mk-people .faces i:first-child { margin-left: 0; }
+.mk-people .faces i:nth-child(2) { --n: 1; } .mk-people .faces i:nth-child(3) { --n: 2; } .mk-people .faces i:nth-child(4) { --n: 3; }
+.mk-people .faces i.more { background: #2b3a78; }
+.mk-btn { display: flex; gap: 10px; align-items: center; justify-content: center; width: 100%; padding: 15px 18px; border-radius: 99px; font-weight: 800; font-size: 16px;
+  cursor: pointer; border: 2px solid var(--mk-y); background: var(--mk-y); color: #1b1b1b; transition: transform .12s, filter .2s; }
+.mk-btn:active { transform: scale(.97); }
+.mk-btn.on { background: rgba(255,216,77,.1); color: var(--mk-y); }
+.mk-btn.go { background: linear-gradient(90deg, var(--mk-y), #ffb347); }
+.mk-done { padding: 13px 14px; border-radius: 18px; background: rgba(255,255,255,.07); color: #dfe3ff; font-size: 14px; }
+.mk-info { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 18px; border: 1px solid #2f3a73; background: rgba(255,255,255,.04); font-size: 13.5px; color: #dfe3ff; }
+.mk-info b { color: #fff; }
+.mock-timer { position: sticky; top: 8px; z-index: 5; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 18px;
+  background: linear-gradient(160deg, #17204a, #10183a); color: #f3f5ff; box-shadow: 0 10px 24px -16px #0b1233; font-weight: 700; }
+.mock-timer > b { font-size: 20px; font-variant-numeric: tabular-nums; color: #ffd84d; }
+.mock-timer.warn { background: linear-gradient(160deg, #5a1a1a, #3a0f0f); animation: mk-blink 1s ease-in-out infinite; }
+.mock-imgs { display: grid; gap: 10px; }
+.mock-imgs img { width: 100%; border-radius: 12px; border: 1px solid var(--line); cursor: zoom-in; }
 .pk-row { display: grid; grid-template-columns: minmax(104px, 1.15fr) minmax(0, 1.4fr) 34px 38px; gap: 6px; align-items: center; animation: m-rise .3s cubic-bezier(.2,.8,.2,1) backwards; }
 .pk-row.pk-head { animation: none; }
 .pk-row.out { animation: m-out .26s ease-in forwards; }
@@ -728,15 +776,39 @@ const STALE = () => new Promise(() => {});
 // Tez ekranlar: oldin ochilgan sahifaning ma'lumoti darhol ko'rsatiladi, serverdan yangisi orqada olinadi
 // (o'zgargan bo'lsa — ekran jimgina yangilanadi). Har amal (POST) keshni tozalaydi. Kuzatuv/holat so'rovlari keshlanmaydi
 const MEM = new Map();
-const MEM_TTL = 10 * 60 * 1000, MEM_FRESH = 3000;
+const MEM_FRESH = 3000;
 const NO_MEM = /\/live$|\/api\/my-essay\/|\/api\/practice\/\d|\/api\/app\/|\/essay-scan|\/scan\/|\/written|\/download|^\/api\/test\/\d+(\?|$)|\/api\/courses/;
+// Telefon xotirasi (Chittak'dagidek): oxirgi ko'rilgan sahifalar ma'lumoti localStorage'da saqlanadi — ilova qayta
+// ochilganda ham har oyna DARHOL chiziladi, yangi ma'lumot orqada olinib, o'zgargan bo'lsa ekran jimgina yangilanadi.
+// Har foydalanuvchiniki alohida; katta javoblar (rasm) va jonli sahifalar saqlanmaydi
+const DISK_MAX_AGE = 3 * 24 * 3600 * 1000, DISK_ENTRY_MAX = 250000, DISK_ENTRIES = 40;
+const diskKey = () => "memcache:" + ((tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) || "app");
+try {
+  const saved = JSON.parse(localStorage.getItem(diskKey()) || "{}");
+  for (const [path, e] of Object.entries(saved))
+    if (e && typeof e.text === "string" && Date.now() - e.at < DISK_MAX_AGE && !NO_MEM.test(path)) MEM.set(path, { text: e.text, at: e.at });
+} catch (e) {}
+let diskTimer = null;
+function diskSave() {
+  clearTimeout(diskTimer);
+  diskTimer = setTimeout(() => {
+    try {
+      const out = {};
+      [...MEM.entries()].filter(([, e]) => e.text.length < DISK_ENTRY_MAX).sort((a, b) => b[1].at - a[1].at)
+        .slice(0, DISK_ENTRIES).forEach(([path, e]) => { out[path] = { text: e.text, at: e.at }; });
+      localStorage.setItem(diskKey(), JSON.stringify(out));
+    } catch (e) {}
+  }, 800);
+}
+const memSet = (path, entry) => { MEM.set(path, entry); diskSave(); };
 function memRevalidate(path, hit) {
   hit.refreshing = true;
   const view = S.current;
   fetch(path, { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(json => {
     if (!json) { MEM.delete(path); return; }
     const text = JSON.stringify(json);
-    MEM.set(path, { text, at: Date.now() });
+    memSet(path, { text, at: Date.now() });
+    if (path === "/api/bootstrap" && text !== hit.text) S.boot = json;  // bosh sahifa S.boot'dan chiziladi
     const busy = document.querySelector(".sheet-modal") || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
     if (text !== hit.text && S.current === view && !busy) rerender();
   }).catch(() => {}).finally(() => { hit.refreshing = false; });
@@ -744,7 +816,7 @@ function memRevalidate(path, hit) {
 async function api(path, data) {
   if (data === undefined && !NO_MEM.test(path)) {
     const hit = MEM.get(path);
-    if (hit && Date.now() - hit.at < MEM_TTL) {
+    if (hit) {  // eski bo'lsa ham darhol ko'rsatiladi — orqada yangilanadi (3 soniyadan eski bo'lsa)
       if (Date.now() - hit.at > MEM_FRESH && !hit.refreshing) memRevalidate(path, hit);
       return JSON.parse(hit.text);
     }
@@ -765,7 +837,7 @@ async function api(path, data) {
   }
   if (res.status === 401) relogin(json);
   if (!res.ok) { const err = new Error(json.error || "Xatolik yuz berdi"); err.data = json; throw err; }
-  if (view && !NO_MEM.test(path)) MEM.set(path, { text: JSON.stringify(json), at: Date.now() });
+  if (view && !NO_MEM.test(path)) memSet(path, { text: JSON.stringify(json), at: Date.now() });
   else if (!view) MEM.clear();  // amal bajarildi — ma'lumot o'zgargan bo'lishi mumkin
   return json;
 }
@@ -776,11 +848,12 @@ function warmTabs() {
   const b = S.boot; if (!b || b.subscribe) return;
   const paths = S.role === "teacher" && b.can_create !== false
     ? ["/api/teacher/classes", "/api/teacher/link", "/api/teacher/joins", "/api/teacher/essay-payments",
-       "/api/teacher/wallet-payments", "/api/teacher/settings", "/api/teacher/results"]
+       "/api/teacher/wallet-payments", "/api/teacher/settings", "/api/teacher/results",
+       ...(b.tests || []).slice(0, 3).map(t => `/api/teacher/test/${t.id}`)]  // oxirgi testlar sahifasi ham
     : b.practice ? ["/api/practice"] : [];
   paths.filter(p => !MEM.has(p) && !NO_MEM.test(p)).forEach(path =>
     fetch(path, { headers: authHeaders() }).then(r => r.ok ? r.json() : null)
-      .then(json => { if (json && !MEM.has(path)) MEM.set(path, { text: JSON.stringify(json), at: Date.now() }); })
+      .then(json => { if (json && !MEM.has(path)) memSet(path, { text: JSON.stringify(json), at: Date.now() }); })
       .catch(() => {}));
 }
 
@@ -828,7 +901,7 @@ function back() { if (S.stack.length) { S.current = S.stack.pop(); render(); } e
 async function render(soft = false) {
   S.seq = (S.seq || 0) + 1;  // har chizishning raqami — eskirgan chizishlar api() da to'xtatiladi
   const seq = S.seq;
-  clearInterval(S.liveTimer); clearInterval(S.pingTimer);
+  clearInterval(S.liveTimer); clearInterval(S.pingTimer); clearInterval(S.mockTimer);
   stopCamera();
   // Fokusdagi maydon o'chirilayotganda «change» chiqarib, chizish ichida yana chizishni boshlamasin
   if ($app.contains(document.activeElement)) document.activeElement.blur();
@@ -1229,6 +1302,8 @@ VIEWS.home = async () => {
   const recentHTML = recent.map(attemptItem).join("");
   $app.innerHTML = `<div class="view">${top}
     ${role === "student" ? `
+      ${(b.mocks || []).map(mockCardHTML).join("")}
+      ${(b.passes || []).map(passCardHTML).join("")}
       <div class="card code-card"><span class="muted small">O'qituvchingiz bergan 5 xonali kod</span><h2>Test kodi</h2>
         <input class="code-input" id="code" inputmode="numeric" maxlength="5" placeholder="•••••" autocomplete="off" aria-label="Test kodi">
         <button class="btn block" id="start" disabled>Boshlash →</button></div>
@@ -1249,6 +1324,7 @@ VIEWS.home = async () => {
       ${b.sales ? planCard(b.plan) : creditCard(b)}`}
   </div>`;
   bindHomeActions(); bindMyTests();
+  if (role === "student") { bindMockCards(b.mocks || []); bindPassCards(); }
   document.querySelectorAll("[data-go-courses]").forEach(x => x.onclick = () => { haptic("light"); go("courses"); });
   document.querySelectorAll("[data-go-practice]").forEach(x => x.onclick = () => { haptic("light"); go("practice"); });
   document.querySelectorAll("[data-go-ai]").forEach(x => x.onclick = () => { haptic("light"); go("ai"); });
@@ -1386,7 +1462,12 @@ function testGate(code, channels) {
 VIEWS.answer = async ({ code }) => {
   loading();
   let t; try { t = await api(`/api/test/${code}`); }
-  catch (e) { return e.data && e.data.channels ? testGate(code, e.data.channels) : fail(e); }
+  catch (e) {
+    if (e.data && e.data.channels) return testGate(code, e.data.channels);
+    if (e.data && e.data.mock_choice) return mockChoicePage(code, e.data);  // boshlashdan oldin: AI / ustoz, to'lov
+    if (e.data && e.data.mock) return mockPage(e.data.mock, e.message);   // hali ochilmagan / qabul yopilgan / yopilgan
+    return fail(e);
+  }
   if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
   if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "milliy" ? t.submitted : null }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
@@ -1397,6 +1478,7 @@ VIEWS.answer = async ({ code }) => {
   let variant = draft.variant || (t.variants.length === 1 ? t.variants[0] : null);
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1><span class="muted small">${esc(t.format)}</span></div>
+    ${t.schedule ? mockRunHTML(t) : ""}
     <div class="card">
       <div class="field"><label for="name">Ism va familiya</label><input class="input" id="name" autocomplete="name" value="${esc(draft.name || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
       ${t.variants.length > 1 ? `<div class="field"><label>Variant</label><div class="chips">${t.variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-v="${v}">${v} variant</button>`).join("")}</div></div>` : ""}
@@ -1446,18 +1528,22 @@ VIEWS.answer = async ({ code }) => {
   if (t.essay_pay) bindEssayPay(t.code, t.essay_pay, () => { save(); rerender(); });
   if (essayEl && (t.readers || []).length) bindEssayScan(t.code, essayEl, () => { progress(); },
     key => store("essay-reader", key));
-  document.getElementById("submit").onclick = async () => {
-    const name = nameEl.value.trim();
+  // auto — mock yopilish vaqti keldi: tasdiqsiz, borini yuboradi (ism yozilmagan bo'lsa — Telegram ismi)
+  const submitNow = async (auto = false) => {
+    if (sent) return;
+    let name = nameEl.value.trim();
+    if (auto && name.length < 3) name = ((S.boot && S.boot.user && S.boot.user.name) || "Ismsiz o'quvchi").slice(0, 60);
     if (name.length < 3) { toast("Ism va familiyangizni yozing"); nameEl.focus(); haptic("error"); return; }
-    if (!variant) { toast("Variantni tanlang"); haptic("error"); return; }
+    if (!variant) { if (auto) variant = t.variants[0]; else { toast("Variantni tanlang"); haptic("error"); return; } }
     const missing = choices.length - Object.keys(answers).length;
     const essay = essayEl ? essayEl.value.trim() : "";
-    if (essay && essay.length < 200) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
+    if (essay && essay.length < 200 && !auto) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
     const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && !essay ? (t.essay_pay ? "esse to'lanmagan — essesiz yuboriladi" : "esse yozilmagan") : ""].filter(Boolean).join(", ");
-    if (!(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
+    if (auto) toast("⏰ Vaqt tugadi — javoblaringiz yuborilmoqda");
+    if (!auto && !(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      const res = await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay });
+      const res = await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay: auto && essay.length < 200 ? "" : essay });
       sent = true; clearInterval(S.pingTimer); clearTimeout(pingWait);
       store(draftKey, "{}"); S.boot = null; haptic("success");
       done({ title: t.title, attemptId: res.essay ? res.attempt_id : null });
@@ -1467,6 +1553,8 @@ VIEWS.answer = async ({ code }) => {
       toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish";
     }
   };
+  document.getElementById("submit").onclick = () => submitNow(false);
+  if (t.schedule) bindMockRun(t, () => submitNow(true));
 };
 
 // Titulli (qog'oz) milliy test: test qog'ozda yechiladi, 45-esse shu yerda — tituldagi ID bilan.
@@ -1638,7 +1726,7 @@ VIEWS.create = async () => {
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
       ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
     </div>
-    ${st.fmt === "milliy" && st.mode !== "offline" ? essayPriceHTML(st) : ""}
+    ${st.fmt === "milliy" && st.mode !== "offline" && !(st.mock && st.mock.on) ? essayPriceHTML(st) : ""}
     ${st.mode === "offline" ? checkModeHTML(st) : ""}
     <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
     ${bubbleSheet(items, key)}
@@ -1653,6 +1741,7 @@ VIEWS.create = async () => {
       }).join("")}
       <span class="muted small">O'quvchi uchta javobdan istalganini yozsa ham to'g'ri hisoblanadi. Katta-kichik harf, o'/oʻ farqi, ortiqcha bo'shliq va kirillcha yozuv xato hisoblanmaydi.</span></div>` : ""}
     ${st.mode === "offline" ? "" : channelEditorHTML(st.channels)}
+    ${st.mode !== "offline" && st.fmt === "milliy" ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
   </div>`;
   function collect() {
@@ -1662,6 +1751,7 @@ VIEWS.create = async () => {
     const ec = document.getElementById("ep-card"); if (ec) st.card = ec.value;
     const eh = document.getElementById("ep-holder"); if (eh) st.holder = eh.value;
     const ct = document.getElementById("count"); if (ct) st.count = Math.max(5, Math.min(100, parseInt(ct.value) || 30));
+    if (st.mock) collectMock(st.mock);
     document.querySelectorAll(".wkey").forEach(box => {
       const parts = [box.querySelector(".wk-main"), ...box.querySelectorAll(".wk-syn")].map(x => x.value.replace(/\|/g, " ").trim()).filter(Boolean);
       if (parts.length) key[box.dataset.q] = parts.join(" | "); else delete key[box.dataset.q];
@@ -1699,15 +1789,28 @@ VIEWS.create = async () => {
   document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; haptic("select"); rerender(); });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
   bindChannelEditor(st.channels, async () => {});  // yaratishda serverga saqlash «Saqlash» bosilganda
+  bindMockSetup(st.mock, () => { collect(); saveDraft(); rerender(); });
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
+    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline") {
+      const bad = mockProblem(st.mock); if (bad) { toast(bad); haptic("error"); return; }
+    }
     const miss = items.filter(i => !st.keys.A[i.label]);
     if (miss.length) { toast(`${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} — kaliti yo'q`); haptic("error"); return; }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
     try {
       const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
+      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline") {
+        // Test saqlandi — endi jadval, narxlar va savollar fayli (xato bo'lsa test sahifasida tuzatiladi)
+        btn.textContent = "E'lon qilinmoqda…";
+        try { await saveMock(res.id, st.mock); }
+        catch (e) { toast("⚠️ Test saqlandi, lekin e'lon: " + e.message + " — test sahifasida tuzating"); haptic("error"); }
+        S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; S.mockFiles = null; haptic("success");
+        S.stack = []; S.current = { view: "home", params: {} };
+        return go("teacher", { id: res.id });
+      }
       if (st.mode === "offline") {  // titul: darhol test sahifasiga — titul chiqarish va skanerlash shu yerda
         S.create = null; S.saveDraft = null; clearDraft(); S.boot = null; haptic("success"); S.stack = []; S.current = { view: "home", params: {} };
         return go("teacher", { id: res.id });
@@ -1767,6 +1870,348 @@ function takeFlash() {
   return f ? `<div class="flash${f.warn ? " warn" : ""}" role="status"><span>${f.text}</span><button type="button" class="x" aria-label="Yopish">✕</button></div>` : "";
 }
 function bindFlash() { document.querySelectorAll(".flash .x").forEach(x => x.onclick = () => x.closest(".flash").remove()); }
+
+// ---------- «📅 E'lon qilish»: vaqtli mock (ochiladi → qabul yopiladi → tugaydi), narxlar, savollar fayli ----------
+const pad2 = n => String(n).padStart(2, "0");
+function mockDefaults() {
+  const d = new Date();
+  return { on: false, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+           opens: "20:00", entry: "22:00", closes: "23:00", priceAi: "", priceTeacher: "" };
+}
+function mockSetupHTML(m, withFiles = true) {
+  const b = S.boot || {}, files = S.mockFiles || [];
+  return `<div class="card" id="mock-box"><div class="section-title"><h2>📅 E'lon qilish</h2><span class="muted small">vaqtli mock</span></div>
+    <span class="muted small">Belgilangan vaqtda ochiladi, qabul to'xtaydi va hammaga birdan yopiladi. Yopilgach AI esselarni tekshiradi, natija va sertifikatlar o'zi yuboriladi.</span>
+    <div class="chips"><button type="button" class="chip ${m.on ? "" : "on"}" data-mock-on="0">Yo'q</button>
+      <button type="button" class="chip ${m.on ? "on" : ""}" data-mock-on="1">📢 Ha, e'lon qilish</button></div>
+    ${m.on ? `
+      ${b.can_public ? `<label class="row small" style="gap:8px;cursor:pointer"><input type="checkbox" id="mk-public" ${m.public ? "checked" : ""} style="width:20px;height:20px">
+        Hamma o'quvchilarning bosh sahifasida «Bugungi mock» bo'lib chiqsin</label>` : ""}
+      <div class="field"><label for="mk-date">Sana</label><input class="input" id="mk-date" type="date" value="${esc(m.date)}"></div>
+      <div class="row" style="gap:8px;align-items:flex-end">
+        <div class="field" style="flex:1"><label for="mk-opens">Ochiladi</label><input class="input" id="mk-opens" type="time" value="${esc(m.opens)}"></div>
+        <div class="field" style="flex:1"><label for="mk-entry">Qabul yopiladi</label><input class="input" id="mk-entry" type="time" value="${esc(m.entry)}"></div>
+        <div class="field" style="flex:1"><label for="mk-closes">Tugaydi</label><input class="input" id="mk-closes" type="time" value="${esc(m.closes)}"></div></div>
+      <b>Narxlar</b><span class="muted small">Begonalar uchun — o'quvchi boshlashdan oldin esseni kim tekshirishini tanlaydi. O'z o'quvchilaringizga bepul. Bo'sh yoki 0 — bepul.</span>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label for="mk-pai">🤖 AI tekshirsa (so'm)</label><input class="input" id="mk-pai" inputmode="numeric" value="${esc(m.priceAi)}" placeholder="0 — bepul"></div>
+        <div class="field" style="flex:1"><label for="mk-pteacher">👩‍🏫 Ustoz tekshirsa (so'm)</label><input class="input" id="mk-pteacher" inputmode="numeric" value="${esc(m.priceTeacher)}" placeholder="0 — bepul"></div></div>
+      ${withFiles ? `<div class="field"><label for="mk-files">📎 Savollar — PDF va/yoki rasmlar</label>
+        <input class="input" id="mk-files" type="file" accept="application/pdf,image/*" multiple>
+        <span class="muted small" id="mk-files-list">${files.length ? files.map(f => "• " + esc(f.name)).join("<br>") : "O'quvchi mock ochilganda PDF yoki rasmni tanlab ko'radi. Keyin test sahifasida ham qo'shsa bo'ladi."}</span></div>` : ""}` : ""}
+  </div>`;
+}
+function collectMock(m) {
+  const val = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const pub = document.getElementById("mk-public"); if (pub) m.public = pub.checked;
+  for (const [id, k] of [["mk-date", "date"], ["mk-opens", "opens"], ["mk-entry", "entry"], ["mk-closes", "closes"]]) { const v = val(id); if (v !== null) m[k] = v; }
+  const pa = val("mk-pai"); if (pa !== null) m.priceAi = pa.replace(/\D/g, "");
+  const pt = val("mk-pteacher"); if (pt !== null) m.priceTeacher = pt.replace(/\D/g, "");
+}
+function bindMockSetup(m, redraw) {
+  if (!m) return;
+  document.querySelectorAll("[data-mock-on]").forEach(x => x.onclick = () => { m.on = x.dataset.mockOn === "1"; haptic("select"); redraw(); });
+  const input = document.getElementById("mk-files");
+  if (input) input.onchange = () => {
+    S.mockFiles = [...input.files];
+    document.getElementById("mk-files-list").innerHTML = S.mockFiles.map(f => "• " + esc(f.name)).join("<br>");
+  };
+}
+// Saqlashdan oldin: vaqtlar tartibi, yopilish o'tib ketmagan, narx 0 yoki 1 000 dan
+function mockProblem(m) {
+  if (!m.date || !m.opens || !m.entry || !m.closes) return "Sana va uchala vaqtni kiriting";
+  if (!(m.opens < m.entry && m.entry <= m.closes)) return "Tartib: ochiladi → qabul yopiladi → tugaydi";
+  if (new Date(`${m.date}T${m.closes}`) < new Date()) return "Tugash vaqti o'tib ketgan";
+  for (const p of [m.priceAi, m.priceTeacher]) if (+p && +p < 1000) return "Narx 0 (bepul) yoki 1 000 so'mdan";
+  return null;
+}
+async function saveMock(testId, m) {
+  await api(`/api/teacher/test/${testId}/schedule`, { date: m.date, opens: m.opens, entry: m.entry, closes: m.closes,
+    public: !!m.public, price_ai: +m.priceAi || 0, price_teacher: +m.priceTeacher || 0 });
+  for (const file of S.mockFiles || []) {  // bittadan — katta PDF ham sig'adi
+    const form = new FormData(); form.append("file", file, file.name);
+    await apiForm(`/api/teacher/test/${testId}/files`, form);
+  }
+}
+
+// ---------- «💎 Tarif»: FREE_IDS ustoz narxini qo'yadi (Sozlamalar), begona o'quvchi bosh sahifada sotib oladi ----------
+const TARIFF_DEFAULTS = [30, 90];
+function tariffRowHTML(t) {
+  return `<div class="row tf-row" style="gap:8px"><input class="input" data-tf-d inputmode="numeric" value="${t.days || ""}" placeholder="Kun" style="flex:1" aria-label="Muddat (kun)">
+    <input class="input" data-tf-p inputmode="numeric" value="${t.price ? sum(t.price) : ""}" placeholder="Narxi (so'm)" style="flex:1.6" aria-label="Narxi"></div>`;
+}
+function studentTariffsHTML(list) {
+  const rows = [...list, ...TARIFF_DEFAULTS.filter(d => !list.some(t => t.days === d)).map(days => ({ days }))].sort((a, b) => a.days - b.days);
+  return `<div class="section-title"><h2>💎 O'quvchi tariflari</h2><span class="muted small">${list.length ? `${list.length} ta tarif` : "sotilmayapti"}</span></div>
+    <div class="card"><span class="muted small">Begona o'quvchi bosh sahifada tarif sotib oladi: muddat davomida sizning <b>hamma mocklaringiz</b> unga bepul (o'z o'quvchingizdek). Pul kartangizga tushadi, chekni AI tekshiradi.</span>
+      <div class="row small muted" style="gap:8px"><b style="flex:1">Muddat (kun)</b><b style="flex:1.6">Narxi (so'm)</b></div>
+      <div id="tf-rows" style="display:grid;gap:8px">${rows.map(tariffRowHTML).join("")}</div>
+      <span class="muted small">Narxi yozilmagan qator sotilmaydi.</span>
+      <button type="button" class="btn ghost block" id="tf-add" ${rows.length >= 6 ? "hidden" : ""}>➕ Tarif qo'shish</button>
+      <button type="button" class="btn block" id="tf-save">Tariflarni saqlash</button></div>`;
+}
+function bindStudentTariffs() {
+  const save = document.getElementById("tf-save"); if (!save) return;
+  const box = document.getElementById("tf-rows"), add = document.getElementById("tf-add");
+  const digits = v => String(v || "").replace(/\D/g, "");
+  add.onclick = () => { box.insertAdjacentHTML("beforeend", tariffRowHTML({})); box.lastElementChild.querySelector("input").focus(); add.hidden = box.children.length >= 6; haptic("light"); };
+  save.onclick = async () => {
+    const list = [...box.querySelectorAll(".tf-row")].map(r => ({ days: +digits(r.querySelector("[data-tf-d]").value) || 0,
+      price: digits(r.querySelector("[data-tf-p]").value) })).filter(t => t.price);
+    save.disabled = true;
+    try { await api("/api/teacher/settings", { student_tariffs: list }); haptic("success"); toast("✅ Tariflar saqlandi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+}
+// O'quvchi bosh sahifasi: har ustozning tarif kartasi (amaldagi muddat, chek tekshirilmoqda, sotib olish)
+function passCardHTML(p) {
+  const until = p.until ? `${p.until.slice(8, 10)}.${p.until.slice(5, 7)}.${p.until.slice(0, 4)}` : null;
+  return `<div class="card pass-card" data-pass="${p.teacher_id}">
+    <div class="row between"><b>💎 Tarif · ${esc(p.name)}</b>${until ? `<span class="pill-tag done">✅ ${until} gacha</span>` : ""}</div>
+    <span class="muted small">${until ? "Tarifingiz faol — ustozning hamma mocklari siz uchun bepul. Uzaytirish mumkin:" : "Muddat davomida ustozning hamma mocklari bepul — har biri uchun alohida to'lamaysiz."}</span>
+    ${p.status === "review" ? `<span class="small">⏳ Chekingiz tekshirilmoqda — tasdiqlansa bot xabar beradi.</span>` : `
+    <div class="chips">${p.tariffs.map((t, i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-pass-days="${t.days}">${t.days} kun · ${sum(t.price)} so'm</button>`).join("")}</div>
+    <button type="button" class="btn block" data-pass-buy>💎 ${until ? "Uzaytirish" : "Tarif sotib olish"}</button>`}
+  </div>`;
+}
+function bindPassCards() {
+  document.querySelectorAll(".pass-card").forEach(card => {
+    let days = +((card.querySelector("[data-pass-days].on") || {}).dataset || {}).passDays || 0;
+    card.querySelectorAll("[data-pass-days]").forEach(x => x.onclick = () => { days = +x.dataset.passDays; haptic("select");
+      card.querySelectorAll("[data-pass-days]").forEach(y => y.classList.toggle("on", y === x)); });
+    const buy = card.querySelector("[data-pass-buy]"); if (!buy) return;
+    buy.onclick = async () => {
+      buy.disabled = true;
+      try {
+        const r = await api("/api/pass/order", { teacher_id: +card.dataset.pass, days }); haptic("success");
+        toast("Botga karta va summa yuborildi — chekni o'sha yerga yuboring");
+        if (r.bot) { try { tg.openTelegramLink(`https://t.me/${r.bot}`); } catch (e) { window.open(`https://t.me/${r.bot}`, "_blank"); } }
+      } catch (e) { toast(e.message); haptic("error"); }
+      buy.disabled = false;
+    };
+  });
+}
+
+// ---------- O'quvchi: «Bugungi mock» kartasi, tanlov (AI / ustoz) va to'lov, savollar va qayta sanoq ----------
+const UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+const UZ_DAYS = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+function mockDay(s) {
+  const [y, m, d] = s.opens_at.slice(0, 10).split("-").map(Number);
+  return `${d}-${UZ_MONTHS[m - 1]}, ${UZ_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}`;
+}
+// Server soati: telefon soati noto'g'ri bo'lsa ham qayta sanoq to'g'ri (faqat yangi ma'lumotdan — eski keshdan emas)
+const serverNow = () => Date.now() + (S.mockSkew || 0);
+function setSkew(s) { if (s && s.now && Math.abs(s.now - Date.now()) < 5 * 60000) S.mockSkew = s.now - Date.now(); }
+const mockPhaseOf = s => { const n = serverNow(); return n < s.opens ? "soon" : n < s.entry ? "open" : n < s.closes ? "late" : "closed"; };
+function mockFromPrice(c) {
+  const s = c.schedule, prices = [s.price_ai, s.price_teacher].filter(p => p > 0);
+  return c.price && prices.length ? Math.min(...prices) : 0;
+}
+function mockCardHTML(c) {
+  const s = c.schedule, phase = mockPhaseOf(s), span = s.closes - s.opens;
+  const entryPct = Math.round((s.entry - s.opens) / span * 100), hours = Math.round(span / 360000) / 10;
+  const target = phase === "soon" ? s.opens : phase === "closed" ? null : s.closes;
+  const faces = c.faces.map(f => `<i>${esc(f)}</i>`).join("") + (c.signups > c.faces.length ? `<i class="more">+${c.signups - c.faces.length}</i>` : "");
+  let action;
+  if (c.attempt) action = c.announced ? `<button type="button" class="mk-btn go" data-mk-result="${c.attempt}">📊 Natijani ko'rish</button>`
+    : `<div class="mk-done">✅ Topshirdingiz — natija va sertifikat mock yopilgach botga keladi</div>`;
+  else if (phase === "soon") action = c.signed
+    ? `<button type="button" class="mk-btn on" data-mk-sign="${c.code}" data-on="0"><span>✓</span> Qatnashasiz, ${hm(s.opens_at)} da eslatamiz</button>`
+    : `<button type="button" class="mk-btn" data-mk-sign="${c.code}" data-on="1">Qatnashaman</button>`;
+  else if (phase === "open") action = `<button type="button" class="mk-btn go" data-mk-open="${c.code}">Boshlash →</button>`;
+  else if (phase === "late") action = `<button type="button" class="mk-btn" data-mk-open="${c.code}">Davom ettirish →</button><small class="mk-sub">Qabul yopilgan — faqat oldin kirganlar davom etadi</small>`;
+  else action = `<div class="mk-done">🔒 Mock yopildi — natijalar tekshirilgach e'lon qilinadi</div>`;
+  const price = mockFromPrice(c);
+  return `<section class="mock-card" data-mk="${s.opens}:${s.entry}:${s.closes}:${phase}">
+    <div class="mk-top"><span class="mk-badge">${s.public && s.mock_no ? `Bugungi mock №${s.mock_no}` : "Mock"}</span><span class="mk-open"><i></i>${num(hours)} soat ochiq</span></div>
+    <h2>${mockDay(s)}</h2><small class="mk-title">${esc(c.title)}${c.owner ? ` · ${esc(c.owner)}` : ""}</small>
+    <div class="mk-times"><b>${hm(s.opens_at)}</b><b class="mid" style="left:${entryPct}%">${hm(s.entry_until)}</b><b class="end">${hm(s.closes_at)}</b></div>
+    <div class="mk-track"><i data-tl="${s.opens}:${s.closes}"></i><span class="d1"></span><span class="d2" style="left:${entryPct}%"></span><span class="d3"></span></div>
+    <div class="mk-labels"><span>Ochiladi</span><span class="mid" style="left:${entryPct}%">Kirish to'xtaydi</span><span class="end">Yopiladi</span></div>
+    <p class="mk-note">${hm(s.entry_until)} gacha istalgan payt kirasiz. ${hm(s.closes_at)} da test hammaga birdan yopiladi: kech kirsangiz, vaqtingiz kamroq.</p>
+    ${target ? `<div class="mk-cd" data-cd="${target}"><div><b data-h>--</b><small>soat</small></div><div><b data-m>--</b><small>daqiqa</small></div><div class="sec"><b data-s>--</b><small>soniya</small></div></div>
+      <small class="mk-sub">${phase === "soon" ? "Boshlanishiga" : "Yopilishiga"}</small>` : ""}
+    ${c.signups ? `<div class="mk-people"><span class="faces">${faces}</span><b>${c.signups} kishi qatnashmoqchi</b></div>` : ""}
+    ${action}
+    ${price ? `<small class="mk-sub">💳 Pullik: ${sum(price)} so'mdan · esseni kim tekshirishini boshlashda tanlaysiz</small>` : `<small class="mk-sub">🎁 Bepul mock</small>`}
+    <div class="mk-info"><span>⚖️</span><span><b>Natija Rasch modelida hisoblanadi:</b> qancha ko'p odam qatnashsa, natijangiz haqiqiy imtihondagidek chiqadi. Do'stlaringizni ham chaqiring.</span></div>
+  </section>`;
+}
+// Har soniya: qayta sanoq va vaqt chizig'i; bosqich almashsa (ochildi / yopildi) — sahifa o'zi yangilanadi
+function tickMocks(root = document) {
+  const now = serverNow();
+  root.querySelectorAll("[data-cd]").forEach(el => {
+    const left = Math.max(0, +el.dataset.cd - now);
+    const set = (k, v) => { const x = el.querySelector(`[data-${k}]`); if (x) x.textContent = String(v).padStart(2, "0"); };
+    set("h", Math.floor(left / 3600000)); set("m", Math.floor(left % 3600000 / 60000)); set("s", Math.floor(left % 60000 / 1000));
+  });
+  root.querySelectorAll("[data-tl]").forEach(el => {
+    const [a, b] = el.dataset.tl.split(":").map(Number);
+    el.style.width = Math.max(0, Math.min(100, (now - a) / (b - a) * 100)) + "%";
+  });
+  return [...root.querySelectorAll("[data-mk]")].some(el => {
+    const [o, e, c, phase] = el.dataset.mk.split(":");
+    return mockPhaseOf({ opens: +o, entry: +e, closes: +c }) !== phase;
+  });
+}
+function bindMockCards(list) {
+  const cards = document.querySelectorAll(".mock-card"); if (!cards.length) return;
+  list.forEach(c => setSkew(c.schedule));
+  tickMocks();
+  S.mockTimer = setInterval(() => { if (tickMocks()) { clearInterval(S.mockTimer); rerender(); } }, 1000);
+  document.querySelectorAll("[data-mk-sign]").forEach(x => x.onclick = async () => {
+    x.disabled = true;
+    try {
+      const card = await api(`/api/mock/${x.dataset.mkSign}/signup`, { on: x.dataset.on === "1" });
+      if (S.boot && S.boot.mocks) S.boot.mocks = S.boot.mocks.map(c => c.code === card.code ? { ...card, owner: c.owner } : c);
+      haptic(card.signed ? "success" : "select");
+      toast(card.signed ? `✅ Yozildingiz — ${hm(card.schedule.opens_at)} da botga eslatma keladi` : "Qatnashuv bekor qilindi");
+      rerender();
+    } catch (e) { toast(e.message); haptic("error"); x.disabled = false; }
+  });
+  document.querySelectorAll("[data-mk-open]").forEach(x => x.onclick = () => { haptic("light"); go("answer", { code: x.dataset.mkOpen }); });
+  document.querySelectorAll("[data-mk-result]").forEach(x => x.onclick = () => { haptic("light"); go("result", { id: x.dataset.mkResult }); });
+}
+// Mock hali ochilmagan / qabul yopilgan / yopilgan — karta va sabab
+function mockPage(card, message) {
+  $app.innerHTML = `<div class="view">${mockCardHTML(card)}
+    <div class="card empty small">${esc(message)}</div></div>`;
+  bindMockCards([card]);
+}
+// Boshlashdan oldin: esseni kim tekshiradi (narxi bilan) va pullik bo'lsa — to'lov (karta → chek botga → AI)
+function mockChoicePage(code, data) {
+  const ch = data.mock_choice, card = data.mock, review = ch.status === "review";
+  const waiting = ch.status === "open" && ch.amount > 0;
+  const openBot = () => { if (ch.bot) { try { tg.openTelegramLink(`https://t.me/${ch.bot}`); } catch (e) { window.open(`https://t.me/${ch.bot}`, "_blank"); } } };
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>O</i>Kod ${esc(code)}</span><h1>${esc(card.title)}</h1>
+      <span class="muted small">Boshlashdan oldin tanlang: essengizni kim tekshiradi?</span></div>
+    ${review ? `<div class="card" style="border:1.5px solid var(--warn)"><b>⏳ Chekingiz tekshirilmoqda</b>
+      <span class="muted small">AI chekni tekshiradi — to'g'ri bo'lsa mock darhol ochiladi va bot xabar beradi.</span>
+      <button type="button" class="btn ghost block" id="mc-check">🔄 Tekshirish</button></div>` : `
+    <div class="list">${ch.options.map(o => `<button type="button" class="item ${ch.chosen === o.key ? "on" : ""}" data-mc="${o.key}">
+      <span class="ico">${o.key === "ai" ? "🤖" : "👩‍🏫"}</span>
+      <span><b>${esc(o.title)}</b><small>${o.key === "ai" ? "AI imtihondagidek 75 ballik shkalada tekshiradi — natija tez chiqadi" : "Ustoz o'zi o'qib baholaydi — natija ustoz tekshirgach chiqadi"}</small></span>
+      <span class="pill-tag ${o.price ? "wait" : "done"}">${o.price ? `${sum(o.price)} so'm` : "Bepul"}</span></button>`).join("")}</div>
+    ${ch.status === "rejected" ? `<div class="card small" style="border:1.5px solid var(--bad)">❌ Chek tasdiqlanmadi${ch.note ? `: ${esc(ch.note)}` : ""}. Qayta tanlab, to'g'ri chekni yuboring.</div>` : ""}
+    ${waiting ? `<div class="card" style="border:1.5px solid var(--warn)"><b>💳 To'lov: ${sum(ch.amount)} so'm</b>
+      <span class="small">Karta: <b>${esc(ch.card)}</b>${ch.holder ? ` · ${esc(ch.holder)}` : ""}</span>
+      <span class="muted small">Pulni o'tkazib, chek skrinshotini botga yuboring — AI tekshiradi va mock ochiladi.</span>
+      <button type="button" class="btn block" id="mc-bot">📨 Botga chek yuborish</button>
+      <button type="button" class="btn ghost block" id="mc-check">🔄 To'ladim — tekshirish</button></div>` : ""}`}
+    <div class="card small muted">📅 ${mockDay(card.schedule)} · ${hm(card.schedule.opens_at)} – ${hm(card.schedule.closes_at)} · qabul ${hm(card.schedule.entry_until)} gacha</div>
+  </div>`;
+  document.querySelectorAll("[data-mc]").forEach(x => x.onclick = async () => {
+    x.disabled = true;
+    try {
+      const r = await api(`/api/test/${code}/mock-choice`, { choice: x.dataset.mc });
+      haptic("success");
+      if (r.status === "paid") { toast("✅ Tanlandi — mock ochilmoqda"); return rerender(); }
+      toast("Botga karta va summa yuborildi — chekni o'sha yerga yuboring"); openBot(); rerender();
+    } catch (e) { toast(e.message); haptic("error"); x.disabled = false; }
+  });
+  const bot = document.getElementById("mc-bot"); if (bot) bot.onclick = openBot;
+  const check = document.getElementById("mc-check"); if (check) check.onclick = () => { haptic("light"); rerender(); };
+}
+// Mock ichida: savollar (PDF yoki rasm — o'quvchi tanlaydi), yopilishgacha qayta sanoq; vaqt tugasa — avto-yuborish
+function mockRunHTML(t) {
+  const files = t.files || [], pdfs = files.filter(f => f.kind === "pdf"), imgs = files.filter(f => f.kind === "image");
+  const mode = (store("mock-view") === "pdf" && pdfs.length) || !imgs.length ? "pdf" : "img";
+  return `<div class="mock-timer" id="mock-timer" data-cd="${t.schedule.closes}"><span>⏳ Yopilishiga</span>
+      <b><b data-h>--</b>:<b data-m>--</b>:<b data-s>--</b></b></div>
+    ${files.length ? `<div class="card" id="mock-q"><div class="section-title"><h2>📄 Savollar</h2>
+      ${pdfs.length && imgs.length ? `<div class="chips"><button type="button" class="chip ${mode === "pdf" ? "on" : ""}" data-qv="pdf">📄 PDF</button>
+        <button type="button" class="chip ${mode === "img" ? "on" : ""}" data-qv="img">🖼 Rasmlar</button></div>` : ""}</div>
+      <div data-qpane="pdf" ${mode === "pdf" ? "" : "hidden"} style="display:grid;gap:8px">${pdfs.map(f => `<button type="button" class="btn ghost block" data-mf-open="${esc(f.url)}">📄 ${esc(f.name)} — ochish</button>`).join("")}
+        <span class="muted small">PDF Telegram brauzerida ochiladi — javoblarni shu sahifaga qaytib belgilang.</span></div>
+      <div data-qpane="img" ${mode === "img" ? "" : "hidden"} class="mock-imgs">${imgs.map(f => `<img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy" data-mf-open="${esc(f.url)}">`).join("")}
+        <span class="muted small">Rasmni bossangiz — kattalashtirib ko'rasiz.</span></div></div>` : ""}`;
+}
+function bindMockRun(t, autoSubmit) {
+  setSkew(t.schedule);
+  document.querySelectorAll("[data-qv]").forEach(x => x.onclick = () => {
+    store("mock-view", x.dataset.qv); haptic("select");
+    document.querySelectorAll("[data-qv]").forEach(y => y.classList.toggle("on", y === x));
+    document.querySelectorAll("[data-qpane]").forEach(p => { p.hidden = p.dataset.qpane !== x.dataset.qv; });
+  });
+  document.querySelectorAll("#mock-q [data-mf-open]").forEach(x => x.onclick = () => openFileLink(x.dataset.mfOpen));
+  const timer = document.getElementById("mock-timer"); let fired = false;
+  const tick = () => {
+    tickMocks(timer.parentElement);
+    const left = t.schedule.closes - serverNow();
+    timer.classList.toggle("warn", left < 5 * 60000);
+    if (left <= 0 && !fired) { fired = true; clearInterval(S.mockTimer); autoSubmit(); }
+  };
+  tick(); S.mockTimer = setInterval(tick, 1000);
+}
+
+// Test sahifasi: jadval (vaqtlar, narxlar), savollar fayllari, qatnashmoqchilar
+const hm = v => (v || "").slice(11, 16);
+function mockBannerHTML(d) {
+  const s = d.schedule, phase = { soon: "⏳ hali ochilmagan", open: "🟢 ochiq", late: "🟡 qabul yopilgan", closed: "🔒 yopilgan" }[s.phase] || "";
+  return `<button type="button" class="item" data-goto-mock><span class="ico">📅</span>
+    <span><b>${s.public && s.mock_no ? `Bugungi mock №${s.mock_no}` : "Vaqtli mock"} · ${esc(s.opens_at.slice(0, 10))}</b>
+    <small>${hm(s.opens_at)} ochiladi · ${hm(s.entry_until)} qabul yopiladi · ${hm(s.closes_at)} tugaydi · ${phase} · 👥 ${d.signups} kishi qatnashmoqchi · 📎 ${d.files.length} fayl</small></span><span class="muted">›</span></button>`;
+}
+function teacherMockHTML(t, d) {
+  const s = d.schedule;
+  if (!S.mockEdit || S.mockEdit.id !== t.id)
+    S.mockEdit = { id: t.id, m: s ? { on: true, public: s.public, date: s.opens_at.slice(0, 10), opens: hm(s.opens_at), entry: hm(s.entry_until),
+      closes: hm(s.closes_at), priceAi: s.price_ai ? String(s.price_ai) : "", priceTeacher: s.price_teacher ? String(s.price_teacher) : "" } : mockDefaults() };
+  const m = S.mockEdit.m;
+  const files = d.files.map(f => `<div class="item" style="cursor:default"><span class="ico">${f.kind === "pdf" ? "📄" : "🖼"}</span>
+      <span><b>${esc(f.name)}</b><small>${(f.size / 1048576).toFixed(1)} MB</small></span>
+      <span class="row" style="gap:6px"><button type="button" class="btn plain sm" data-mf-open="${esc(f.url)}">Ko'rish</button>
+      <button type="button" class="btn plain sm" data-mf-del="${f.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
+  return `${mockSetupHTML(m, false)}
+    <div class="card">${s ? `<span class="small">${s.public && s.mock_no ? `📢 Mock №${s.mock_no} — hamma o'quvchilar bosh sahifasida` : "🔑 Faqat kod bilan kiriladi"} · 👥 <b>${d.signups}</b> kishi qatnashmoqchi</span>` : `<span class="muted small">Jadval hali qo'yilmagan.</span>`}
+      <button type="button" class="btn block" id="tm-save">${m.on ? "💾 Jadval va narxlarni saqlash" : s ? "Jadvalni olib tashlash" : "Saqlash"}</button></div>
+    <div class="card"><div class="section-title"><h2>📎 Savollar</h2><span class="muted small">${d.files.length} ta fayl</span></div>
+      <span class="muted small">PDF va/yoki rasmlar — o'quvchi mock ochilganda qaysi birini ko'rishni o'zi tanlaydi (har biri 20 MB gacha).</span>
+      ${files ? `<div class="list">${files}</div>` : ""}
+      <input class="input" id="tm-files" type="file" accept="application/pdf,image/*" multiple></div>`;
+}
+function bindTeacherMock(t, d) {
+  const m = S.mockEdit && S.mockEdit.m; if (!m) return;
+  const redraw = () => { collectMock(m); S.current.params = { id: t.id, tab: "design" }; S.useCache = true; rerender(); };
+  bindMockSetup(m, redraw);
+  const save = document.getElementById("tm-save");
+  if (save) save.onclick = async () => {
+    collectMock(m);
+    if (m.on) { const bad = mockProblem(m); if (bad) { toast(bad); haptic("error"); return; } }
+    save.disabled = true;
+    try {
+      if (m.on) await saveMock(t.id, m); else await api(`/api/teacher/test/${t.id}/schedule`, { clear: true });
+      haptic("success"); toast(m.on ? "✅ Jadval saqlandi" : "Jadval olib tashlandi"); S.mockEdit = null; rerender();
+    } catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+  const input = document.getElementById("tm-files");
+  if (input) input.onchange = async () => {
+    const list = [...input.files]; if (!list.length) return;
+    input.disabled = true;
+    try {
+      for (const [i, file] of list.entries()) {
+        toast(`📎 Yuklanmoqda ${i + 1} / ${list.length}: ${file.name}`);
+        const form = new FormData(); form.append("file", file, file.name);
+        await apiForm(`/api/teacher/test/${t.id}/files`, form);
+      }
+      haptic("success"); toast("✅ Savollar qo'shildi");
+    } catch (e) { toast(e.message); haptic("error"); }
+    rerender();
+  };
+  document.querySelectorAll("[data-mf-del]").forEach(x => x.onclick = async () => {
+    if (!(await confirmBox("Faylni o'chirasizmi?"))) return;
+    try { await api(`/api/teacher/test/${t.id}/files/${x.dataset.mfDel}/delete`, {}); haptic("success"); rerender(); }
+    catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll("[data-mf-open]").forEach(x => x.onclick = () => openFileLink(x.dataset.mfOpen));
+}
+// Fayl havolasi (rasm yoki PDF) — Telegram'ning ichki brauzerida ochiladi
+function openFileLink(path) {
+  const url = new URL(path, location.origin).href;
+  if (tg && tg.openLink) { try { tg.openLink(url); return; } catch (e) {} }
+  window.open(url, "_blank");
+}
 
 function channelEditorHTML(list) {
   return `<div class="card" id="ch-box"><div class="section-title"><h2>📢 Majburiy obuna</h2><span class="muted small">ixtiyoriy · 3 tagacha</span></div>
@@ -1960,6 +2405,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     <div class="tabs bar">${tabsList.map(([k, label]) => `<button class="${tab === k ? "on" : ""}" data-tab="${k}">${label}</button>`).join("")}</div>
     ${takeFlash()}
     ${tab === "home" && n ? testStrip(d, milliy, suggested + pending + (d.essays_missing || 0)) : ""}
+    ${tab === "home" && d.schedule ? mockBannerHTML(d) : ""}
     ${tab === "home" ? `<div id="phone-queue"></div><div class="card next">${stepsHTML}${next}${aiNotice}</div>
       ${wr && !writtenLeft ? `<button type="button" class="item" id="written-review-open"><span class="ico">✍️</span>
         <span><b>Yozma javoblar</b><small>${wr.done} / ${wr.total} katak belgilangan — ko'rish va o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
@@ -1973,6 +2419,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
       ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
+    ${tab === "design" && !offline && milliy ? teacherMockHTML(t, d) : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
   countUp($app); bindFlash(); bindTabStrip();
@@ -1981,6 +2428,8 @@ VIEWS.teacher = async ({ id, tab }) => {
     el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
     countUp(el);
   }
+  if (tab === "design" && !offline && milliy) bindTeacherMock(t, d);
+  document.querySelectorAll("[data-goto-mock]").forEach(x => x.onclick = () => { S.current.params = { id, tab: "design" }; S.useCache = true; haptic("select"); rerender(); });
   if (tab === "design") {
     preview(t.theme);
     bindChannelEditor(t.channels, async list => {
@@ -2394,8 +2843,10 @@ VIEWS.settings = async () => {
       <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
 
     ${packsCardHTML({ essay_packs: s.packs })}
+    ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
   </div>`;
   bindPacksCard();
+  bindStudentTariffs();
   const toSales = document.getElementById("st-sales");
   if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
   const digits = v => String(v || "").replace(/\D/g, "");

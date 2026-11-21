@@ -512,7 +512,10 @@ class SalesClosed(ServerBase):
         await super().asyncTearDown()
 
     async def test_only_allowed_teachers_create(self):
-        # OWNER'da obuna bor (asyncSetUp), lekin sotish yopiq — baribir mumkin emas
+        # Sotish yopiq: to'langan obuna muddati tugaguncha ishlaydi, obunasiz o'qituvchi esa yarata olmaydi
+        status, _ = await self.create()
+        self.assertEqual(status, 200)  # OWNER'da to'langan oylik obuna bor (asyncSetUp)
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
         status, r = await self.create()
         self.assertEqual(status, 403)
         self.assertTrue(r["closed"])
@@ -1687,11 +1690,11 @@ class FastSend(ServerBase):
             answers.append(text)
         message = types.SimpleNamespace(from_user=types.SimpleNamespace(id=STUDENT), photo=[types.SimpleNamespace(file_id="F")],
                                         document=None, answer=answer)
-        sales, bot.config.SALES_ENABLED = bot.config.SALES_ENABLED, False
+        sales, plans.SALES_ENABLED = plans.SALES_ENABLED, False  # sotuv — plans.sales_on() orqali
         try:
             await bot.receipt_received(message)
         finally:
-            bot.config.SALES_ENABLED = sales
+            plans.SALES_ENABLED = sales
         self.assertNotIn("Obuna", answers[0])
         self.assertIn("Skanerlash", answers[0])
 
@@ -1804,3 +1807,160 @@ class TeacherSettings(ServerBase):
         self.assertIn("start=p_", s["public_url"])
         self.assertEqual([p["essays"] for p in s["packs"]], [1, 5])
         self.assertEqual(webapp.teacher_card(OWNER)["number"], "8600 1234 5678 9012")  # bot ham shu kartani ko'radi
+
+
+class ScheduledMock(ServerBase):
+    """«Bugungi mock»: jadval → «Qatnashaman» → tanlov (AI / ustoz) va to'lov → kirish vaqti → yopilgach natija va sertifikat."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        from datetime import datetime
+        self._saved = (plans.now, plans.FREE_IDS, essay_ai.essay_enabled)
+        self.clock = datetime(2026, 11, 20, 19, 0, tzinfo=plans.TASHKENT)
+        plans.now = lambda: self.clock
+        plans.FREE_IDS = {OWNER}
+        essay_ai.essay_enabled = lambda: True
+        webapp.HOOKS["bot_username"] = lambda: asyncio.sleep(0, "test_bot")
+        db.remember_user(OWNER, "Ustoz Aliyev", None)
+
+    async def asyncTearDown(self):
+        plans.now, plans.FREE_IDS, essay_ai.essay_enabled = self._saved
+        await super().asyncTearDown()
+
+    def at(self, hour, minute=0):
+        self.clock = self.clock.replace(hour=hour, minute=minute)
+
+    def as_user(self, uid):
+        self.user = {"id": uid, "name": f"O'quvchi {uid}", "username": None}
+
+    ESSAY = "Vatan — bu ona. " * 30
+
+    async def test_full_day(self):
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": "Ustoz Aliyev"})
+        status, res = await self.post(f"/api/teacher/test/{test['id']}/schedule", {
+            "date": "2026-11-20", "opens": "20:00", "entry": "22:00", "closes": "23:00", "public": True,
+            "price_ai": 15000, "price_teacher": 10000})
+        self.assertEqual(status, 200, res)
+        self.assertEqual((res["schedule"]["mock_no"], res["schedule"]["phase"], res["schedule"]["price_ai"]), (1, "soon", 15000))
+        bad = {"date": "2026-11-20", "opens": "22:00", "entry": "21:00", "closes": "23:00"}
+        self.assertEqual((await self.post(f"/api/teacher/test/{test['id']}/schedule", bad))[0], 400)
+
+        # Begona: bosh sahifada karta, «Qatnashaman»
+        self.as_user(OTHER)
+        mocks = (await self.get("/api/bootstrap"))[1]["mocks"]
+        self.assertEqual((len(mocks), mocks[0]["signups"], mocks[0]["signed"]), (1, 0, False))
+        status, card = await self.post(f"/api/mock/{test['code']}/signup", {"on": True})
+        self.assertEqual((status, card["signups"], card["signed"]), (200, 1, True))
+        status, err = await self.get(f"/api/test/{test['code']}")
+        self.assertEqual((status, err["mock"]["schedule"]["phase"]), (409, "soon"))  # hali ochilmagan
+
+        # 30 daqiqa qoldi va ochildi — bot eslatadi (har biri bir marta)
+        self.at(19, 40)
+        await bot.mock_tick(self.bot)
+        self.at(20, 5)
+        await bot.mock_tick(self.bot)
+        await bot.mock_tick(self.bot)
+        reminders = [m for c, m in self.bot.messages if c == OTHER]
+        self.assertEqual(len(reminders), 2)
+        self.assertIn("ochildi", reminders[1])
+
+        # Ochiq: avval tanlov (AI — 15 000, ustoz — 10 000), to'lanmaguncha savollar yo'q
+        status, err = await self.get(f"/api/test/{test['code']}")
+        self.assertEqual(status, 402)
+        self.assertEqual([(o["key"], o["price"]) for o in err["mock_choice"]["options"]], [("ai", 15000), ("teacher", 10000)])
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"})
+        self.assertEqual((status, res["status"], res["amount"]), (200, "open", 15000))
+        self.assertTrue(any(c == OTHER and "15 000 so'm" in m for c, m in self.bot.messages))
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/submit", {"name": "Begona Bola", "answers": {}}))[0], 402)
+        pay = db.essay_payment_of(test["id"], OTHER)
+        db.decide_essay_payment(pay["id"], "paid", ("open",))  # chekni AI tasdiqladi
+        status, info = await self.get(f"/api/test/{test['code']}")
+        self.assertEqual((status, info["schedule"]["phase"]), (200, "open"))
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Begona Bola", "answers": {}, "essay": self.ESSAY})
+        self.assertEqual(status, 200, res)
+        ai_attempt = res["attempt_id"]
+        self.assertEqual(db.get_essay(ai_attempt)["status"], "pending")  # AI tekshiradi
+
+        # Ustozning o'quvchisi: bepul, «ustoz tekshirsin»
+        db.link_student(OWNER, STUDENT)
+        self.as_user(STUDENT)
+        err = (await self.get(f"/api/test/{test['code']}"))[1]
+        self.assertEqual([o["price"] for o in err["mock_choice"]["options"]], [0, 0])
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "teacher"})
+        self.assertEqual((status, res["status"]), (200, "paid"))
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "O'z O'quvchi", "answers": {}, "essay": self.ESSAY})
+        self.assertEqual(status, 200, res)
+        teacher_attempt = res["attempt_id"]
+        self.assertEqual(db.get_essay(teacher_attempt)["status"], "manual")
+
+        # 22:30 — kirish yopilgan: yangi odam kira olmaydi; 23:10 — yopilgan
+        self.at(22, 30)
+        self.as_user(444)
+        status, err = await self.get(f"/api/test/{test['code']}")
+        self.assertEqual(status, 409)
+        self.assertIn("Kirish vaqti tugagan", err["error"])
+
+        # Yopilgach: AI hali tekshirmagan — kutadi; AI tugadi — ustozni kutadi; ustoz baholadi — natija va sertifikat
+        self.at(23, 10)
+        await bot.mock_tick(self.bot)
+        self.assertEqual(db.get_test(test["id"])["mock_state"], "opened")
+        db.save_essay_result(ai_attempt, {"score": 18, "criteria": [], "comment": ""})
+        db.set_essay(ai_attempt, 18)
+        await bot.mock_tick(self.bot)
+        self.assertEqual(db.get_test(test["id"])["mock_state"], "teacher")
+        self.assertTrue(any(c == OWNER and "1 ta" in m for c, m in self.bot.messages))
+        self.as_user(OWNER)
+        await self.post(f"/api/teacher/essay/{teacher_attempt}", {"score75": 63})
+        await bot.mock_tick(self.bot)
+        done = db.get_test(test["id"])
+        self.assertEqual((done["mock_state"], bool(done["closed"])), ("done", True))
+        certificates = [c for c, name in self.bot.documents if name.startswith("sertifikat_")]
+        self.assertEqual(sorted(certificates), sorted([OTHER, STUDENT]))
+
+    async def test_student_pass_makes_mocks_free(self):
+        """«💎 Tarif»: FREE_IDS ustoz narx qo'yadi, begona o'quvchi oladi (chekni AI tasdiqlaydi) — mock bepul bo'ladi."""
+        await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": "Ustoz Aliyev"})
+        status, s = await self.post("/api/teacher/settings", {"student_tariffs": [{"days": 30, "price": "50000"}, {"days": 90, "price": ""}]})
+        self.assertEqual((status, s["student_tariffs"]), (200, [{"days": 30, "price": 50000}]))
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00", "entry": "22:00",
+                                                                     "closes": "23:00", "public": True, "price_ai": 15000})
+        self.as_user(OTHER)
+        passes = (await self.get("/api/bootstrap"))[1]["passes"]
+        self.assertEqual([(p["teacher_id"], p["until"]) for p in passes], [(OWNER, None)])
+        status, order = await self.post("/api/pass/order", {"teacher_id": OWNER, "days": 30})
+        self.assertEqual((status, order["payment"]["amount"]), (200, 50000), order)
+        self.assertEqual((await self.post("/api/pass/order", {"teacher_id": OWNER, "days": 7}))[0], 409)  # bunday tarif yo'q
+
+        enabled, read = essay_ai.enabled, essay_ai.read_receipt
+        essay_ai.enabled = lambda: True
+
+        async def good(image, mime="image/jpeg"):
+            return {"is_receipt": True, "success": True, "amount": 50000, "date": "2026-11-20", "recipient_card": "8600 **** **** 9012",
+                    "recipient_name": "USTOZ ALIYEV", "transaction_id": "TXP1", "looks_edited": False}
+        essay_ai.read_receipt = good
+        notices = []
+        webapp.HOOKS["pass_receipt_notice"] = lambda *a: asyncio.sleep(0, notices.append(a))
+        try:
+            res = await webapp.check_pass_receipt(order["payment"]["id"], b"chek-tarif", "image/jpeg")
+        finally:
+            essay_ai.enabled, essay_ai.read_receipt = enabled, read
+        self.assertEqual(res["status"], "paid")
+        self.assertEqual(db.pass_until(OWNER, OTHER), "2026-12-20 19:00")
+        self.assertTrue(notices and notices[0][1])  # ustozga: AI tasdiqladi
+        self.assertTrue(any(c == OTHER and "Tarif yoqildi" in m for c, m in self.bot.messages))
+
+        # Mock ochildi — tarif egasiga narx yo'q (tanlov bepul)
+        self.at(20, 30)
+        err = (await self.get(f"/api/test/{test['code']}"))[1]
+        self.assertEqual([o["price"] for o in err["mock_choice"]["options"]], [0, 0])
+        self.assertEqual((await self.get("/api/bootstrap"))[1]["passes"][0]["until"], "2026-12-20 19:00")
+
+        # Ustoz AI tasdiqlaganini bekor qiladi — kunlar qaytib olinadi, narx yana chiqadi
+        await webapp.decide_pass_payment(order["payment"]["id"], False, OWNER)
+        self.assertEqual(db.pass_until(OWNER, OTHER), "2026-11-20 19:00")
+        err = (await self.get(f"/api/test/{test['code']}"))[1]
+        self.assertEqual(err["mock_choice"]["options"][0]["price"], 15000)

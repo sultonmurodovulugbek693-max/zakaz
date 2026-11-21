@@ -20,7 +20,7 @@ import random
 import secrets
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiohttp import web
@@ -204,12 +204,15 @@ async def bootstrap(request: web.Request) -> web.Response:
         "ai_credits": None if unlimited else credits,
         # o'quvchilar essesini hozir AI tekshira oladimi (kredit yoki obunaning oylik limiti) — «tugagan» ogohlantirishi uchun
         "essay_ai_ok": essay_ai_ok,
+        "mocks": await mock_cards(user),  # «Bugungi mock» kartalari (FREE_IDS / admin ustozlarniki)
+        "passes": await pass_offers(user),  # «💎 Tarif»: muddat davomida ustozning hamma mocklari bepul
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
         "practice": essay_ai.essay_enabled() and (bool(teachers) or bool(wallets)),
         "my_card": my_card,
         "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
         "free_ai": unlimited and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
+        "can_public": unlimited,  # «Bugungi mock»ni hamma o'quvchiga ko'rsatish — faqat FREE_IDS / admin
         "joins_pending": sum(1 for r in joins if r["status"] == "pending"),
         "my_teachers": [t["full_name"] or "Ustoz" for t in teachers],
         "plans": offers,
@@ -298,8 +301,10 @@ async def test_info(request: web.Request) -> web.Response:
     previous = await run(db.find_attempt, test["id"], user["id"])
     if not previous:
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
+        await mock_gate(test, user)  # «Bugungi mock»: vaqt oralig'i va (pullik bo'lsa) to'lov
     keys = await run(db.get_keys, test["id"])
     return ok({
+        "schedule": schedule_view(test), "files": await files_view(test),
         "code": test["code"], "title": test["title"], "fmt": test["fmt"],
         "format": format_title(test["fmt"], test["count"]), "items": public_items(test),
         "variants": list(keys), "closed": bool(test["closed"]), "theme": test.get("theme") or "classic",
@@ -331,10 +336,17 @@ def teacher_card(teacher_id: int) -> dict:
 
 
 async def is_outsider(test: dict, student_id: int) -> bool:
-    """Ustozning o'quvchisi emas (ustozning o'zi va adminlar ham emas)."""
+    """Ustozning o'quvchisi emas (ustozning o'zi, adminlar va ustozdan tarif olganlar ham emas)."""
     if test["owner_id"] == student_id or student_id in ADMIN_IDS:
         return False
-    return not await run(db.is_linked, test["owner_id"], student_id)
+    if await run(db.is_linked, test["owner_id"], student_id):
+        return False
+    return not await pass_active(test["owner_id"], student_id)
+
+
+async def pass_active(teacher_id: int, student_id: int) -> bool:
+    until = await run(db.pass_until, teacher_id, student_id)
+    return bool(until) and until > plans.now().strftime(TIME_FMT)
 
 
 async def essay_pay_info(test: dict, user: dict) -> dict | None:
@@ -345,6 +357,8 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
         return None
     price, card = int(test.get("price") or 0), await run(teacher_card, test["owner_id"])
     if not price or not card["number"]:
+        return None
+    if test.get("opens_at"):  # «Bugungi mock» — o'quvchi tanlovi va to'lovi (mock_choice_info)
         return None
     pay = await run(db.essay_payment_of, test["id"], user["id"])
     if pay and pay["status"] == "paid":
@@ -357,6 +371,295 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
             "packs": await run(essay_packs, test["owner_id"]),  # kredit paketlari — keyingi esselar chek so'ramaydi
             "wallet_status": wallet["status"] if wallet and wallet["teacher_id"] == test["owner_id"] else None,
             "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
+
+
+# ---------- «Bugungi mock»: jadval (ochiladi → kirish to'xtaydi → yopiladi), savollar (PDF / rasm), qatnashuvchilar ----------
+# Faqat FREE_IDS / admin mocki hamma o'quvchining bosh sahifasida karta bo'lib chiqadi. Yopilgach bot o'zi: AI esselarni
+# tekshirib bo'lishi bilan Rasch → natija e'lon → har qatnashchiga sertifikat (bot.mock_worker).
+
+MOCK_GRACE = timedelta(minutes=3)  # yopilishdan keyin ham shuncha qabul qilinadi (avto-yuborish internetda kechiksa)
+TIME_FMT = "%Y-%m-%d %H:%M"
+
+
+def _at(value: str | None):
+    if not value:
+        return None
+    return datetime.strptime(value[:16], TIME_FMT).replace(tzinfo=plans.TASHKENT)
+
+
+def mock_phase(test: dict) -> str | None:
+    """None — jadvalsiz; soon — hali ochilmagan; open — kirsa bo'ladi; late — faqat kirganlar davom etadi; closed."""
+    opens, entry, closes = _at(test.get("opens_at")), _at(test.get("entry_until")), _at(test.get("closes_at"))
+    if not opens:
+        return None
+    now = plans.now()
+    if now < opens:
+        return "soon"
+    if now < entry:
+        return "open"
+    return "late" if now < closes + MOCK_GRACE else "closed"
+
+
+def schedule_view(test: dict) -> dict | None:
+    """Ilova uchun: vaqtlar (ms, qayta sanoq shu bilan) va server soati (telefon soati noto'g'ri bo'lsa ham to'g'ri sanaydi)."""
+    if not test.get("opens_at"):
+        return None
+    ms = lambda value: int(_at(value).timestamp() * 1000)
+    return {"opens": ms(test["opens_at"]), "entry": ms(test["entry_until"]), "closes": ms(test["closes_at"]),
+            "opens_at": test["opens_at"], "entry_until": test["entry_until"], "closes_at": test["closes_at"],
+            "mock_no": test.get("mock_no"), "public": bool(test.get("public_mock")), "phase": mock_phase(test),
+            "price_ai": int(test.get("price") or 0), "price_teacher": int(test.get("price_teacher") or 0),
+            "now": int(time.time() * 1000)}
+
+
+async def mock_gate(test: dict, user: dict) -> None:
+    """Jadvalli mockni ochish: vaqti kelmagan / kirish tugagan / yopilgan — 409; pullik va to'lanmagan — 402.
+    Birinchi ochilishda «kirdi» deb yoziladi (kirish vaqti o'tgach ham shu o'quvchi davom etadi)."""
+    phase = mock_phase(test)
+    if not phase or test["owner_id"] == user["id"]:
+        return
+    card = await mock_card(test, user)
+    if phase == "soon":
+        raise ApiError(409, "Mock hali ochilmagan", mock=card)
+    if phase == "closed":
+        raise ApiError(409, "Mock yopilgan — natijalar tekshirilgach e'lon qilinadi", mock=card)
+    started = await run(db.live_started, test["id"], user["id"])
+    if phase == "late" and not started:
+        raise ApiError(409, f"Kirish vaqti tugagan ({test['entry_until'][11:16]} gacha edi)", mock=card)
+    choice = await mock_choice_info(test, user)
+    if choice:  # avval: esseni kim tekshiradi (AI / ustoz) va pullik bo'lsa — to'lov (karta → chek → AI)
+        raise ApiError(402, "Mockni boshlashdan oldin esseni kim tekshirishini tanlang", mock_choice=choice, mock=card)
+    if not started:
+        await run(db.live_ping, test["id"], user["id"], user["name"] or "Ismsiz", 0, len(test["items"]))
+
+
+CHOICES = {"ai": "🤖 AI tekshiradi", "teacher": "👩‍🏫 Ustoz tekshiradi"}
+
+
+async def mock_choice_info(test: dict, user: dict) -> dict | None:
+    """Mockni boshlashdan oldin: esseni kim tekshiradi va narxi (ustoz qo'ygan; o'z o'quvchilari — bepul).
+    None — tanlangan va (pullik bo'lsa) to'langan. Pul — ustoz kartasiga, chekni botda AI tekshiradi."""
+    if not test.get("opens_at") or test["owner_id"] == user["id"]:
+        return None
+    pay = await run(db.essay_payment_of, test["id"], user["id"])
+    if pay and pay["status"] == "paid":
+        return None
+    outsider = await is_outsider(test, user["id"])
+    prices = {"ai": int(test.get("price") or 0), "teacher": int(test.get("price_teacher") or 0)} if outsider \
+        else {"ai": 0, "teacher": 0}
+    keys = ["ai", "teacher"] if essay_ai.essay_enabled() else ["teacher"]
+    card = await run(teacher_card, test["owner_id"])
+    return {"options": [{"key": k, "title": CHOICES[k], "price": prices[k]} for k in keys],
+            "chosen": pay["choice"] if pay else None, "status": pay["status"] if pay else None,
+            "amount": pay["amount"] if pay else 0, "note": pay["note"] if pay and pay["status"] == "rejected" else None,
+            "card": card["number"], "holder": card["holder"],
+            "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
+
+
+async def mock_choice(request: web.Request) -> web.Response:
+    """O'quvchi tanladi: bepul — darhol ochiladi; pullik — bot karta va summani yozadi, chekni AI tekshiradi."""
+    user = await auth(request)
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test or not test.get("opens_at"):
+        raise ApiError(404, "Mock topilmadi")
+    if mock_phase(test) == "closed":
+        raise ApiError(409, "Mock yopilgan")
+    info = await mock_choice_info(test, user)
+    if not info:
+        return ok({"ok": True, "status": "paid"})
+    if info["status"] == "review":
+        raise ApiError(409, "Chekingiz tekshirilmoqda — kutib turing")
+    key = str((await body(request)).get("choice") or "")
+    option = next((o for o in info["options"] if o["key"] == key), None)
+    if not option:
+        raise ApiError(400, "Tanlang: AI tekshiradi yoki ustoz tekshiradi")
+    if option["price"] and not info["card"]:
+        raise ApiError(409, "Ustoz hali kartasini kiritmagan — keyinroq urinib ko'ring")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    pay = await run(db.start_essay_payment, test["id"], user["id"], option["price"], key)
+    if option["price"] and pay["status"] == "open" and "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](
+                user["id"], f"💳 <b>Mock</b> · {html.escape(test['title'])} — {CHOICES[key]}\n"
+                f"Summa: <b>{plans.money(option['price'])} so'm</b>\nKarta: <code>{html.escape(info['card'])}</code>"
+                + (f"\nQabul qiluvchi: {html.escape(info['holder'])}" if info["holder"] else "")
+                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
+                  "mock darhol ochiladi.")
+        except Exception:
+            logger.warning("Mock to'lovi ko'rsatmasi yuborilmadi", exc_info=True)
+    return ok({"ok": True, "status": pay["status"], "amount": pay["amount"], "choice": key, "bot": info["bot"]})
+
+
+def _initials(name: str | None) -> str:
+    parts = [p for p in str(name or "").split() if p[:1].isalpha()]
+    return "".join(p[0] for p in parts[:2]).upper() or "•"
+
+
+async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -> dict:
+    """Bosh sahifadagi karta: jadval, qatnashmoqchilar (soni va bosh harflar), men yozilganmanmi, topshirganmanmi."""
+    signups = signups if signups is not None else await run(db.mock_signups, test["id"])
+    attempt = await run(db.find_attempt, test["id"], user["id"])
+    return {"code": test["code"], "title": test["title"], "owner": test.get("owner_name"),
+            "schedule": schedule_view(test), "signups": len(signups),
+            "faces": [_initials(s["name"]) for s in signups[:4]], "signed": any(s["tg_id"] == user["id"] for s in signups),
+            "attempt": attempt["id"] if attempt else None, "announced": bool(test.get("closed")),
+            "price": int(test.get("price") or 0) if await is_outsider(test, user["id"]) else 0}
+
+
+async def mock_cards(user: dict) -> list[dict]:
+    """Hamma o'quvchiga ko'rinadigan mocklar (FREE_IDS / admin ustozlarniki): bo'lajak, ochiq va 12 soat ichida yopilgan."""
+    since = (plans.now() - timedelta(hours=12)).strftime(TIME_FMT)
+    rows = [t for t in await run(db.public_mocks, since) if plans.ai_unlimited(t["owner_id"])]
+    if not rows:
+        return []
+    return [await mock_card(row, user, await run(db.mock_signups, row["id"])) for row in rows]
+
+
+async def mock_signup(request: web.Request) -> web.Response:
+    """«Qatnashaman» / bekor qilish — mock ochilganda bot eslatadi."""
+    user = await auth(request)
+    test = await run(db.get_test_by_code, request.match_info["code"])
+    if not test or not test.get("opens_at"):
+        raise ApiError(404, "Mock topilmadi")
+    if mock_phase(test) == "closed":
+        raise ApiError(409, "Mock yopilgan")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    await run(db.mock_signup, test["id"], user["id"], user["name"], bool((await body(request)).get("on", True)))
+    return ok(await mock_card(test, user))
+
+
+def file_token(test_id: int, file_row: int, expires: int) -> str:
+    payload = f"{test_id}.{file_row}.{expires}"
+    return f"{payload}.{_sign('mf:' + payload)}"
+
+
+async def files_view(test: dict) -> list[dict]:
+    """Savollar fayllari — imzolangan havolalar bilan (rasm <img> da, PDF brauzerda ochiladi; sarlavha kerak emas)."""
+    rows = await run(db.test_files, test["id"])
+    if not rows:
+        return []
+    closes = _at(test.get("closes_at"))
+    expires = int((closes.timestamp() if closes else time.time()) + 6 * 3600)
+    return [{"id": f["id"], "kind": f["kind"], "name": f["name"], "size": f["size"],
+             "url": f"/mf/{file_token(test['id'], f['id'], expires)}"} for f in rows]
+
+
+_FILE_CACHE: dict[str, tuple[bytes, float]] = {}  # file_id → (fayl, oxirgi so'ralgan) — mock paytida yuzlab o'quvchi
+
+
+async def mock_file(request: web.Request) -> web.StreamResponse:
+    parts = request.match_info["token"].split(".")
+    if len(parts) != 4 or not all(p.isalnum() for p in parts):
+        raise web.HTTPNotFound(text="Havola noto'g'ri")
+    test_id, file_row, expires, sig = parts
+    if not hmac.compare_digest(sig, _sign(f"mf:{test_id}.{file_row}.{expires}")):
+        raise web.HTTPNotFound(text="Havola noto'g'ri")
+    if not expires.isdigit() or int(expires) < time.time():
+        raise web.HTTPGone(text="Havola eskirgan — ilovada testni qayta oching")
+    row = next((f for f in await run(db.test_files, int(test_id)) if f["id"] == int(file_row)), None)
+    if not row or "download_file" not in HOOKS:
+        raise web.HTTPNotFound(text="Fayl topilmadi")
+    cached = _FILE_CACHE.get(row["file_id"])
+    if cached:
+        data = cached[0]
+    else:
+        data = await HOOKS["download_file"](row["file_id"])
+        if sum(len(v[0]) for v in _FILE_CACHE.values()) > 120 * 1024 * 1024:
+            _FILE_CACHE.clear()
+        _FILE_CACHE[row["file_id"]] = (data, time.time())
+    disposition = "inline" if row["kind"] == "image" else f'inline; filename="savollar_{test_id}.pdf"'
+    return web.Response(body=data, headers={"Content-Type": row["mime"] or "application/octet-stream",
+                                            "Content-Disposition": disposition, "Cache-Control": "private, max-age=3600"})
+
+
+def parse_schedule(payload: dict) -> tuple[str, str, str]:
+    """{date: 2026-11-20, opens: 20:00, entry: 22:00, closes: 23:00} → uchta «YYYY-MM-DD HH:MM» (tartibi tekshiriladi)."""
+    date = str(payload.get("date") or "").strip()
+    values = []
+    for key, what in (("opens", "Ochilish"), ("entry", "Kirish tugashi"), ("closes", "Yopilish")):
+        raw = str(payload.get(key) or "").strip()
+        try:
+            values.append(datetime.strptime(f"{date} {raw}", TIME_FMT).strftime(TIME_FMT))
+        except ValueError:
+            raise ApiError(400, f"{what} vaqtini kiriting (sana va soat)")
+    opens, entry, closes = values
+    if not opens < entry <= closes:
+        raise ApiError(400, "Tartib: ochiladi → kirish to'xtaydi → yopiladi (kirish yopilishdan kech bo'lmasin)")
+    if _at(closes) - _at(opens) > timedelta(hours=12):
+        raise ApiError(400, "Mock 12 soatdan uzun bo'lmasin")
+    if _at(closes) < plans.now():
+        raise ApiError(400, "Yopilish vaqti o'tib ketgan")
+    return opens, entry, closes
+
+
+async def schedule_save(request: web.Request) -> web.Response:
+    """Ustoz: mock jadvali (yoki olib tashlash). «Hammaga ko'rsatish» — faqat FREE_IDS / admin, onlayn milliy mock."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    payload = await body(request)
+    if payload.get("clear"):
+        await run(db.set_schedule, test["id"], None, None, None, False)
+        return ok({"schedule": None})
+    if (test.get("mode") or "online") != "online":
+        raise ApiError(400, "Jadval faqat onlayn testga qo'yiladi")
+    opens, entry, closes = parse_schedule(payload)
+    public = bool(payload.get("public"))
+    if public and (not plans.ai_unlimited(user["id"]) or test["fmt"] != "milliy"):
+        raise ApiError(403, "Hammaga ko'rsatish — faqat ruxsat berilgan ustozlarning milliy mocki uchun")
+    # Narxlar (begonalar uchun; o'z o'quvchilaringiz — bepul): esseni AI tekshirsa / ustoz tekshirsa. 0 — bepul
+    prices = []
+    for key, what in (("price_ai", "AI tekshiruvi"), ("price_teacher", "Ustoz tekshiruvi")):
+        price = to_int(payload.get(key), 0, f"{what} narxi")
+        if price and not 1000 <= price <= 1_000_000:
+            raise ApiError(400, f"{what} narxi: 0 (bepul) yoki 1 000 – 1 000 000 so'm")
+        prices.append(price)
+    if any(prices) and not (await run(teacher_card, user["id"]))["number"]:
+        raise ApiError(400, "Pullik mock uchun avval «⚙️ Sozlamalar»da kartangizni kiriting")
+    await run(db.set_schedule, test["id"], opens, entry, closes, public)
+    await run(db.set_mock_prices, test["id"], *prices)
+    return ok({"schedule": schedule_view(await run(db.get_test, test["id"]))})
+
+
+FILE_MAX = 20 * 1024 * 1024  # Telegram bot API yuklab olish chegarasi
+MAX_TEST_FILES = 30
+
+
+async def files_upload(request: web.Request) -> web.Response:
+    """Savollar: PDF va/yoki rasmlar (bir nechta). Telegram'da saqlanadi (ustoz chatiga hujjat bo'lib boradi)."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Fayl yuborilmadi")
+    fields = [f for f in form.getall("file", []) if hasattr(f, "file")]
+    if not fields:
+        raise ApiError(400, "PDF yoki rasm tanlang")
+    if len(await run(db.test_files, test["id"])) + len(fields) > MAX_TEST_FILES:
+        raise ApiError(400, f"Bitta testga ko'pi bilan {MAX_TEST_FILES} ta fayl")
+    if "store_file" not in HOOKS:
+        raise ApiError(503, "Fayl saqlab bo'lmadi")
+    added = []
+    for field in fields:
+        data = field.file.read()
+        mime = (getattr(field, "content_type", None) or "").lower()
+        name = str(field.filename or "fayl")[:80]
+        kind = "pdf" if mime == "application/pdf" or name.lower().endswith(".pdf") else "image" if mime.startswith("image/") else None
+        if not kind:
+            raise ApiError(400, f"«{name}» — faqat PDF yoki rasm (JPG, PNG)")
+        if not data or len(data) > FILE_MAX:
+            raise ApiError(400, f"«{name}» — 20 MB dan kichik bo'lsin")
+        file_id = await HOOKS["store_file"](user["id"], data, name, f"📎 Savollar · {test['title']} (kod {test['code']})")
+        added.append(await run(db.add_test_file, test["id"], kind, file_id, mime or "application/pdf", name, len(data)))
+    return ok({"files": await files_view(test), "added": len(added)})
+
+
+async def file_delete(request: web.Request) -> web.Response:
+    user = await auth(request)
+    test = await own_test(request, user)
+    if not await run(db.delete_test_file, test["id"], int(request.match_info["file_id"])):
+        raise ApiError(404, "Fayl topilmadi")
+    return ok({"files": await files_view(test)})
 
 
 async def wallet_view(test: dict, user: dict) -> dict | None:
@@ -474,6 +777,11 @@ async def essay_ai_ok(test: dict, student_id: int) -> bool:
     """Onlayn mock essesini AI tekshiradimi: ustozning o'quvchisi — ustoz kreditidan; begona — o'zi to'lagan bo'lsa."""
     if not essay_ai.essay_enabled():
         return False
+    if test.get("opens_at"):  # «Bugungi mock»: o'quvchi tanlovi — «🤖 AI tekshirsin» (to'langan) yoki «👩‍🏫 Ustoz»
+        pay = await run(db.essay_payment_of, test["id"], student_id)
+        if not pay or pay["status"] != "paid" or pay.get("choice") != "ai":
+            return False
+        return pay["amount"] > 0 or await ai_allowed(test["owner_id"], "essays")  # bepul — ustoz kreditidan
     if await is_outsider(test, student_id):
         pay = await run(db.essay_payment_of, test["id"], student_id)
         if pay and pay["status"] == "paid":
@@ -917,6 +1225,7 @@ async def settings_view(user: dict) -> dict:
     card, packs, is_open = await asyncio.gather(run(teacher_card, user["id"]), run(essay_packs, user["id"]),
                                                 run(public_open, user["id"]))
     return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": PUBLIC_FREE,
+            "can_public": plans.ai_unlimited(user["id"]), "student_tariffs": await run(student_tariffs, user["id"]),
             "public_url": f"https://t.me/{username}?start={public_code(user['id'])}" if username else None}
 
 
@@ -937,12 +1246,152 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
             raise ApiError(400, "Karta egasining ism-familiyasini yozing — AI chekda shuni tekshiradi")
         await run(db.set_setting, f"teacher_card:{user['id']}", " ".join(number[i:i + 4] for i in range(0, 16, 4)))
         await run(db.set_setting, f"teacher_holder:{user['id']}", holder)
+    if "student_tariffs" in payload:  # «💎 O'quvchi tariflari» — faqat FREE_IDS / admin
+        if not plans.ai_unlimited(user["id"]):
+            raise ApiError(403, "O'quvchi tariflari — faqat ruxsat berilgan ustozlar uchun")
+        rows = payload.get("student_tariffs") or []
+        if not isinstance(rows, list):
+            raise ApiError(400, "Tariflar noto'g'ri")
+        clean = []
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("price") or "").strip():
+                continue  # narxi yozilmagan qator saqlanmaydi
+            days, price = to_int(row.get("days"), 0, "Muddat"), to_int(row.get("price"), 0, "Narx")
+            if not 1 <= days <= 366:
+                raise ApiError(400, "Tarif muddati 1–366 kun bo'lsin")
+            if not 1000 <= price <= 10_000_000:
+                raise ApiError(400, "Tarif narxi 1 000 – 10 000 000 so'm bo'lsin")
+            if any(c[0] == days for c in clean):
+                raise ApiError(400, f"{days} kunlik tarif ikki marta yozilgan")
+            clean.append([days, price])
+        if len(clean) > 6:
+            raise ApiError(400, "Ko'pi bilan 6 ta tarif")
+        if clean and not (await run(teacher_card, user["id"]))["number"]:
+            raise ApiError(400, "Avval kartangizni kiriting — pul shunga tushadi")
+        await run(db.set_setting, f"student_tariffs:{user['id']}", json.dumps(sorted(clean)))
     if "public" in payload:
         turn_on = bool(payload.get("public"))
         if turn_on and (not (await run(teacher_card, user["id"]))["number"] or not await run(essay_packs, user["id"])):
             raise ApiError(400, "Avval karta va kamida bitta kredit narxini kiriting")
         await run(db.set_setting, f"essay_public:{user['id']}", "1" if turn_on else "0")
     return ok(await settings_view(user))
+
+
+# ---------- «💎 Tarif» (begona o'quvchi): FREE_IDS ustoz narxini qo'yadi, pul uning kartasiga; muddatida hamma mock bepul ----------
+
+def student_tariffs(teacher_id: int) -> list[dict]:
+    try:
+        raw = json.loads(db.get_settings().get(f"student_tariffs:{teacher_id}") or "[]")
+    except ValueError:
+        raw = []
+    return [{"days": int(d), "price": int(p)} for d, p in raw if int(d) > 0 and int(p) > 0]
+
+
+async def pass_offers(user: dict) -> list[dict]:
+    """Bosh sahifadagi «💎 Tarif» kartalari: tarif qo'ygan FREE_IDS / admin ustozlar (o'zi va o'quvchisiga emas)."""
+    out = []
+    for teacher_id in sorted(set(plans.FREE_IDS) | set(ADMIN_IDS)):
+        if teacher_id == user["id"]:
+            continue
+        tariffs = await run(student_tariffs, teacher_id)
+        if not tariffs or not (await run(teacher_card, teacher_id))["number"]:
+            continue
+        if await run(db.is_linked, teacher_id, user["id"]):
+            continue
+        teacher = await run(db.find_user, str(teacher_id)) or {}
+        until = await run(db.pass_until, teacher_id, user["id"])
+        pay = await run(db.open_pass_payment, user["id"])
+        out.append({"teacher_id": teacher_id, "name": teacher.get("full_name") or "Ustoz", "tariffs": tariffs,
+                    "until": until if until and until > plans.now().strftime(TIME_FMT) else None,
+                    "status": pay["status"] if pay and pay["teacher_id"] == teacher_id else None})
+    return out
+
+
+async def pass_order(request: web.Request) -> web.Response:
+    """O'quvchi tarif tanladi: bot karta va summani yozadi — chek skrinshotini botga yuboradi (AI tekshiradi)."""
+    user = await auth(request)
+    payload = await body(request)
+    teacher_id, days = to_int(payload.get("teacher_id"), 0, "Ustoz"), to_int(payload.get("days"), 0, "Muddat")
+    tariff = next((t for t in await run(student_tariffs, teacher_id) if t["days"] == days), None)
+    card = await run(teacher_card, teacher_id)
+    if not tariff or not card["number"] or not plans.ai_unlimited(teacher_id) or teacher_id == user["id"]:
+        raise ApiError(409, "Bu tarif sotilmayapti")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    pay = await run(db.start_pass_payment, teacher_id, user["id"], days, tariff["price"])
+    if pay["status"] == "review":
+        raise ApiError(409, "Oldingi chekingiz hali tekshirilmoqda — tasdiqlangach yana olasiz")
+    teacher = await run(db.find_user, str(teacher_id)) or {}
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](
+                user["id"], f"💎 <b>Tarif · {days} kun</b> — {html.escape(teacher.get('full_name') or 'ustoz')}\n"
+                f"Muddat davomida ustozning hamma mocklari bepul.\nSumma: <b>{plans.money(tariff['price'])} so'm</b>\n"
+                f"Karta: <code>{html.escape(card['number'])}</code>"
+                + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
+                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
+                  "tarif darhol yoqiladi.")
+        except Exception:
+            logger.warning("Tarif to'lovi ko'rsatmasi yuborilmadi", exc_info=True)
+    return ok({"ok": True, "payment": pay, "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""})
+
+
+async def pass_granted(pay: dict, until: str, by_ai: bool) -> None:
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](pay["student_id"], f"✅ <b>Tarif yoqildi</b>" + (" (chek AI'da tasdiqlandi)" if by_ai else "")
+                                     + f"\n💎 {until[:10]} gacha ustozning hamma mocklari siz uchun bepul.")
+        except Exception:
+            logger.warning("Tarif xabari o'quvchiga yuborilmadi", exc_info=True)
+
+
+async def check_pass_receipt(payment_id: int, data: bytes, mime: str) -> dict:
+    """Botga yuborilgan tarif cheki: AI to'g'ri desa — tarif darhol; aks holda ustozga, o'quvchiga «kutib turing»."""
+    pay = await run(db.get_pass_payment, payment_id)
+    if not pay:
+        raise ApiError(404, "To'lov topilmadi")
+    if pay["status"] in ("paid", "review"):
+        return {"ok": True, "status": pay["status"], "reasons": []}
+    digest = hashlib.sha256(data).hexdigest()
+    good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["teacher_id"]))
+    if await run(db.receipt_used, digest, txn, payment_id, "pass_payments"):
+        good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
+    await run(db.save_pass_receipt, payment_id, base64.b64encode(data).decode(), mime, digest, txn, "; ".join(reasons))
+    until = await run(db.pay_pass_payment, payment_id, ("review",), plans.now().strftime(TIME_FMT)) if good else None
+    if until:
+        await pass_granted(pay, until, by_ai=True)
+    elif "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](pay["student_id"], "⏳ <b>Chek tekshirilmoqda — kutib turing</b> · tarif\n"
+                                                        "Avtomatik tasdiqlanmadi, ustoz ko'rib chiqadi va bot xabar beradi.")
+        except Exception:
+            logger.warning("Chek holati o'quvchiga yuborilmadi", exc_info=True)
+    if "pass_receipt_notice" in HOOKS:
+        try:
+            await HOOKS["pass_receipt_notice"](payment_id, bool(until), reasons, data)
+        except Exception:
+            logger.warning("Tarif cheki ustozga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "paid" if until else "review", "reasons": reasons}
+
+
+async def decide_pass_payment(payment_id: int, approve: bool, by_id: int) -> dict:
+    pay = await run(db.get_pass_payment, payment_id)
+    if not pay or (pay["teacher_id"] != by_id and by_id not in ADMIN_IDS):
+        raise ApiError(404, "To'lov topilmadi")
+    if approve:
+        until = await run(db.pay_pass_payment, payment_id, ("open", "review", "rejected"), plans.now().strftime(TIME_FMT))
+        if not until:
+            raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        await pass_granted(pay, until, by_ai=False)
+    else:
+        if not await run(db.reject_pass_payment, payment_id, ("open", "review", "paid")):
+            raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        if "send_text" in HOOKS:
+            try:
+                await HOOKS["send_text"](pay["student_id"], "❌ <b>Tarif to'lovi tasdiqlanmadi</b>\nChek mos kelmadi (summa, sana yoki "
+                                         "karta). To'g'ri chekni qayta yuboring yoki ustozga yozing.")
+            except Exception:
+                logger.warning("Tarif qarori o'quvchiga yuborilmadi", exc_info=True)
+    return {"ok": True, "status": "paid" if approve else "rejected"}
 
 
 async def wallet_payments_list(request: web.Request) -> web.Response:
@@ -992,6 +1441,14 @@ async def submit(request: web.Request) -> web.Response:
     if (test.get("mode") or "online") == "offline":
         raise ApiError(409, "Bu test qog'ozda o'tkaziladi")
     await test_gate(test, user)
+    phase = mock_phase(test)
+    if phase and test["owner_id"] != user["id"]:  # «Bugungi mock»: faqat vaqt oralig'ida va (pullik bo'lsa) to'laganlar
+        if phase in ("soon", "closed"):
+            raise ApiError(409, "Mock hali ochilmagan" if phase == "soon" else "Mock yopilgan — javob qabul qilinmaydi")
+        if phase == "late" and not await run(db.live_started, test["id"], user["id"]):
+            raise ApiError(409, "Kirish vaqti tugagan")
+        if await mock_choice_info(test, user):
+            raise ApiError(402, "Mockni boshlashdan oldin esseni kim tekshirishini tanlang (pullik bo'lsa — to'lang)")
     keys = await run(db.get_keys, test["id"])
     variant = payload.get("variant") or next(iter(keys))
     if variant not in keys:
@@ -1546,6 +2003,9 @@ async def teacher_test(request: web.Request) -> web.Response:
         "essay_on_paper": essay_on_paper(test),
         "essays_missing": sum(1 for a in attempts if essay_pending(test, a)),
         "ai_credits": None if plans.ai_unlimited(user["id"]) else await run(db.get_credits, user["id"]),
+        # «Bugungi mock»: jadval, savollar fayllari, qatnashmoqchilar; «Hammaga ko'rsatish» tanlovi kimga mumkin
+        "schedule": schedule_view(test), "files": await files_view(test),
+        "signups": len(await run(db.mock_signups, test["id"])), "can_public": plans.ai_unlimited(user["id"]),
         "offline_essays": [offline_essay_view(e) for e in await run(db.list_offline_essays, test["id"])]
         if offline_milliy else [],
     })
@@ -3437,7 +3897,8 @@ async def errors(request: web.Request, handler):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[timing, rate_limit, errors], client_max_size=14 * 1024 * 1024)
+    # 21 MB: mock savollari PDF'i 20 MB gacha (Telegram chegarasi); qolgan so'rovlar baribir kichik
+    app = web.Application(middlewares=[timing, rate_limit, errors], client_max_size=21 * 1024 * 1024)
     app.router.add_get("/", index)
     app.router.add_get("/app", index)
     app.router.add_get("/health", health)
@@ -3492,6 +3953,13 @@ def create_app() -> web.Application:
     app.router.add_post("/api/admin/sales", sales_admin_save)
     app.router.add_get("/api/teacher/settings", teacher_settings)
     app.router.add_post("/api/teacher/settings", teacher_settings_save)
+    app.router.add_post("/api/mock/{code:\\d{5}}/signup", mock_signup)
+    app.router.add_post("/api/pass/order", pass_order)
+    app.router.add_post("/api/test/{code:\\d{5}}/mock-choice", mock_choice)
+    app.router.add_get("/mf/{token}", mock_file)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/schedule", schedule_save)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/files", files_upload)
+    app.router.add_post("/api/teacher/test/{test_id:\\d+}/files/{file_id:\\d+}/delete", file_delete)
     app.router.add_get("/api/teacher/wallet-payments", wallet_payments_list)
     app.router.add_get("/api/teacher/wallet-payment/{payment_id:\\d+}/receipt", wallet_payment_receipt)
     app.router.add_post("/api/teacher/wallet-payment/{payment_id:\\d+}", wallet_payment_decide)

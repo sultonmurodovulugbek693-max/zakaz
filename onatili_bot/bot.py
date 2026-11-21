@@ -22,6 +22,7 @@ import logging
 import os
 import secrets
 import time
+from datetime import timedelta
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -51,6 +52,7 @@ import places as places_data
 import plans
 import pdfs
 import rating
+import results
 import sheet
 import sheet_styles
 import subscription
@@ -555,14 +557,15 @@ async def receipt_received(message: Message) -> None:
     if scan:  # o'quvchi ilovada «Botga yuboraman» ni bosgan — bu esse sahifasi
         await essay_page_received(message, scan)
         return
-    essay_pay = await asyncio.to_thread(db.open_essay_payment, message.from_user.id)
-    wallet_pay = await asyncio.to_thread(db.open_wallet_payment, message.from_user.id)
-    # Ikkalasi ochiq bo'lsa — oxirgi boshlangani (o'quvchi hozir shuni to'layapti)
-    if wallet_pay and (not essay_pay or (wallet_pay["created_at"] or "") >= (essay_pay.get("created_at") or "")):
-        await wallet_receipt_received(message, wallet_pay)
-        return
-    if essay_pay:
-        await essay_receipt_received(message, essay_pay)
+    # Bir nechta to'lov ochiq bo'lsa — oxirgi boshlangani (o'quvchi hozir shuni to'layapti)
+    uid = message.from_user.id
+    candidates = [(pay, handler) for pay, handler in (
+        (await asyncio.to_thread(db.open_pass_payment, uid), pass_receipt_received),
+        (await asyncio.to_thread(db.open_wallet_payment, uid), wallet_receipt_received),
+        (await asyncio.to_thread(db.open_essay_payment, uid), essay_receipt_received)) if pay]
+    if candidates:
+        pay, handler = max(candidates, key=lambda c: c[0].get("created_at") or "")
+        await handler(message, pay)
         return
     payment = await asyncio.to_thread(db.open_payment, message.from_user.id)
     if not payment:
@@ -724,6 +727,66 @@ async def wallet_receipt_received(message: Message, pay: dict) -> None:
             await wait.delete()
         except TelegramBadRequest:
             pass
+
+
+async def pass_receipt_received(message: Message, pay: dict) -> None:
+    """«💎 Tarif» cheki: AI tekshiradi — to'g'ri bo'lsa tarif darhol yoqiladi."""
+    if pay["status"] == "review":
+        await message.answer("⏳ Tarif chekingiz ustozda. Kutib turing — tasdiqlansa bot xabar beradi.")
+        return
+    if message.document and not (message.document.mime_type or "").startswith("image/"):
+        await message.answer("🧾 Chekni rasm (skrinshot) ko'rinishida yuboring.")
+        return
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    mime = "image/jpeg" if message.photo else message.document.mime_type
+    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    try:
+        data = (await message.bot.download(file_id)).read()
+        await webapp.check_pass_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
+    except Exception:
+        logger.exception("Tarif cheki tekshirilmadi")
+        await message.answer("⚠️ Chekni tekshirib bo'lmadi — birozdan keyin qayta yuboring.")
+    finally:
+        try:
+            await wait.delete()
+        except TelegramBadRequest:
+            pass
+
+
+async def pass_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: list[str], photo: bytes) -> None:
+    """Ustozga: tarif cheki va AI xulosasi. AI tasdiqlagan — «Bekor qilish», aks holda «Tasdiqlash / Rad etish»."""
+    pay = await asyncio.to_thread(db.get_pass_payment, payment_id)
+    if not pay:
+        return
+    who = esc(pay["full_name"] or str(pay["student_id"])) + (f" (@{esc(pay['username'])})" if pay["username"] else "")
+    caption = (f"💎 <b>O'quvchi tarifi</b> · {pay['days']} kun\n{LINE}\n👤 {who} · <code>{pay['student_id']}</code>\n"
+               f"💳 {plans.money(pay['amount'])} so'm\n"
+               + ("🤖 AI: ✅ chek to'g'ri — tarif yoqildi" if good else
+                  "🤖 AI: ⚠️ " + esc("; ".join(reasons) or "tekshirilmadi") + "\nTekshirib, qaror qiling:"))
+    markup = inline([[("❌ Bekor qilish", f"sp:no:{payment_id}")]] if good else
+                    [[("✅ Tasdiqlash", f"sp:ok:{payment_id}"), ("❌ Rad etish", f"sp:no:{payment_id}")]])
+    for chat in [pay["teacher_id"], *[a for a in ADMIN_IDS if a != pay["teacher_id"]]]:
+        try:
+            await bot.send_photo(chat, BufferedInputFile(photo, filename="chek.jpg"), caption=caption, reply_markup=markup)
+            return
+        except Exception:
+            logger.warning("Tarif cheki yuborilmadi: %s", chat)
+
+
+@dp.callback_query(F.data.startswith("sp:"))
+async def decide_pass_payment_button(callback: CallbackQuery) -> None:
+    _, action, raw = (callback.data.split(":") + ["", ""])[:3]
+    try:
+        await webapp.decide_pass_payment(int(raw or 0), action == "ok", callback.from_user.id)
+    except webapp.ApiError as error:
+        await callback.answer(json.loads(error.text).get("error", "Xato"), show_alert=True)
+        return
+    await callback.answer("✅ Tasdiqlandi" if action == "ok" else "❌ Rad etildi")
+    note = "✅ Tasdiqlandi — tarif yoqildi" if action == "ok" else "❌ Rad etildi / bekor qilindi"
+    try:
+        await callback.message.edit_caption(caption=f"{callback.message.html_text}\n{LINE}\n{note}", reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
 
 async def wallet_receipt_notice(bot: Bot, payment_id: int, good: bool, reasons: list[str], photo: bytes) -> None:
@@ -1426,6 +1489,96 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
         await send_rating(bot, owner_chat, test)
     except Exception:
         logger.exception("Reyting rasmlari yuborilmadi: test %s", test["id"])
+    return sent
+
+
+# ---------- «Bugungi mock»: eslatmalar va yopilgach avtomatik natija + sertifikat ----------
+
+MOCK_TICK = 30  # soniya
+MOCK_FINISH_AFTER = timedelta(minutes=5)  # yopilgach shuncha kutiladi (oxirgi avto-yuborishlar ulgursin)
+MOCK_AI_WAIT = timedelta(hours=3)  # AI esselarni shuncha vaqtda tekshirib ulgurmasa — baribir e'lon (qolganlari qo'lda)
+
+
+async def store_file(bot: Bot, chat_id: int, data: bytes, name: str, caption: str) -> str:
+    """Savollar fayli (PDF yoki rasm) ustoz chatiga hujjat bo'lib boradi — sifati saqlanadi; Telegram file_id qaytadi."""
+    message = await bot.send_document(chat_id, BufferedInputFile(data, filename=name), caption=caption[:1000])
+    return message.document.file_id
+
+
+async def download_bytes(bot: Bot, file_id: str) -> bytes:
+    return (await bot.download(file_id)).read()
+
+
+async def mock_worker(bot: Bot) -> None:
+    while True:
+        try:
+            await mock_tick(bot)
+        except Exception:
+            logger.exception("Mock jadvali bajarilmadi")
+        await asyncio.sleep(MOCK_TICK)
+
+
+async def mock_tick(bot: Bot) -> None:
+    now = plans.now()
+    fmt = lambda moment: moment.strftime(webapp.TIME_FMT)
+    for test in await asyncio.to_thread(db.mocks_to_remind, fmt(now + timedelta(minutes=30)), fmt(now)):
+        opened = webapp._at(test["opens_at"]) <= now
+        await asyncio.to_thread(db.set_mock_state, test["id"], "opened" if opened else "soon")  # avval — takror yuborilmasin
+        name = f"Mock №{test['mock_no']}" if test.get("mock_no") else esc(test["title"])
+        text = (f"🟢 <b>{name} ochildi!</b>\n{esc(test['title'])}\nKirish {test['entry_until'][11:16]} gacha, "
+                f"{test['closes_at'][11:16]} da hammaga birdan yopiladi — kech kirsangiz, vaqtingiz kamroq." if opened else
+                f"⏰ <b>{name} 30 daqiqadan keyin</b> ({test['opens_at'][11:16]})\n{esc(test['title'])}\nTayyorlaning!")
+        for signup in await asyncio.to_thread(db.mock_signups, test["id"]):
+            await send_with_retry(bot, signup["tg_id"], text, reply_markup=app_markup("✍️ Mockni ochish", c=test["code"]))
+            await asyncio.sleep(0.05)
+    for test in await asyncio.to_thread(db.mocks_to_finish, fmt(now - MOCK_FINISH_AFTER)):
+        await finish_mock(bot, test, now)
+
+
+async def finish_mock(bot: Bot, test: dict, now) -> None:
+    """Yopilgan mock: AI esselarni tekshirib bo'lgach — Rasch, natija e'loni va har qatnashchiga sertifikat."""
+    attempts = await asyncio.to_thread(db.list_attempts, test["id"])
+    if test["closed"] or not attempts:  # ustoz o'zi e'lon qilgan yoki hech kim qatnashmagan
+        await asyncio.to_thread(db.set_mock_state, test["id"], "done")
+        return
+    waiting = await asyncio.to_thread(db.pending_essays_of_test, test["id"])
+    if waiting and now < webapp._at(test["closes_at"]) + MOCK_AI_WAIT:
+        return  # AI hali tekshirmoqda — keyingi tekshiruvda
+    unrated = await asyncio.to_thread(db.unrated_teacher_essays, test["id"])
+    if unrated:  # «👩‍🏫 Ustoz tekshirsin» tanlanganlar — ustoz baholagach natija o'zi chiqadi
+        if test.get("mock_state") != "teacher":
+            await asyncio.to_thread(db.set_mock_state, test["id"], "teacher")
+            await send_with_retry(
+                bot, test["owner_id"], f"✍️ <b>{esc(test['title'])}</b>: mock yopildi. <b>{unrated} ta</b> o'quvchi essesini "
+                "siz tekshirishingizni tanlagan — «📝 Esselar»da 75 ballik shkalada baholang.\n"
+                "Hammasi baholangach natijalar va sertifikatlar o'zi yuboriladi.",
+                reply_markup=app_markup("📝 Esselarni ochish", t=test["id"]))
+        return
+    await asyncio.to_thread(db.set_mock_state, test["id"], "done")
+    await asyncio.to_thread(db.set_announcing, test["id"], True)
+    await announce_test(bot, test, test["owner_id"])
+    await send_mock_certificates(bot, await asyncio.to_thread(db.get_test, test["id"]))
+
+
+async def send_mock_certificates(bot: Bot, test: dict) -> int:
+    """Har qatnashchiga o'z sertifikati (A4 PDF, daraja bilan) — natija e'lonidan keyin."""
+    data = await asyncio.to_thread(results.test_results, test)
+    owners = {a["id"]: a["tg_id"] for a in await asyncio.to_thread(db.list_attempts, test["id"])}
+    teacher = (await asyncio.to_thread(db.find_user, str(test["owner_id"])) or {}).get("full_name") or ""
+    sent = 0
+    for row in data["rows"]:
+        chat = owners.get(row["attempt_id"])
+        if not chat or chat < 0 or row["score"] is None:
+            continue
+        try:
+            pdf = await asyncio.to_thread(pdfs.certificates_pdf, test, [row], teacher)
+            await bot.send_document(chat, BufferedInputFile(pdf, filename=f"sertifikat_{test['code']}.pdf"),
+                                    caption=f"🎓 <b>Sertifikat</b> · {esc(test['title'])}\n"
+                                            f"Ball: <b>{fmt_num(row['score'])}</b>" + (f" · daraja <b>{esc(row['grade'])}</b>" if row["grade"] else ""))
+            sent += 1
+        except Exception:
+            logger.warning("Sertifikat yuborilmadi: %s", chat, exc_info=True)
+        await asyncio.sleep(0.05)
     return sent
 
 
@@ -2511,6 +2664,9 @@ async def main() -> None:
         wake_ai=AI_WAKE.set,
         essay_receipt_notice=lambda *a: essay_receipt_notice(bot, *a),
         wallet_receipt_notice=lambda *a: wallet_receipt_notice(bot, *a),
+        pass_receipt_notice=lambda *a: pass_receipt_notice(bot, *a),
+        store_file=lambda chat_id, data, name, caption: store_file(bot, chat_id, data, name, caption),
+        download_file=lambda file_id: download_bytes(bot, file_id),
         essay_scan_start=lambda *a: essay_scan_start(bot, *a),
         essay_scan_notice=lambda *a: essay_scan_notice(bot, *a),
         join_notice=lambda *a: join_notice(bot, *a),
@@ -2549,6 +2705,7 @@ async def main() -> None:
     tasks = [
         asyncio.create_task(essay_worker(bot)),   # AI navbati: yozma javoblar va esselar
         asyncio.create_task(resume_announcements(bot)),  # tugamay qolgan e'lonlar
+        asyncio.create_task(mock_worker(bot)),  # «Bugungi mock»: eslatmalar, yopilgach natija va sertifikatlar
         asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
         asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
         asyncio.create_task(ops.plan_reminders(bot)),  # obuna tugashiga 3 va 1 kun qolganda — o'qituvchiga

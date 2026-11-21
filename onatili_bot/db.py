@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import DB_PATH
 
@@ -363,6 +363,49 @@ SCHEMA = [
         created_at TEXT,
         UNIQUE (tg_id, region, district)
     )""",
+    # O'quvchi tarifi (FREE_IDS ustoz sotadi): muddat tugaguncha shu ustozning hamma mocklari bepul (o'z o'quvchisidek)
+    f"""CREATE TABLE IF NOT EXISTS student_passes (
+        teacher_id {BIG} NOT NULL,
+        student_id {BIG} NOT NULL,
+        expires_at TEXT NOT NULL,
+        PRIMARY KEY (teacher_id, student_id)
+    )""",
+    # Tarif to'lovi: karta → chek botga → AI (to'g'ri — paid, shubhali — review, ustoz qaror qiladi)
+    f"""CREATE TABLE IF NOT EXISTS pass_payments (
+        id           {ID},
+        teacher_id   {BIG} NOT NULL,
+        student_id   {BIG} NOT NULL,
+        days         INTEGER NOT NULL,
+        amount       INTEGER NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'open',
+        receipt      TEXT,
+        mime         TEXT,
+        receipt_hash TEXT,
+        txn          TEXT,
+        note         TEXT,
+        created_at   TEXT,
+        decided_at   TEXT
+    )""",
+    # «Bugungi mock»: o'quvchi «Qatnashaman» bosdi — mock ochilganda bot eslatadi, kartada «N kishi qatnashmoqchi»
+    f"""CREATE TABLE IF NOT EXISTS mock_signups (
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        tg_id      {BIG} NOT NULL,
+        name       TEXT,
+        created_at TEXT,
+        PRIMARY KEY (test_id, tg_id)
+    )""",
+    # Mock savollari: PDF va rasmlar (Telegram'da saqlanadi — file_id); o'quvchi PDF yoki rasmni tanlab ko'radi
+    f"""CREATE TABLE IF NOT EXISTS test_files (
+        id         {ID},
+        test_id    {BIG} NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL,
+        file_id    TEXT NOT NULL,
+        mime       TEXT,
+        name       TEXT,
+        size       INTEGER NOT NULL DEFAULT 0,
+        ord        INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT
+    )""",
     # Begona o'quvchining esse krediti — har ustozda alohida (pul o'sha ustoz kartasiga tushgan): 1 kredit = 1 esse
     f"""CREATE TABLE IF NOT EXISTS essay_wallets (
         teacher_id {BIG} NOT NULL,
@@ -419,6 +462,16 @@ MIGRATIONS = [
     ("tests", "check_mode", "TEXT NOT NULL DEFAULT 'free'"),  # oflayn yozma javoblar: free — Gemini/qo'lda, paid — Claude (kreditdan)  # begona o'quvchi shu mock essesini tekshirish uchun to'laydi (so'm)  # e'lon xabarlari ketmoqda — server qayta ishga tushsa davom etadi
     ("offline_essays", "verified", "INTEGER NOT NULL DEFAULT 0"),  # tituldagi esse kodi bilan yuborilgan
     ("practice_essays", "wallet", "INTEGER NOT NULL DEFAULT 0"),  # begonaning esse krediti bilan (tekshirilmasa — qaytadi)
+    # «Bugungi mock» jadvali (Toshkent vaqti, «YYYY-MM-DD HH:MM»): ochiladi → kirish to'xtaydi → yopiladi
+    ("tests", "opens_at", "TEXT"),
+    ("tests", "entry_until", "TEXT"),
+    ("tests", "closes_at", "TEXT"),
+    ("tests", "public_mock", "INTEGER NOT NULL DEFAULT 0"),  # hamma o'quvchi bosh sahifasida (FREE_IDS / admin)
+    ("tests", "mock_no", "INTEGER"),                         # «Bugungi mock №26»
+    ("tests", "mock_state", "TEXT NOT NULL DEFAULT ''"),     # '' → soon (30 daq qoldi) → opened → done (natija va sertifikat)
+    # Jadvalli mockda price — «🤖 AI tekshiradi» narxi, price_teacher — «👩‍🏫 Ustoz tekshiradi» narxi (0 — bepul)
+    ("tests", "price_teacher", "INTEGER NOT NULL DEFAULT 0"),
+    ("essay_payments", "choice", "TEXT"),  # mock oldidan o'quvchi tanlovi: ai | teacher (essesini kim tekshiradi)
 ]
 
 
@@ -1135,6 +1188,212 @@ def decide_join_request(request_id: int, status: str) -> bool:
                                  (status, _now(), request_id)).rowcount)
 
 
+# ---------- O'quvchi tarifi: muddatli — ustozning hamma mocklari bepul ----------
+
+def pass_until(teacher_id: int, student_id: int) -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT expires_at FROM student_passes WHERE teacher_id = ? AND student_id = ?",
+                           (teacher_id, student_id)).fetchone()
+    return row["expires_at"] if row else None
+
+
+def _extend_pass(conn, teacher_id: int, student_id: int, days: int, now_at: str) -> str:
+    """Muddat qo'shiladi: amaldagisi bo'lsa — uning oxiridan, tugagan bo'lsa — hozirdan. now_at: «YYYY-MM-DD HH:MM»."""
+    row = conn.execute("SELECT expires_at FROM student_passes WHERE teacher_id = ? AND student_id = ?",
+                       (teacher_id, student_id)).fetchone()
+    start = max(row["expires_at"], now_at) if row else now_at
+    until = (datetime.strptime(start[:16], "%Y-%m-%d %H:%M") + timedelta(days=days)).strftime("%Y-%m-%d %H:%M")
+    conn.execute("INSERT INTO student_passes (teacher_id, student_id, expires_at) VALUES (?, ?, ?) "
+                 "ON CONFLICT(teacher_id, student_id) DO UPDATE SET expires_at = excluded.expires_at",
+                 (teacher_id, student_id, until))
+    return until
+
+
+_PASS_COLS = "id, teacher_id, student_id, days, amount, status, txn, note, created_at, decided_at"
+
+
+def start_pass_payment(teacher_id: int, student_id: int, days: int, amount: int) -> dict:
+    """Tarif tanlandi: shu ustozdagi ochiq (chek yuborilmagan) to'lov almashtiriladi; chek tekshirilayotgani — qaytadi."""
+    with connect() as conn:
+        busy = _row(conn.execute(f"SELECT {_PASS_COLS} FROM pass_payments WHERE teacher_id = ? AND student_id = ? "
+                                 "AND status = 'review' ORDER BY id DESC LIMIT 1", (teacher_id, student_id)).fetchone())
+        if busy:
+            return busy
+        conn.execute("DELETE FROM pass_payments WHERE teacher_id = ? AND student_id = ? AND status IN ('open', 'rejected') "
+                     "AND receipt IS NULL", (teacher_id, student_id))
+        conn.execute("UPDATE pass_payments SET status = 'closed' WHERE teacher_id = ? AND student_id = ? "
+                     "AND status IN ('open', 'rejected')", (teacher_id, student_id))
+        return _row(conn.execute(
+            f"INSERT INTO pass_payments (teacher_id, student_id, days, amount, status, created_at) VALUES (?, ?, ?, ?, 'open', ?) "
+            f"RETURNING {_PASS_COLS}", (teacher_id, student_id, days, amount, _now())).fetchone())
+
+
+def open_pass_payment(student_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute(f"SELECT {_PASS_COLS} FROM pass_payments WHERE student_id = ? "
+                                 "AND status IN ('open', 'rejected', 'review') ORDER BY id DESC LIMIT 1", (student_id,)).fetchone())
+
+
+def get_pass_payment(payment_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute(
+            "SELECT p.*, u.full_name, u.username FROM pass_payments p LEFT JOIN users u ON u.tg_id = p.student_id "
+            "WHERE p.id = ?", (payment_id,)).fetchone())
+
+
+def save_pass_receipt(payment_id: int, receipt: str, mime: str, receipt_hash: str, txn: str | None, note: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE pass_payments SET receipt = ?, mime = ?, receipt_hash = ?, txn = ?, note = ?, status = 'review' "
+                     "WHERE id = ?", (receipt, mime, receipt_hash, txn, note, payment_id))
+
+
+def pay_pass_payment(payment_id: int, allowed: tuple[str, ...], now_at: str) -> str | None:
+    """Tasdiqlandi: «paid» va tarif muddati uzayadi — bitta tranzaksiyada. Qaytaradi — yangi muddat (yoki None)."""
+    marks = ", ".join("?" * len(allowed))
+    with connect() as conn:
+        pay = _row(conn.execute(f"SELECT * FROM pass_payments WHERE id = ? AND status IN ({marks})",
+                                (payment_id, *allowed)).fetchone())
+        if not pay or not conn.execute(f"UPDATE pass_payments SET status = 'paid', decided_at = ? WHERE id = ? "
+                                       f"AND status IN ({marks})", (_now(), payment_id, *allowed)).rowcount:
+            return None
+        return _extend_pass(conn, pay["teacher_id"], pay["student_id"], pay["days"], now_at)
+
+
+def reject_pass_payment(payment_id: int, allowed: tuple[str, ...]) -> bool:
+    """Rad etish; AI tasdiqlagani bekor qilinsa — berilgan kunlar qaytarib olinadi."""
+    marks = ", ".join("?" * len(allowed))
+    with connect() as conn:
+        pay = _row(conn.execute(f"SELECT * FROM pass_payments WHERE id = ? AND status IN ({marks})",
+                                (payment_id, *allowed)).fetchone())
+        if not pay or not conn.execute(f"UPDATE pass_payments SET status = 'rejected', decided_at = ? WHERE id = ? "
+                                       f"AND status IN ({marks})", (_now(), payment_id, *allowed)).rowcount:
+            return False
+        if pay["status"] == "paid":
+            row = conn.execute("SELECT expires_at FROM student_passes WHERE teacher_id = ? AND student_id = ?",
+                               (pay["teacher_id"], pay["student_id"])).fetchone()
+            if row:
+                back = datetime.strptime(row["expires_at"][:16], "%Y-%m-%d %H:%M") - timedelta(days=pay["days"])
+                conn.execute("UPDATE student_passes SET expires_at = ? WHERE teacher_id = ? AND student_id = ?",
+                             (back.strftime("%Y-%m-%d %H:%M"), pay["teacher_id"], pay["student_id"]))
+        return True
+
+
+# ---------- «Bugungi mock»: jadval, qatnashuvchilar, savol fayllari ----------
+
+def set_schedule(test_id: int, opens_at: str | None, entry_until: str | None, closes_at: str | None, public: bool) -> dict:
+    """Jadval (None — jadvalsiz oddiy test). Hammaga ko'rinadigan mockka birinchi marta raqam beriladi (№26)."""
+    with connect() as conn:
+        conn.execute("UPDATE tests SET opens_at = ?, entry_until = ?, closes_at = ?, public_mock = ?, mock_state = '' "
+                     "WHERE id = ?", (opens_at, entry_until, closes_at, 1 if public else 0, test_id))
+        if public:
+            conn.execute("UPDATE tests SET mock_no = (SELECT COALESCE(MAX(mock_no), 0) + 1 FROM tests) "
+                         "WHERE id = ? AND mock_no IS NULL", (test_id,))
+        return dict(conn.execute("SELECT id, opens_at, entry_until, closes_at, public_mock, mock_no FROM tests WHERE id = ?",
+                                 (test_id,)).fetchone())
+
+
+def public_mocks(since: str, limit: int = 3) -> list[dict]:
+    """Bosh sahifadagi mocklar: yopilishi `since` dan keyin (bo'lajak, ochiq yoki yaqinda yopilgan), eng yaqini birinchi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT t.id, t.code, t.title, t.owner_id, t.price, t.closed, t.opens_at, t.entry_until, t.closes_at, t.mock_no, "
+            "t.public_mock, t.price_teacher, "
+            "t.mock_state, u.full_name AS owner_name, (SELECT COUNT(*) FROM mock_signups s WHERE s.test_id = t.id) AS signups "
+            "FROM tests t LEFT JOIN users u ON u.tg_id = t.owner_id "
+            "WHERE t.public_mock = 1 AND t.closes_at >= ? ORDER BY t.opens_at LIMIT ?", (since, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mock_signup(test_id: int, tg_id: int, name: str | None, on: bool) -> None:
+    with connect() as conn:
+        if on:
+            conn.execute("INSERT INTO mock_signups (test_id, tg_id, name, created_at) VALUES (?, ?, ?, ?) "
+                         "ON CONFLICT(test_id, tg_id) DO NOTHING", (test_id, tg_id, name, _now()))
+        else:
+            conn.execute("DELETE FROM mock_signups WHERE test_id = ? AND tg_id = ?", (test_id, tg_id))
+
+
+def mock_signups(test_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT s.tg_id, COALESCE(u.full_name, s.name) AS name FROM mock_signups s "
+                            "LEFT JOIN users u ON u.tg_id = s.tg_id WHERE s.test_id = ? ORDER BY s.created_at DESC",
+                            (test_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def signed_mocks(tg_id: int) -> set[int]:
+    with connect() as conn:
+        return {row["test_id"] for row in conn.execute("SELECT test_id FROM mock_signups WHERE tg_id = ?", (tg_id,)).fetchall()}
+
+
+def mocks_to_remind(soon_at: str, now_at: str) -> list[dict]:
+    """Eslatma vaqti kelgan mocklar: 30 daqiqa qolgan (state '') yoki ochilgan (state '' / 'soon')."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tests WHERE opens_at IS NOT NULL AND closed = 0 AND closes_at > ? AND "
+            "((mock_state = '' AND opens_at <= ?) OR (mock_state IN ('', 'soon') AND opens_at <= ?))",
+            (now_at, soon_at, now_at)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mocks_to_finish(before: str) -> list[dict]:
+    """Yopilganiga vaqt o'tgan, natijasi hali e'lon qilinmagan mocklar."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id FROM tests WHERE closes_at IS NOT NULL AND closes_at <= ? AND mock_state <> 'done'",
+                            (before,)).fetchall()
+    return [get_test(row["id"]) for row in rows]
+
+
+def set_mock_state(test_id: int, state: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET mock_state = ? WHERE id = ?", (state, test_id))
+
+
+def set_mock_prices(test_id: int, price_ai: int, price_teacher: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET price = ?, price_teacher = ? WHERE id = ?", (price_ai, price_teacher, test_id))
+
+
+def unrated_teacher_essays(test_id: int) -> int:
+    """«Ustoz tekshirsin» tanlangan, hali baholanmagan esselar (natija shular baholangach chiqadi)."""
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM essays e JOIN attempts a ON a.id = e.attempt_id "
+                            "WHERE a.test_id = ? AND e.status = 'manual' AND a.essay IS NULL", (test_id,)).fetchone()["n"]
+
+
+def pending_essays_of_test(test_id: int) -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM essays e JOIN attempts a ON a.id = e.attempt_id "
+                            "WHERE a.test_id = ? AND e.status = 'pending'", (test_id,)).fetchone()["n"]
+
+
+def live_started(test_id: int, tg_id: int) -> int | None:
+    """O'quvchi mockni qachon ochgan (unix vaqt) — kirish vaqti o'tgach ham davom ettira oladi."""
+    with connect() as conn:
+        row = conn.execute("SELECT started_at FROM live WHERE test_id = ? AND tg_id = ?", (test_id, tg_id)).fetchone()
+    return row["started_at"] if row else None
+
+
+def add_test_file(test_id: int, kind: str, file_id: str, mime: str, name: str, size: int) -> dict:
+    with connect() as conn:
+        order = conn.execute("SELECT COALESCE(MAX(ord), 0) + 1 AS n FROM test_files WHERE test_id = ?", (test_id,)).fetchone()["n"]
+        return dict(conn.execute(
+            "INSERT INTO test_files (test_id, kind, file_id, mime, name, size, ord, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "RETURNING id, kind, name, size, ord", (test_id, kind, file_id, mime, name, size, order, _now())).fetchone())
+
+
+def test_files(test_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT id, kind, file_id, mime, name, size, ord FROM test_files WHERE test_id = ? ORDER BY ord, id",
+                            (test_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_test_file(test_id: int, file_id: int) -> bool:
+    with connect() as conn:
+        return bool(conn.execute("DELETE FROM test_files WHERE test_id = ? AND id = ?", (test_id, file_id)).rowcount)
+
+
 # ---------- Begona o'quvchining esse to'lovi (ustoz kartasiga; chekni AI tekshiradi) ----------
 
 def set_test_price(test_id: int, price: int) -> None:
@@ -1143,7 +1402,7 @@ def set_test_price(test_id: int, price: int) -> None:
         conn.execute("UPDATE tests SET price = ? WHERE id = ?", (max(0, price), test_id))
 
 
-_PAY_COLS = "id, test_id, student_id, amount, status, txn, note, created_at, decided_at"
+_PAY_COLS = "id, test_id, student_id, amount, status, txn, note, created_at, decided_at, choice"
 
 
 def essay_payment_of(test_id: int, student_id: int) -> dict | None:
@@ -1152,14 +1411,16 @@ def essay_payment_of(test_id: int, student_id: int) -> dict | None:
                                  (test_id, student_id)).fetchone())
 
 
-def start_essay_payment(test_id: int, student_id: int, amount: int) -> dict:
-    """To'lov boshlanadi (yoki rad etilgani qayta ochiladi). To'langan / adminda turgani o'zgarmaydi."""
+def start_essay_payment(test_id: int, student_id: int, amount: int, choice: str | None = None) -> dict:
+    """To'lov boshlanadi (yoki rad etilgani qayta ochiladi). To'langan / adminda turgani o'zgarmaydi.
+    amount = 0 — bepul tanlov (jadvalli mock): darhol «paid». choice — esseni kim tekshiradi (ai | teacher)."""
+    status = "paid" if amount == 0 else "open"
     with connect() as conn:
         conn.execute(
-            "INSERT INTO essay_payments (test_id, student_id, amount, status, created_at) VALUES (?, ?, ?, 'open', ?) "
-            "ON CONFLICT(test_id, student_id) DO UPDATE SET amount = excluded.amount, status = 'open', "
-            "created_at = excluded.created_at WHERE essay_payments.status IN ('open', 'rejected')",
-            (test_id, student_id, amount, _now()))
+            "INSERT INTO essay_payments (test_id, student_id, amount, status, created_at, choice) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(test_id, student_id) DO UPDATE SET amount = excluded.amount, status = excluded.status, "
+            "created_at = excluded.created_at, choice = excluded.choice WHERE essay_payments.status IN ('open', 'rejected')",
+            (test_id, student_id, amount, status, _now(), choice))
         return _row(conn.execute(f"SELECT {_PAY_COLS} FROM essay_payments WHERE test_id = ? AND student_id = ?",
                                  (test_id, student_id)).fetchone())
 
@@ -1194,7 +1455,8 @@ def receipt_used(receipt_hash: str, txn: str | None, payment_id: int, table: str
     """Shu chek (rasm yoki tranzaksiya raqami) boshqa to'lovda ishlatilganmi — mock esse to'lovlari va kredit
     paketlari birga tekshiriladi (bitta chek ikkalasiga ishlatilmasin). table — shu to'lov qaysi jadvalda."""
     # Obuna to'lovlari (payments) ham: u yerda «sent» — admin ko'rib chiqmoqda
-    tables = {"essay_payments": "'paid', 'review'", "wallet_payments": "'paid', 'review'", "payments": "'paid', 'sent'"}
+    tables = {"essay_payments": "'paid', 'review'", "wallet_payments": "'paid', 'review'", "payments": "'paid', 'sent'",
+              "pass_payments": "'paid', 'review'"}  # o'quvchi tariflari
     with connect() as conn:
         for name, statuses in tables.items():
             if conn.execute(
@@ -1579,10 +1841,14 @@ BACKUP_TABLES = {
     "ai_usage": "*",
     "essay_wallets": "*",  # begonalarning esse krediti (pul to'langan — yo'qolmasin)
     "wallet_payments": "id, teacher_id, student_id, essays, amount, status, receipt_hash, txn, note, created_at, decided_at",
+    "mock_signups": "*",
+    "student_passes": "*",
+    "pass_payments": "id, teacher_id, student_id, days, amount, status, receipt_hash, txn, note, created_at, decided_at",
+    "test_files": "*",  # faqat Telegram file_id — fayllarning o'zi Telegram'da
 }
 SERIAL_TABLES = ("tests", "attempts", "essays", "students", "classes", "class_students",
                  "payments", "registrations", "teacher_places", "practice_essays", "join_requests", "essay_payments",
-                 "wallet_payments")
+                 "wallet_payments", "test_files", "pass_payments")
 
 
 def export_tables() -> dict[str, list[dict]]:
@@ -1899,25 +2165,28 @@ def teacher_of_essay_code(code: str) -> int | None:
 # Sozlamalar kichik va kam o'zgaradi, lekin bitta sahifa ochilishida 30 martagacha o'qilardi (har biri — masofadagi
 # bazaga alohida so'rov). Endi xotirada: yozilganda darhol yangilanadi, baribir SETTINGS_TTL soniyada bir qayta o'qiladi
 SETTINGS_TTL = 30
-_settings_cache: dict = {"at": 0.0, "data": None}
+_settings_cache: dict = {"at": 0.0, "data": None, "gen": 0}
 _settings_lock = threading.Lock()
 
 
 def _forget_settings() -> None:
     with _settings_lock:
         _settings_cache["data"] = None
+        _settings_cache["gen"] += 1  # shu paytda o'qilayotgan (eski) javob xotiraga yozilmasin
 
 
 def get_settings() -> dict:
     with _settings_lock:
-        data, at = _settings_cache["data"], _settings_cache["at"]
+        data, at, gen = _settings_cache["data"], _settings_cache["at"], _settings_cache["gen"]
     if data is not None and time.monotonic() - at < SETTINGS_TTL:
         return dict(data)  # nusxa — chaqirgan tomon o'zgartirsa ham xotiradagisi buzilmaydi
     with connect() as conn:
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
     data = {row["key"]: row["value"] for row in rows}
     with _settings_lock:
-        _settings_cache.update(data=data, at=time.monotonic())
+        # O'qish davomida sozlama yozilgan bo'lsa (gen o'zgargan) — bu javob eskirgan bo'lishi mumkin, saqlanmaydi
+        if _settings_cache["gen"] == gen:
+            _settings_cache.update(data=data, at=time.monotonic())
     return dict(data)
 
 
