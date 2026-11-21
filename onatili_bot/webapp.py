@@ -504,7 +504,10 @@ async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -
             "schedule": schedule_view(test), "signups": len(signups),
             "faces": [_initials(s["name"]) for s in signups[:4]], "signed": any(s["tg_id"] == user["id"] for s in signups),
             "attempt": attempt["id"] if attempt else None, "announced": bool(test.get("closed")),
-            "price": int(test.get("price") or 0) if await is_outsider(test, user["id"]) else 0}
+            "price": int(test.get("price") or 0) if await is_outsider(test, user["id"]) else 0,
+            # Kartadagi izoh: tarifi bilan bepulmi; ustoz tarif sotadimi (sotsa — «tarif olsangiz, hamma mock bepul»)
+            "owner_id": test["owner_id"], "has_pass": await pass_active(test["owner_id"], user["id"]),
+            "sells_pass": bool(await run(student_tariffs, test["owner_id"]))}
 
 
 async def mock_cards(user: dict) -> list[dict]:
@@ -603,6 +606,8 @@ async def schedule_save(request: web.Request) -> web.Response:
         return ok({"schedule": None})
     if (test.get("mode") or "online") != "online":
         raise ApiError(400, "Jadval faqat onlayn testga qo'yiladi")
+    if not plans.ai_unlimited(user["id"]):
+        raise ApiError(403, "«📅 E'lon qilish» — faqat ruxsat berilgan ustozlar uchun")
     opens, entry, closes = parse_schedule(payload)
     public = bool(payload.get("public"))
     if public and (not plans.ai_unlimited(user["id"]) or test["fmt"] != "milliy"):
@@ -1227,6 +1232,7 @@ async def settings_view(user: dict) -> dict:
                                                 run(public_open, user["id"]))
     return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": PUBLIC_FREE,
             "can_public": plans.ai_unlimited(user["id"]), "student_tariffs": await run(student_tariffs, user["id"]),
+            "announce_channels": await run(announce_channels, user["id"]),
             "public_url": f"https://t.me/{username}?start={public_code(user['id'])}" if username else None}
 
 
@@ -1247,6 +1253,11 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
             raise ApiError(400, "Karta egasining ism-familiyasini yozing — AI chekda shuni tekshiradi")
         await run(db.set_setting, f"teacher_card:{user['id']}", " ".join(number[i:i + 4] for i in range(0, 16, 4)))
         await run(db.set_setting, f"teacher_holder:{user['id']}", holder)
+    if "announce_channels" in payload:  # «📣 E'lon kanali»: bot mocklar haqida o'zi yozib turadi — FREE_IDS / admin
+        if not plans.ai_unlimited(user["id"]):
+            raise ApiError(403, "E'lon kanali — faqat ruxsat berilgan ustozlar uchun")
+        channels = await resolve_channels(payload.get("announce_channels") or [])  # bot kanalda admin ekanini tekshiradi
+        await run(db.set_setting, f"announce_channels:{user['id']}", json.dumps(public_channels(channels), ensure_ascii=False))
     if "student_tariffs" in payload:  # «💎 O'quvchi tariflari» — faqat FREE_IDS / admin
         if not plans.ai_unlimited(user["id"]):
             raise ApiError(403, "O'quvchi tariflari — faqat ruxsat berilgan ustozlar uchun")
@@ -1279,6 +1290,15 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
 
 
 # ---------- «💎 Tarif» (begona o'quvchi): FREE_IDS ustoz narxini qo'yadi, pul uning kartasiga; muddatida hamma mock bepul ----------
+
+def announce_channels(teacher_id: int) -> list[dict]:
+    """Ustozning e'lon kanallari: [{chat_id, title, url}] — bot ularga mock e'lonlarini yuboradi."""
+    try:
+        raw = json.loads(db.get_settings().get(f"announce_channels:{teacher_id}") or "[]")
+    except ValueError:
+        raw = []
+    return [c for c in raw if isinstance(c, dict) and c.get("chat_id")]
+
 
 def student_tariffs(teacher_id: int) -> list[dict]:
     try:

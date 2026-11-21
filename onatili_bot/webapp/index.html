@@ -583,6 +583,8 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .mk-cd b { font-size: 30px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
 .mk-cd small { color: #b9c0e6; font-size: 12px; }
 .mk-cd .sec { background: rgba(255,216,77,.12); } .mk-cd .sec b { color: var(--mk-y); }
+.mk-cd.four { grid-template-columns: repeat(4, 1fr); } .mk-cd.four b { font-size: 26px; }
+.mk-note2 { color: var(--mk-y); font-size: 13.5px; font-weight: 600; line-height: 1.4; }
 .mk-people { display: flex; align-items: center; gap: 10px; }
 .mk-people .faces { display: flex; }
 .mk-people .faces i { width: 34px; height: 34px; margin-left: -8px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-body, inherit);
@@ -590,8 +592,9 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .mk-people .faces i:first-child { margin-left: 0; }
 .mk-people .faces i:nth-child(2) { --n: 1; } .mk-people .faces i:nth-child(3) { --n: 2; } .mk-people .faces i:nth-child(4) { --n: 3; }
 .mk-people .faces i.more { background: #2b3a78; }
-.mk-btn { display: flex; gap: 10px; align-items: center; justify-content: center; width: 100%; padding: 15px 18px; border-radius: 99px; font-weight: 800; font-size: 16px;
-  cursor: pointer; border: 2px solid var(--mk-y); background: var(--mk-y); color: #1b1b1b; transition: transform .12s, filter .2s; }
+.mk-btn { display: flex; gap: 10px; align-items: center; justify-content: center; width: 100%; padding: 16px 18px; border-radius: 99px; font-weight: 800; font-size: 17px;
+  cursor: pointer; border: 2px solid var(--mk-y); background: linear-gradient(90deg, #ffe680, var(--mk-y)); color: #1b1b1b; transition: transform .12s, filter .2s;
+  box-shadow: 0 10px 24px -14px var(--mk-y); }
 .mk-btn:active { transform: scale(.97); }
 .mk-btn.on { background: rgba(255,216,77,.1); color: var(--mk-y); }
 .mk-btn.go { background: linear-gradient(90deg, var(--mk-y), #ffb347); }
@@ -1789,7 +1792,7 @@ VIEWS.create = async () => {
       }).join("")}
       <span class="muted small">O'quvchi uchta javobdan istalganini yozsa ham to'g'ri hisoblanadi. Katta-kichik harf, o'/oʻ farqi, ortiqcha bo'shliq va kirillcha yozuv xato hisoblanmaydi.</span></div>` : ""}
     ${st.mode === "offline" ? "" : channelEditorHTML(st.channels)}
-    ${st.mode !== "offline" && st.fmt === "milliy" ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
+    ${st.mode !== "offline" && st.fmt === "milliy" && (S.boot || {}).can_public ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
   </div>`;
   function collect() {
@@ -1841,7 +1844,7 @@ VIEWS.create = async () => {
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
-    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline") {
+    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_public) {
       const bad = mockProblem(st.mock); if (bad) { toast(bad); haptic("error"); return; }
     }
     const miss = items.filter(i => !st.keys.A[i.label]);
@@ -1850,7 +1853,7 @@ VIEWS.create = async () => {
     try {
       const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
-      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline") {
+      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_public) {
         // Test saqlandi — endi jadval, narxlar va savollar fayli (xato bo'lsa test sahifasida tuzatiladi)
         btn.textContent = "E'lon qilinmoqda…";
         try { await saveMock(res.id, st.mock); }
@@ -1924,7 +1927,7 @@ const pad2 = n => String(n).padStart(2, "0");
 function mockDefaults() {
   const d = new Date();
   return { on: false, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
-           opens: "20:00", entry: "22:00", closes: "23:00", priceAi: "", priceTeacher: "" };
+           opens: "20:00", entry: "22:00", closes: "23:00", paid: false, priceAi: "", priceTeacher: "" };
 }
 function mockSetupHTML(m, withFiles = true) {
   const b = S.boot || {}, files = S.mockFiles || [];
@@ -1940,10 +1943,14 @@ function mockSetupHTML(m, withFiles = true) {
         <div class="field" style="flex:1"><label for="mk-opens">Ochiladi</label><input class="input" id="mk-opens" type="time" value="${esc(m.opens)}"></div>
         <div class="field" style="flex:1"><label for="mk-entry">Qabul yopiladi</label><input class="input" id="mk-entry" type="time" value="${esc(m.entry)}"></div>
         <div class="field" style="flex:1"><label for="mk-closes">Tugaydi</label><input class="input" id="mk-closes" type="time" value="${esc(m.closes)}"></div></div>
-      <b>Narxlar</b><span class="muted small">Begonalar uchun — o'quvchi boshlashdan oldin esseni kim tekshirishini tanlaydi. O'z o'quvchilaringizga bepul. Bo'sh yoki 0 — bepul.</span>
+      <div class="field"><label>Mock</label><div class="chips">
+        <button type="button" class="chip ${m.paid ? "" : "on"}" data-mock-paid="0">🎁 Bepul</button>
+        <button type="button" class="chip ${m.paid ? "on" : ""}" data-mock-paid="1">💳 Pullik</button></div></div>
+      ${m.paid ? `<span class="muted small">Narxni o'zingiz qo'yasiz (begonalar uchun; o'z o'quvchilaringizga va tarif olganlarga bepul). O'quvchi boshlashdan oldin esseni kim tekshirishini tanlaydi — 0 yoki bo'sh qolgani bepul.</span>
       <div class="row" style="gap:8px">
         <div class="field" style="flex:1"><label for="mk-pai">🤖 AI tekshirsa (so'm)</label><input class="input" id="mk-pai" inputmode="numeric" value="${esc(m.priceAi)}" placeholder="0 — bepul"></div>
-        <div class="field" style="flex:1"><label for="mk-pteacher">👩‍🏫 Ustoz tekshirsa (so'm)</label><input class="input" id="mk-pteacher" inputmode="numeric" value="${esc(m.priceTeacher)}" placeholder="0 — bepul"></div></div>
+        <div class="field" style="flex:1"><label for="mk-pteacher">👩‍🏫 Ustoz tekshirsa (so'm)</label><input class="input" id="mk-pteacher" inputmode="numeric" value="${esc(m.priceTeacher)}" placeholder="0 — bepul"></div></div>`
+      : `<span class="muted small">🎁 Hamma uchun bepul — esse AI'da tekshiriladi (kreditingizdan).</span>`}
       ${withFiles ? `<div class="field"><label for="mk-files">📎 Savollar — PDF va/yoki rasmlar</label>
         <input class="input" id="mk-files" type="file" accept="application/pdf,image/*" multiple>
         <span class="muted small" id="mk-files-list">${files.length ? files.map(f => "• " + esc(f.name)).join("<br>") : "O'quvchi mock ochilganda PDF yoki rasmni tanlab ko'radi. Keyin test sahifasida ham qo'shsa bo'ladi."}</span></div>` : ""}` : ""}
@@ -1959,6 +1966,7 @@ function collectMock(m) {
 function bindMockSetup(m, redraw) {
   if (!m) return;
   document.querySelectorAll("[data-mock-on]").forEach(x => x.onclick = () => { m.on = x.dataset.mockOn === "1"; haptic("select"); redraw(); });
+  document.querySelectorAll("[data-mock-paid]").forEach(x => x.onclick = () => { m.paid = x.dataset.mockPaid === "1"; haptic("select"); redraw(); });
   const input = document.getElementById("mk-files");
   if (input) input.onchange = () => {
     S.mockFiles = [...input.files];
@@ -1970,12 +1978,15 @@ function mockProblem(m) {
   if (!m.date || !m.opens || !m.entry || !m.closes) return "Sana va uchala vaqtni kiriting";
   if (!(m.opens < m.entry && m.entry <= m.closes)) return "Tartib: ochiladi → qabul yopiladi → tugaydi";
   if (new Date(`${m.date}T${m.closes}`) < new Date()) return "Tugash vaqti o'tib ketgan";
-  for (const p of [m.priceAi, m.priceTeacher]) if (+p && +p < 1000) return "Narx 0 (bepul) yoki 1 000 so'mdan";
+  if (m.paid) {
+    for (const p of [m.priceAi, m.priceTeacher]) if (+p && +p < 1000) return "Narx 0 (bepul) yoki 1 000 so'mdan";
+    if (!+m.priceAi && !+m.priceTeacher) return "Pullik mock uchun narxni kiriting (yoki «🎁 Bepul»ni tanlang)";
+  }
   return null;
 }
 async function saveMock(testId, m) {
   await api(`/api/teacher/test/${testId}/schedule`, { date: m.date, opens: m.opens, entry: m.entry, closes: m.closes,
-    public: !!m.public, price_ai: +m.priceAi || 0, price_teacher: +m.priceTeacher || 0 });
+    public: !!m.public, price_ai: m.paid ? +m.priceAi || 0 : 0, price_teacher: m.paid ? +m.priceTeacher || 0 : 0 });
   for (const file of S.mockFiles || []) {  // bittadan — katta PDF ham sig'adi
     const form = new FormData(); form.append("file", file, file.name);
     await apiForm(`/api/teacher/test/${testId}/files`, form);
@@ -1983,6 +1994,27 @@ async function saveMock(testId, m) {
 }
 
 // ---------- «💎 Tarif»: FREE_IDS ustoz narxini qo'yadi (Sozlamalar), begona o'quvchi bosh sahifada sotib oladi ----------
+// «📣 E'lon kanali»: bot admin qilingan kanalga mocklar haqida o'zi yozib turadi
+function announceChannelsHTML(list) {
+  return `<div class="section-title"><h2>📣 E'lon kanali</h2><span class="muted small">${list.length ? `${list.length} ta kanal` : "ulanmagan"}</span></div>
+    <div class="card" id="an-box"><span class="muted small">Botni kanalingizga <b>admin</b> qiling va shu yerga qo'shing. Bot har «Bugungi mock» haqida o'zi e'lon qiladi:
+      📢 yangi mock · 📅 bugun soat nechada · ⏰ 1 soat qoldi · 🟢 boshlandi · ⏳ kirishga 15 daqiqa · 🏆 natijalar va TOP-3.</span>
+      ${list.length ? `<div class="list">${list.map((c, i) => `<div class="item" style="cursor:default"><span class="ico">📣</span><span><b>${esc(c.title)}</b><small>${esc((c.url || "").replace(/^https?:\/\//, ""))}</small></span>
+        <button type="button" class="btn plain sm" data-an-del="${i}" aria-label="Olib tashlash">✕</button></div>`).join("")}</div>` : ""}
+      ${list.length < 3 ? `<div class="row" style="gap:8px"><input class="input" id="an-ref" placeholder="@kanal yoki t.me/kanal" autocomplete="off" autocapitalize="off" style="flex:1">
+        <button type="button" class="btn ghost" id="an-add">Qo'shish</button></div>` : ""}</div>`;
+}
+function bindAnnounceChannels(list) {
+  const box = document.getElementById("an-box"); if (!box) return;
+  const save = async refs => {
+    try { await api("/api/teacher/settings", { announce_channels: refs }); haptic("success"); toast("✅ Saqlandi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); }
+  };
+  const add = document.getElementById("an-add"), input = document.getElementById("an-ref");
+  if (add) add.onclick = () => { const ref = input.value.trim(); if (!ref) return input.focus(); add.disabled = true;
+    save([...list.map(c => c.chat_id), ref]).finally(() => { add.disabled = false; }); };
+  box.querySelectorAll("[data-an-del]").forEach(x => x.onclick = () => save(list.filter((_, i) => i !== +x.dataset.anDel).map(c => c.chat_id)));
+}
 const TARIFF_DEFAULTS = [30, 90];
 function tariffRowHTML(t) {
   return `<div class="row tf-row" style="gap:8px"><input class="input" data-tf-d inputmode="numeric" value="${t.days || ""}" placeholder="Kun" style="flex:1" aria-label="Muddat (kun)">
@@ -2066,6 +2098,18 @@ function mockDay(s) {
 const serverNow = () => Date.now() + (S.mockSkew || 0);
 function setSkew(s) { if (s && s.now && Math.abs(s.now - Date.now()) < 5 * 60000) S.mockSkew = s.now - Date.now(); }
 const mockPhaseOf = s => { const n = serverNow(); return n < s.opens ? "soon" : n < s.entry ? "open" : n < s.closes ? "late" : "closed"; };
+// Toshkent bo'yicha bugundan necha kun keyin (0 — bugun, 1 — ertaga)
+function mockDayDiff(s) {
+  const today = new Date(serverNow() + 5 * 3600000).toISOString().slice(0, 10);
+  return Math.round((Date.parse(s.opens_at.slice(0, 10)) - Date.parse(today)) / 86400000);
+}
+function mockBadge(s) {
+  const diff = mockDayDiff(s), no = s.mock_no ? ` №${s.mock_no}` : "";
+  if (diff === 0) return `Bugungi mock${no}`;
+  if (diff === 1) return `Ertangi mock${no}`;
+  const [y, m, d] = s.opens_at.slice(0, 10).split("-").map(Number), day = UZ_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return `${day[0].toUpperCase()}${day.slice(1)} mocki${no}`;
+}
 function mockFromPrice(c) {
   const s = c.schedule, prices = [s.price_ai, s.price_teacher].filter(p => p > 0);
   return c.price && prices.length ? Math.min(...prices) : 0;
@@ -2080,23 +2124,25 @@ function mockCardHTML(c) {
     : `<div class="mk-done">✅ Topshirdingiz — natija va sertifikat mock yopilgach botga keladi</div>`;
   else if (phase === "soon") action = c.signed
     ? `<button type="button" class="mk-btn on" data-mk-sign="${c.code}" data-on="0"><span>✓</span> Qatnashasiz, ${hm(s.opens_at)} da eslatamiz</button>`
-    : `<button type="button" class="mk-btn" data-mk-sign="${c.code}" data-on="1">Qatnashaman</button>`;
+    : `<button type="button" class="mk-btn" data-mk-sign="${c.code}" data-on="1"><span>✓</span> Qatnashaman</button>`;
   else if (phase === "open") action = `<button type="button" class="mk-btn go" data-mk-open="${c.code}">Boshlash →</button>`;
   else if (phase === "late") action = `<button type="button" class="mk-btn" data-mk-open="${c.code}">Davom ettirish →</button><small class="mk-sub">Qabul yopilgan — faqat oldin kirganlar davom etadi</small>`;
   else action = `<div class="mk-done">🔒 Mock yopildi — natijalar tekshirilgach e'lon qilinadi</div>`;
   const price = mockFromPrice(c);
   return `<section class="mock-card" data-mk="${s.opens}:${s.entry}:${s.closes}:${phase}">
-    <div class="mk-top"><span class="mk-badge">${s.public && s.mock_no ? `Bugungi mock №${s.mock_no}` : "Mock"}</span><span class="mk-open"><i></i>${num(hours)} soat ochiq</span></div>
+    <div class="mk-top"><span class="mk-badge">${mockBadge(s)}</span><span class="mk-open"><i></i>${num(hours)} soat ochiq</span></div>
     <h2>${mockDay(s)}</h2><small class="mk-title">${esc(c.title)}${c.owner ? ` · ${esc(c.owner)}` : ""}</small>
     <div class="mk-times"><b>${hm(s.opens_at)}</b><b class="mid" style="left:${entryPct}%">${hm(s.entry_until)}</b><b class="end">${hm(s.closes_at)}</b></div>
     <div class="mk-track"><i data-tl="${s.opens}:${s.closes}"></i><span class="d1"></span><span class="d2" style="left:${entryPct}%"></span><span class="d3"></span></div>
     <div class="mk-labels"><span>Ochiladi</span><span class="mid" style="left:${entryPct}%">Kirish to'xtaydi</span><span class="end">Yopiladi</span></div>
     <p class="mk-note">${hm(s.entry_until)} gacha istalgan payt kirasiz. ${hm(s.closes_at)} da test hammaga birdan yopiladi: kech kirsangiz, vaqtingiz kamroq.</p>
-    ${target ? `<div class="mk-cd" data-cd="${target}"><div><b data-h>--</b><small>soat</small></div><div><b data-m>--</b><small>daqiqa</small></div><div class="sec"><b data-s>--</b><small>soniya</small></div></div>
+    ${target ? `<div class="mk-cd ${target - serverNow() >= 86400000 ? "four" : ""}" data-cd="${target}">${target - serverNow() >= 86400000 ? `<div><b data-d>--</b><small>kun</small></div>` : ""}<div><b data-h>--</b><small>soat</small></div><div><b data-m>--</b><small>daqiqa</small></div><div class="sec"><b data-s>--</b><small>soniya</small></div></div>
       <small class="mk-sub">${phase === "soon" ? "Boshlanishiga" : "Yopilishiga"}</small>` : ""}
     ${c.signups ? `<div class="mk-people"><span class="faces">${faces}</span><b>${c.signups} kishi qatnashmoqchi</b></div>` : ""}
     ${action}
-    ${price ? `<small class="mk-sub">💳 Pullik: ${sum(price)} so'mdan · esseni kim tekshirishini boshlashda tanlaysiz</small>` : `<small class="mk-sub">🎁 Bepul mock</small>`}
+    <small class="mk-note2">${c.has_pass ? "💎 Tarifingiz bilan — bu mock siz uchun bepul"
+      : price ? `💳 ${sum(price)} so'mdan${c.sells_pass ? " · 💎 tarif olsangiz — hamma mock bepul" : " · esseni kim tekshirishini boshlashda tanlaysiz"}`
+      : "🎁 Bepul mock — qatnashing"}</small>
     <div class="mk-info"><span>⚖️</span><span><b>Natija Rasch modelida hisoblanadi:</b> qancha ko'p odam qatnashsa, natijangiz haqiqiy imtihondagidek chiqadi. Do'stlaringizni ham chaqiring.</span></div>
   </section>`;
 }
@@ -2106,7 +2152,10 @@ function tickMocks(root = document) {
   root.querySelectorAll("[data-cd]").forEach(el => {
     const left = Math.max(0, +el.dataset.cd - now);
     const set = (k, v) => { const x = el.querySelector(`[data-${k}]`); if (x) x.textContent = String(v).padStart(2, "0"); };
-    set("h", Math.floor(left / 3600000)); set("m", Math.floor(left % 3600000 / 60000)); set("s", Math.floor(left % 60000 / 1000));
+    const days = el.querySelector("[data-d]");  // «kun» katagi bo'lsa — soat 24 dan oshmaydi
+    if (days) days.textContent = String(Math.floor(left / 86400000));
+    set("h", days ? Math.floor(left % 86400000 / 3600000) : Math.floor(left / 3600000));
+    set("m", Math.floor(left % 3600000 / 60000)); set("s", Math.floor(left % 60000 / 1000));
   });
   root.querySelectorAll("[data-tl]").forEach(el => {
     const [a, b] = el.dataset.tl.split(":").map(Number);
@@ -2220,7 +2269,8 @@ function teacherMockHTML(t, d) {
   const s = d.schedule;
   if (!S.mockEdit || S.mockEdit.id !== t.id)
     S.mockEdit = { id: t.id, m: s ? { on: true, public: s.public, date: s.opens_at.slice(0, 10), opens: hm(s.opens_at), entry: hm(s.entry_until),
-      closes: hm(s.closes_at), priceAi: s.price_ai ? String(s.price_ai) : "", priceTeacher: s.price_teacher ? String(s.price_teacher) : "" } : mockDefaults() };
+      closes: hm(s.closes_at), paid: !!(s.price_ai || s.price_teacher), priceAi: s.price_ai ? String(s.price_ai) : "",
+      priceTeacher: s.price_teacher ? String(s.price_teacher) : "" } : mockDefaults() };
   const m = S.mockEdit.m;
   const files = d.files.map(f => `<div class="item" style="cursor:default"><span class="ico">${f.kind === "pdf" ? "📄" : "🖼"}</span>
       <span><b>${esc(f.name)}</b><small>${(f.size / 1048576).toFixed(1)} MB</small></span>
@@ -2482,7 +2532,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
       ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
-    ${tab === "design" && !offline && milliy ? teacherMockHTML(t, d) : ""}
+    ${tab === "design" && !offline && milliy && d.can_public ? teacherMockHTML(t, d) : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
   countUp($app); bindFlash(); bindTabStrip();
@@ -2491,7 +2541,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
     countUp(el);
   }
-  if (tab === "design" && !offline && milliy) bindTeacherMock(t, d);
+  if (tab === "design" && !offline && milliy && d.can_public) bindTeacherMock(t, d);
   document.querySelectorAll("[data-goto-mock]").forEach(x => x.onclick = () => { S.current.params = { id, tab: "design" }; S.useCache = true; haptic("select"); rerender(); });
   if (tab === "design") {
     preview(t.theme);
@@ -2906,10 +2956,12 @@ VIEWS.settings = async () => {
       <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
 
     ${packsCardHTML({ essay_packs: s.packs })}
+    ${s.can_public ? announceChannelsHTML(s.announce_channels || []) : ""}
     ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
   </div>`;
   bindPacksCard();
   bindStudentTariffs();
+  bindAnnounceChannels(s.announce_channels || []);
   const toSales = document.getElementById("st-sales");
   if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
   const digits = v => String(v || "").replace(/\D/g, "");

@@ -122,6 +122,14 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("t_"):  # ustozning taklif havolasi — o'quvchi ulanadi
         await join_teacher(message, args[1])
         return
+    if len(args) == 2 and args[1].startswith("m_") and args[1][2:].isdigit():  # kanal e'lonidan: «Bugungi mock»
+        test = await asyncio.to_thread(db.get_test_by_code, args[1][2:])
+        if test and test.get("opens_at"):
+            await message.answer(f"📢 <b>{esc(mock_name(test))}</b> · {esc(test['title'])}\n"
+                                 f"📅 {test['opens_at'][:10]} · {test['opens_at'][11:16]} ochiladi · {test['entry_until'][11:16]} gacha kirish · "
+                                 f"{test['closes_at'][11:16]} da yopiladi\n\nIlovada «Qatnashaman»ni bosing — ochilganda eslatamiz.",
+                                 reply_markup=app_markup("✨ Mockni ochish", c=test["code"]))
+            return
     if len(args) == 2 and args[1].startswith("p_"):  # ustozning ommaviy havolasi — begona esse tekshirtiradi
         await open_public(message, args[1])
         return
@@ -1545,15 +1553,116 @@ async def mock_tick(bot: Bot) -> None:
     for test in await asyncio.to_thread(db.mocks_to_remind, fmt(now + timedelta(minutes=30)), fmt(now)):
         opened = webapp._at(test["opens_at"]) <= now
         await asyncio.to_thread(db.set_mock_state, test["id"], "opened" if opened else "soon")  # avval — takror yuborilmasin
-        name = f"Mock №{test['mock_no']}" if test.get("mock_no") else esc(test["title"])
-        text = (f"🟢 <b>{name} ochildi!</b>\n{esc(test['title'])}\nKirish {test['entry_until'][11:16]} gacha, "
-                f"{test['closes_at'][11:16]} da hammaga birdan yopiladi — kech kirsangiz, vaqtingiz kamroq." if opened else
-                f"⏰ <b>{name} 30 daqiqadan keyin</b> ({test['opens_at'][11:16]})\n{esc(test['title'])}\nTayyorlaning!")
-        for signup in await asyncio.to_thread(db.mock_signups, test["id"]):
-            await send_with_retry(bot, signup["tg_id"], text, reply_markup=app_markup("✍️ Mockni ochish", c=test["code"]))
+        signups = await asyncio.to_thread(db.mock_signups, test["id"])
+        name = esc(mock_name(test))
+        text = (f"<b>{name} boshlandi!</b> 🟢\n\nKirish <b>{test['entry_until'][11:16]}</b> gacha ochiq, test "
+                f"<b>{test['closes_at'][11:16]}</b> da hammaga yopiladi.\n{len(signups)} kishi qatnashmoqchi. Omad!" if opened else
+                f"<b>{name} 30 daqiqadan keyin</b> ⏰\n\n<b>{test['opens_at'][11:16]}</b> da ochiladi · {esc(test['title'])}\n"
+                "Qalam, suv va tinch joy tayyorlang!")
+        for signup in signups:
+            await send_with_retry(bot, signup["tg_id"], text,
+                                  reply_markup=app_markup("Mockni boshlash" if opened else "✨ Mockni ochish", c=test["code"]))
             await asyncio.sleep(0.05)
+    for test in await asyncio.to_thread(db.mocks_to_warn_entry, fmt(now), fmt(now + timedelta(minutes=15))):
+        await asyncio.to_thread(db.set_mock_state, test["id"], "entry")
+        left = webapp._at(test["closes_at"]) - now
+        hours, minutes = int(left.total_seconds() // 3600), int(left.total_seconds() % 3600 // 60)
+        span = (f"{hours} soat " if hours else "") + f"{minutes} daqiqa"
+        for signup in await asyncio.to_thread(db.mock_signups, test["id"]):
+            started = await asyncio.to_thread(db.live_started, test["id"], signup["tg_id"])
+            if started or await asyncio.to_thread(db.find_attempt, test["id"], signup["tg_id"]):
+                continue  # kirgan yoki topshirgan
+            await send_with_retry(
+                bot, signup["tg_id"], f"<b>Kirishga 15 daqiqa qoldi</b> ⏳\n\n{esc(mock_name(test))} ga hali kirmadingiz: "
+                f"<b>{test['entry_until'][11:16]}</b> dan keyin kirib bo'lmaydi.\nHozir boshlasangiz, <b>{span}</b> vaqtingiz bor.",
+                reply_markup=app_markup("Hoziroq boshlash", c=test["code"]))
+            await asyncio.sleep(0.05)
+    await channel_tick(bot, now)
     for test in await asyncio.to_thread(db.mocks_to_finish, fmt(now - MOCK_FINISH_AFTER)):
         await finish_mock(bot, test, now)
+
+
+def mock_name(test: dict) -> str:
+    return f"Mock №{test['mock_no']}" if test.get("mock_no") else test["title"]
+
+
+UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
+UZ_DAYS = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]
+
+
+def day_label(at) -> str:
+    """«26-noyabr, payshanba»."""
+    return f"{at.day}-{UZ_MONTHS[at.month - 1]}, {UZ_DAYS[at.weekday()]}"
+
+
+# Kanal e'lonlari: har biri oldidan katta animatsiyali emoji (Telegram uni stiker kabi chiqaradi), keyin bezatilgan matn
+# va «Qatnashaman» tugmasi (botga — u yerdan ilova). Har e'lon bir marta (tests.channel_posts).
+async def channel_tick(bot: Bot, now) -> None:
+    fmt = lambda moment: moment.strftime(webapp.TIME_FMT)
+    for test in await asyncio.to_thread(db.channel_mocks, fmt(now - timedelta(days=2))):
+        if not plans.ai_unlimited(test["owner_id"]):
+            continue
+        channels = await asyncio.to_thread(webapp.announce_channels, test["owner_id"])
+        if not channels:
+            continue
+        posted = set(filter(None, (test.get("channel_posts") or "").split(",")))
+        post = await channel_post_due(test, now, posted)
+        if not post:
+            continue
+        key, emoji, text = post
+        posted.update(key.split(","))
+        await asyncio.to_thread(db.set_channel_posts, test["id"], ",".join(sorted(posted)))  # avval — takror ketmasin
+        username = await bot_username(bot)
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text="🏆 Natijalar" if key == "results" else "✍️ Qatnashaman",
+            url=f"https://t.me/{username}?start=m_{test['code']}")]]) if username else None
+        for channel in channels:
+            try:
+                await bot.send_message(channel["chat_id"], emoji)
+                await bot.send_message(channel["chat_id"], text, reply_markup=markup)
+            except Exception:
+                logger.warning("Kanalga e'lon yuborilmadi: %s", channel.get("chat_id"), exc_info=True)
+
+
+async def channel_post_due(test: dict, now, posted: set) -> tuple[str, str, str] | None:
+    """Hozir yuboriladigan e'lon (bittadan, tartib bilan): yangi → bugun → 1 soat qoldi → boshlandi → kirishga 15 daq → natijalar."""
+    opens, entry, closes = (webapp._at(test[k]) for k in ("opens_at", "entry_until", "closes_at"))
+    name, line = esc(mock_name(test)), "━━━━━━━━━━━━━━"
+    when = f"📅 <b>{day_label(opens)}</b>\n🕗 <b>{opens:%H:%M}</b> ochiladi · <b>{entry:%H:%M}</b> gacha kirish · <b>{closes:%H:%M}</b> da yopiladi"
+    signups = len(await asyncio.to_thread(db.mock_signups, test["id"]))
+    people = f"\n👥 {signups} kishi qatnashmoqchi" if signups else ""
+    if test.get("mock_state") == "done" and test.get("closed"):
+        if "results" in posted:
+            return None
+        data = await asyncio.to_thread(results.test_results, test)
+        top = sorted([r for r in data["rows"] if r["score"] is not None], key=lambda r: -r["score"])[:3]
+        medals = ["🥇", "🥈", "🥉"]
+        short = lambda n: " ".join([p for p in n.split()[:1]] + [p[0] + "." for p in n.split()[1:2]])  # «Ali V.»
+        rows = "\n".join(f"{medals[i]} {esc(short(r['name']))} — <b>{fmt_num(r['score'])}</b>" + (f" · {r['grade']}" if r["grade"] else "")
+                         for i, r in enumerate(top))
+        return "results", "🏆", (f"🏆 <b>{name} natijalari</b>\n{line}\n{rows or 'Natijalar tayyor'}\n{line}\n"
+                                 f"👥 Qatnashdi: <b>{len(data['rows'])}</b> · natija Rasch modelida\nSertifikatlar botda 🎓")
+    if now >= closes:
+        return None
+    if "new" not in posted and now < opens - timedelta(hours=1):
+        today = opens.date() == now.date()  # shu kuni e'lon qilindi — «bugun» e'loni ham shu (ikkinchisi ketmaydi)
+        head = f"📢 <b>Bugun {opens:%H:%M} da {name}!</b>" if today else "📢 <b>Yangi mock e'lon qilindi!</b>"
+        return "new,day" if today else "new", "📢", (
+            f"{head}\n{line}\n<b>{name}</b> · {esc(test['title'])}\n{when}{people}\n{line}\n"
+            "Natija Rasch modelida — haqiqiy imtihondagidek. «Qatnashaman»ni bosing, ochilganda eslatamiz 👇")
+    if "day" not in posted and opens.date() == now.date() and now.hour >= 9 and now < opens - timedelta(hours=1):
+        return "day", "📅", (f"📅 <b>Bugun {opens:%H:%M} da {name}!</b>\n{line}\n{esc(test['title'])}\n{when}{people}\n{line}\n"
+                            "Do'stlaringizni ham chaqiring — qancha ko'p qatnashsa, natija shuncha aniq 💪")
+    if "hour" not in posted and opens - timedelta(hours=1) <= now < opens:
+        return "hour", "⏰", (f"⏰ <b>{name} ochilishiga 1 soat qoldi!</b>\n{line}\n🕗 <b>{opens:%H:%M}</b> da boshlanadi · "
+                             f"<b>{entry:%H:%M}</b> gacha kirish{people}\nQalam, suv va tinch joy tayyorlang ✍️")
+    if "open" not in posted and opens <= now < entry - timedelta(minutes=15):
+        return "open", "🔥", (f"🟢 <b>{name} boshlandi!</b>\n{line}\nKirish <b>{entry:%H:%M}</b> gacha ochiq, test <b>{closes:%H:%M}</b> da "
+                             f"hammaga yopiladi.{people}\nOmad! 🍀")
+    if "entry" not in posted and entry - timedelta(minutes=15) <= now < entry:
+        return "entry", "⏳", (f"⏳ <b>Kirishga 15 daqiqa qoldi!</b>\n{line}\n{name}: <b>{entry:%H:%M}</b> dan keyin kirib bo'lmaydi.\n"
+                              "Hali boshlamagan bo'lsangiz — hoziroq kiring 👇")
+    return None
 
 
 async def finish_mock(bot: Bot, test: dict, now) -> None:

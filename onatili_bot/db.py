@@ -479,7 +479,8 @@ MIGRATIONS = [
     # Jadvalli mockda price — «🤖 AI tekshiradi» narxi, price_teacher — «👩‍🏫 Ustoz tekshiradi» narxi (0 — bepul)
     ("tests", "price_teacher", "INTEGER NOT NULL DEFAULT 0"),
     ("essay_payments", "choice", "TEXT"),
-    ("student_passes", "stage", "INTEGER NOT NULL DEFAULT 0"),  # eslatma: 0 — yo'q, 1 — «1 kun qoldi», 2 — «tugadi»  # mock oldidan o'quvchi tanlovi: ai | teacher (essesini kim tekshiradi)
+    ("student_passes", "stage", "INTEGER NOT NULL DEFAULT 0"),
+    ("tests", "channel_posts", "TEXT NOT NULL DEFAULT ''"),  # kanalga yuborilgan e'lonlar: new,day,hour,open,entry,results  # eslatma: 0 — yo'q, 1 — «1 kun qoldi», 2 — «tugadi»  # mock oldidan o'quvchi tanlovi: ai | teacher (essesini kim tekshiradi)
 ]
 
 
@@ -1374,6 +1375,26 @@ def mocks_to_finish(before: str) -> list[dict]:
         rows = conn.execute("SELECT id FROM tests WHERE closes_at IS NOT NULL AND closes_at <= ? AND mock_state <> 'done'",
                             (before,)).fetchall()
     return [get_test(row["id"]) for row in rows]
+
+
+def mocks_to_warn_entry(now_at: str, warn_at: str) -> list[dict]:
+    """Kirish yopilishiga 15 daqiqa qolgan ochiq mocklar (hali kirmaganlarga eslatma)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM tests WHERE opens_at IS NOT NULL AND closed = 0 AND mock_state = 'opened' "
+                            "AND entry_until <= ? AND entry_until > ?", (warn_at, now_at)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def channel_mocks(since: str) -> list[dict]:
+    """Kanal e'lonlari uchun: hammaga ko'rinadigan mocklar (yopilganiga 2 kun bo'lmagan)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM tests WHERE public_mock = 1 AND closes_at >= ?", (since,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_channel_posts(test_id: int, posts: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE tests SET channel_posts = ? WHERE id = ?", (posts, test_id))
 
 
 def set_mock_state(test_id: int, state: str) -> None:

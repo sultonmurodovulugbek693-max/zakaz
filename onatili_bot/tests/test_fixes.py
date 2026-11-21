@@ -1864,7 +1864,8 @@ class ScheduledMock(ServerBase):
         await bot.mock_tick(self.bot)
         reminders = [m for c, m in self.bot.messages if c == OTHER]
         self.assertEqual(len(reminders), 2)
-        self.assertIn("ochildi", reminders[1])
+        self.assertIn("boshlandi", reminders[1])
+        self.assertIn("1 kishi qatnashmoqchi", reminders[1])
 
         # Ochiq: avval tanlov (AI — 15 000, ustoz — 10 000), to'lanmaguncha savollar yo'q
         status, err = await self.get(f"/api/test/{test['code']}")
@@ -1992,6 +1993,48 @@ class ScheduledMock(ServerBase):
         offer = (await self.get("/api/bootstrap"))[1]["passes"][0]
         self.assertEqual((offer["until"], offer["expired"]), (None, "2026-12-20 19:00"))
         self.assertFalse(await webapp.pass_active(OWNER, OTHER))  # o'zi o'chdi — mocklar yana pullik
+
+
+    async def test_entry_warning_channel_posts_and_free_ids_only(self):
+        """Kirishga 15 daqiqa — hali kirmaganlarga; kanalga e'lonlar tartib bilan (bir martadan); jadval — faqat FREE_IDS."""
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00", "entry": "22:00",
+                                                                     "closes": "23:00", "public": True})
+        webapp.HOOKS["resolve_channel"] = lambda ref: asyncio.sleep(0, {"chat_id": -1009, "title": "Ona tili kanali", "url": "https://t.me/k"})
+        status, s = await self.post("/api/teacher/settings", {"announce_channels": ["@k"]})
+        self.assertEqual((status, [c["chat_id"] for c in s["announce_channels"]]), (200, [-1009]))
+        db.mock_signup(test["id"], OTHER, "Begona", True)
+        db.mock_signup(test["id"], STUDENT, "Kirgan", True)
+
+        async def bot_username(_bot):
+            return "test_bot"
+        saved_username, bot.bot_username = bot.bot_username, bot_username
+        try:
+            for hour, minute in ((9, 30), (19, 10), (20, 1), (20, 1), (21, 50), (21, 50)):
+                self.at(hour, minute)
+                if (hour, minute) == (21, 50):
+                    db.live_ping(test["id"], STUDENT, "Kirgan", 3, 45)  # bu o'quvchi allaqachon kirgan
+                await bot.mock_tick(self.bot)
+        finally:
+            bot.bot_username = saved_username
+        posts = [m for c, m in self.bot.messages if c == -1009 and len(m) > 4]
+        stickers = [m for c, m in self.bot.messages if c == -1009 and len(m) <= 4]
+        self.assertEqual(len(posts), 4, posts)  # 19:00 dan oldin «bugun», 19:10 «1 soat», 20:01 «boshlandi», 21:50 «15 daqiqa»
+        self.assertIn("Bugun 20:00 da", posts[0])
+        self.assertIn("1 soat qoldi", posts[1])
+        self.assertIn("boshlandi", posts[2])
+        self.assertIn("Kirishga 15 daqiqa", posts[3])
+        self.assertEqual(len(stickers), 4)  # har e'londan oldin katta emoji
+        warned = [c for c, m in self.bot.messages if "Kirishga 15 daqiqa qoldi" in m and c > 0]
+        self.assertEqual(warned, [OTHER])  # kirgan o'quvchiga yuborilmaydi
+        self.assertTrue(any("1 soat 10 daqiqa" in m for c, m in self.bot.messages if c == OTHER))
+
+        # FREE_IDS bo'lmagan ustoz jadval qo'ya olmaydi
+        plans.FREE_IDS = set()
+        status, _ = await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00",
+                                                                                 "entry": "22:00", "closes": "23:00"})
+        self.assertEqual(status, 403)
 
 
 class ScanResults(ServerBase):
