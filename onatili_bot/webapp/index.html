@@ -1454,6 +1454,7 @@ VIEWS.home = async () => {
         <span class="muted small">Bot bepul: testlaringizni hamma yechadi. 45-esse (yozish va tekshirish) faqat 💎 tarif bilan ochiladi —
         shunda o'quvchilaringiz essesi tekshiriladi, begonalar esse uchun to'laydi yoki kredit oladi.</span>
         ${b.sales ? `<button type="button" class="btn block" id="essay-plan">💎 Tarif olish</button>` : `<span class="muted small">Tarif hozircha sotilmayapti — admin bilan bog'laning.</span>`}</div>` : ""}
+      ${b.expert_waiting ? `<button type="button" class="item" data-go-expert style="border:1.5px solid var(--warn)"><span class="ico">🎓</span><span><b>Ekspert: ${b.expert_waiting} ta esse kutmoqda</b><small>O'quvchilar to'lagan — baholang</small></span><span class="muted">›</span></button>` : ""}
       ${b.can_public ? claudeCardHTML(b.claude, false) : ""}
       <button type="button" class="item results-go" data-go-results><span class="ico">${ico("bars")}</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span>
         <span class="rg-end" aria-hidden="true"><span class="rg-spark">${[30, 46, 38, 62, 52, 78, 100].map((h, k) => `<i style="--h:${h}%;--k:${k}"></i>`).join("")}</span>${ico("arrow")}</span></button>
@@ -1464,6 +1465,7 @@ VIEWS.home = async () => {
   if (role === "student") { bindMockCards(b.mocks || []); bindPassCards(); }
   document.querySelectorAll("[data-go-courses]").forEach(x => x.onclick = () => { haptic("light"); go("courses"); });
   document.querySelectorAll("[data-go-practice]").forEach(x => x.onclick = () => { haptic("light"); go("practice"); });
+  document.querySelectorAll("[data-go-expert]").forEach(x => x.onclick = () => { haptic("light"); go("expert"); });
   document.querySelectorAll("[data-go-ai]").forEach(x => x.onclick = () => { haptic("light"); go("ai"); });
   document.querySelectorAll("[data-go-results]").forEach(x => x.onclick = () => { haptic("light"); go("results"); });
   document.querySelectorAll("[data-copy-id]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.copyId).then(() => { toast("ID nusxalandi"); haptic("success"); }, () => toast(x.dataset.copyId)));
@@ -2150,6 +2152,25 @@ function studentTariffRowHTML(t) {  // «💎 O'quvchi tariflari» (kun) — obu
   return `<div class="row tf-row" style="gap:8px"><input class="input" data-tf-d inputmode="numeric" value="${t.days || ""}" placeholder="Kun" style="flex:1" aria-label="Muddat (kun)">
     <input class="input" data-tf-p inputmode="numeric" value="${t.price ? sum(t.price) : ""}" placeholder="Narxi (so'm)" style="flex:1.6" aria-label="Narxi"></div>`;
 }
+// «🎓 Ekspert tekshiruvi» (FREE_IDS): o'quvchi «✍️ Esse»da Claude o'rniga ekspertni tanlaydi — narxni ekspert qo'yadi
+function expertPriceHTML(s) {
+  const unit = (s.packs || []).find(p => p.essays === 1);
+  return `<div class="section-title"><h2>🎓 Ekspert tekshiruvi</h2><span class="muted small">${s.expert_price ? `${sum(s.expert_price)} so'm` : "o'chiq"}</span></div>
+    <div class="card"><span class="muted small">O'quvchi «✍️ Esse»da tanlaydi: <b>🤖 Claude</b> (narxi — 1 kredit, yuqoridagi kredit narxi) yoki <b>🎓 Ekspert</b> — essesini o'zingiz qo'lda baholaysiz. Narx kreditda yechiladi${unit ? ` (1 kredit = ${sum(unit.price)} so'm)` : ""}. 0 — o'chiq.</span>
+      ${s.expert_waiting ? `<button type="button" class="item" data-go-expert><span class="ico">🎓</span><span><b>${s.expert_waiting} ta esse baholashni kutmoqda</b><small>Ochish</small></span><span class="muted">›</span></button>` : ""}
+      <div class="row" style="gap:8px"><input class="input" id="ex-price" inputmode="numeric" value="${s.expert_price || ""}" placeholder="Masalan 30000" style="flex:1">
+        <button type="button" class="btn" id="ex-save">Saqlash</button></div></div>`;
+}
+function bindExpertPrice() {
+  const save = document.getElementById("ex-save"); if (!save) return;
+  save.onclick = async () => {
+    save.disabled = true;
+    try { await api("/api/teacher/settings", { expert_price: +(document.getElementById("ex-price").value.replace(/\D/g, "") || 0) }); haptic("success"); toast("✅ Ekspert narxi saqlandi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+  document.querySelectorAll("[data-go-expert]").forEach(x => x.onclick = () => { haptic("light"); go("expert"); });
+}
+
 function studentTariffsHTML(list) {
   const rows = [...list, ...TARIFF_DEFAULTS.filter(d => !list.some(t => t.days === d)).map(days => ({ days }))].sort((a, b) => a.days - b.days);
   return `<div class="section-title"><h2>💎 O'quvchi tariflari</h2><span class="muted small">${list.length ? `${list.length} ta tarif` : "sotilmayapti"}</span></div>
@@ -3164,9 +3185,11 @@ VIEWS.settings = async () => {
     ${s.can_public ? claudeCardHTML(s.claude, true) : ""}
     ${s.can_public ? announceChannelsHTML(s.announce_channels || []) : ""}
     ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
+    ${s.can_public ? expertPriceHTML(s) : ""}
   </div>`;
   bindPacksCard();
   bindStudentTariffs();
+  bindExpertPrice();
   bindAnnounceChannels(s.announce_channels || []);
   bindClaudeCard();
   const toSales = document.getElementById("st-sales");
@@ -3510,20 +3533,26 @@ VIEWS.practice = async () => {
   };
   codeEl.onkeydown = e => { if (e.key === "Enter") codeBtn.click(); };
   if (!t.length) return;
-  let teacher = t[0], packEssays = 1;
+  let teacher = t[0], packEssays = 1, mode = "ai";  // mode: «🤖 Claude» yoki «🎓 Ekspert» (FREE_IDS qo'lda)
   // Ustozning o'quvchisi — oylik chegara; begona — bepullar, kredit va paketlar (bitta chek — bir nechta esse)
   const left = () => {
     const box = document.getElementById("left");
     if (teacher.kind !== "public") { box.innerHTML = `<span class="muted small">Bu oy yana ${teacher.left} / ${teacher.limit} ta esse tekshirtira olasiz.</span>`; return; }
     const packs = teacher.packs || [];
     packEssays = packs.length ? packs[packs.length - 1].essays : 1;
-    box.innerHTML = `${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.${teacher.balance ? " Sotib olgan kreditlaringiz baribir ishlaydi." : ""}</span>` : ""}
+    if (!teacher.expert) mode = "ai";
+    box.innerHTML = `${teacher.expert ? `<div class="field"><label>Kim tekshirsin?</label><div class="chips">
+        <button type="button" class="chip ${mode === "ai" ? "on" : ""}" data-pmode="ai">🤖 Claude · 1 kredit</button>
+        <button type="button" class="chip ${mode === "expert" ? "on" : ""}" data-pmode="expert">🎓 Ekspert · ${teacher.expert} kredit</button></div>
+        <span class="muted small">${mode === "expert" ? `Ekspert (${esc(teacher.name)}) essengizni o'zi o'qib baholaydi${teacher.expert_price ? ` — ${sum(teacher.expert_price)} so'm` : ""}. Natija botga va «📊 Natijalar»ga keladi.` : "Claude imtihondagidek 75 ballik shkalada darhol tekshiradi."}</span></div>` : ""}
+      ${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.${teacher.balance ? " Sotib olgan kreditlaringiz baribir ishlaydi." : ""}</span>` : ""}
       <div class="row" style="gap:8px;flex-wrap:wrap">${teacher.free_left ? `<span class="pill-tag done">🎁 Bepul: ${teacher.free_left} / ${teacher.free}</span>` : ""}
         <span class="pill-tag ${teacher.balance ? "done" : "wait"}">💳 Kredit: ${teacher.balance} ta</span>
         ${teacher.waiting ? `<span class="pill-tag wait">⏳ ${teacher.waiting} ta esse kredit kutmoqda</span>` : ""}</div>
       ${teacher.free_left ? "" : `<span class="muted small">Har esse — 1 kredit. Kredit bo'lmasa ham yuboring: esse saqlanadi va kredit olishingiz bilan o'zi tekshiriladi.</span>`}
       ${packs.length && teacher.open ? `<div class="chips" id="ppacks">${packs.map((x, i) => `<button type="button" class="chip ${i === packs.length - 1 ? "on" : ""}" data-ppack="${x.essays}">${x.essays} ta · ${sum(x.price)}${x.discount ? ` <b>−${x.discount}%</b>` : ""}</button>`).join("")}</div>
         <button type="button" class="btn ${teacher.free_left ? "ghost" : ""} block" id="pbuy">💳 Kredit sotib olish</button>` : ""}`;
+    box.querySelectorAll("[data-pmode]").forEach(x => x.onclick = () => { mode = x.dataset.pmode; haptic("select"); left(); });
     box.querySelectorAll("[data-ppack]").forEach(x => x.onclick = () => { packEssays = +x.dataset.ppack; haptic("select");
       box.querySelectorAll("[data-ppack]").forEach(y => y.classList.toggle("on", y === x)); });
     const buy = document.getElementById("pbuy");
@@ -3550,11 +3579,20 @@ VIEWS.practice = async () => {
     const pub = teacher.kind === "public";
     if (!pub && !teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
     if (pub && !teacher.open && !teacher.balance) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
+    const expert = pub && mode === "expert";
+    if (expert && (teacher.balance || 0) < teacher.expert) {
+      toast(`Ekspert tekshiruvi — ${teacher.expert} kredit, sizda ${teacher.balance || 0} ta. Avval kredit oling`); haptic("error"); return;
+    }
     btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
-      const res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim() });
+      const res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim(), mode: expert ? "expert" : "ai" });
       store(draftKey, "{}"); haptic("success"); essay.value = ""; topic.value = ""; count();
       btn.textContent = "Yana bitta esse"; btn.disabled = false;
+      if (res.status === "expert") {
+        teacher.balance = res.balance; left();
+        document.getElementById("my-essay").innerHTML = `<div class="card essay-wait"><b>🎓 Essengiz ekspertga yuborildi</b><span class="muted small">${res.credits} kredit yechildi, qoldi ${res.balance} ta. Ekspert baholagach natija botga va «📊 Natijalar» → «✍️ Esselarim»ga keladi.</span></div>`;
+        return;
+      }
       if (!pub) { teacher.left = Math.max(0, teacher.left - 1); left(); return watchPractice(res.id); }
       if (res.free) teacher.free_left = Math.max(0, teacher.free_left - 1);
       if (res.balance != null) teacher.balance = res.balance;
@@ -3582,6 +3620,54 @@ async function watchPractice(id, note = "Ustozingiz kreditidan tekshirildi.") {
     box.innerHTML = `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">Odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi — bot xabar beradi.</span></div>`;
     await new Promise(r => setTimeout(r, 4000));
   }
+}
+
+// ---------- «🎓 Ekspert» (FREE_IDS): o'quvchi to'lagan esselarni qo'lda baholash — 12 mezon × 0–2 ----------
+VIEWS.expert = async () => {
+  loading();
+  let r; try { r = await api("/api/expert/queue"); } catch (e) { return fail(e); }
+  const list = r.essays;
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>I</i>Ekspert</span><h1>🎓 Ekspert tekshiruvi</h1>
+      <span class="muted small">${list.length ? `${list.length} ta esse kutmoqda — o'quvchilar to'lagan, natijani bot ularga yuboradi` : "Hozircha kutayotgan esse yo'q."}</span></div>
+    <div class="list">${list.map(e => `<button type="button" class="item" data-ex="${e.id}"><span class="ico">📝</span>
+      <span><b>${esc((e.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${esc(e.name)} · ${dmy(e.created_at)} · ${e.words} so'z</small></span><span class="muted">›</span></button>`).join("")}</div>
+    <div id="ex-form"></div>
+  </div>`;
+  document.querySelectorAll("[data-ex]").forEach(x => x.onclick = () => { haptic("light"); expertForm(list.find(e => e.id === +x.dataset.ex), r.rubric); });
+};
+
+function expertForm(e, rubric) {
+  const box = document.getElementById("ex-form"); if (!box || !e) return;
+  const scores = {};
+  const to75 = p => p ? 27 + 2 * p : 0;  // structure.essay_to_75: 0 → 0, aks holda 27 + 2 × ball
+  box.innerHTML = `<div class="card">
+      <b>${esc(e.topic || "Mavzusiz esse")}</b><span class="muted small">${esc(e.name)} · ${e.words} so'z</span>
+      <div class="topic" style="white-space:pre-wrap">${esc(e.text)}</div></div>
+    <div class="section-title"><h2>Baholash</h2><b id="ex-total">0 / 24 · 0 / 75</b></div>
+    <div class="card" style="display:grid;gap:14px">${rubric.map(c => `<div style="display:grid;gap:6px">
+        <b class="small">${esc(c.title)}</b><span class="muted small">${esc(c.levels)}</span>
+        <div class="chips">${[0, 1, 2].map(n => `<button type="button" class="chip" data-sc="${c.key}" data-n="${n}">${n}</button>`).join("")}</div>
+        <input class="input" id="ex-note-${c.key}" placeholder="Izoh (ixtiyoriy)" autocomplete="off"></div>`).join("")}
+      <div class="field"><label for="ex-comment">Umumiy xulosa</label><textarea class="input" id="ex-comment" rows="4" placeholder="Kuchli va zaif tomonlari, nimani yaxshilash kerak"></textarea></div>
+      <button type="button" class="btn block" id="ex-send">Bahoni yuborish</button></div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+  const total = () => { const p = Object.values(scores).reduce((a, b) => a + b, 0); document.getElementById("ex-total").textContent = `${p} / 24 · ${to75(p)} / 75`; };
+  box.querySelectorAll("[data-sc]").forEach(x => x.onclick = () => {
+    scores[x.dataset.sc] = +x.dataset.n; haptic("select");
+    box.querySelectorAll(`[data-sc="${x.dataset.sc}"]`).forEach(y => y.classList.toggle("on", y === x)); total();
+  });
+  const send = document.getElementById("ex-send");
+  send.onclick = async () => {
+    const missing = rubric.filter(c => scores[c.key] == null);
+    if (missing.length) { toast(`Hamma mezonga ball qo'ying — qoldi: ${missing.length} ta`); haptic("error"); return; }
+    const notes = {}; rubric.forEach(c => { notes[c.key] = document.getElementById(`ex-note-${c.key}`).value.trim(); });
+    send.disabled = true; send.textContent = "Yuborilmoqda…";
+    try {
+      const res = await api(`/api/expert/practice/${e.id}`, { scores, notes, comment: document.getElementById("ex-comment").value.trim() });
+      haptic("success"); toast(`✅ Baholandi: ${res.score_75} / 75 — o'quvchiga yuborildi`); VIEWS.expert();
+    } catch (err) { toast(err.message); haptic("error"); send.disabled = false; send.textContent = "Bahoni yuborish"; }
+  };
 }
 
 // Chek: rasm — ko'rsatiladi; PDF (bank ilovasi cheki) — ilova ichida ochilmaydi, bot xabarida turadi

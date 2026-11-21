@@ -2088,8 +2088,10 @@ def ai_settings_panel() -> tuple[str, InlineKeyboardMarkup]:
         warn = "" if essay_ai.CHOICES[chosen][0] and keys[essay_ai.CHOICES[chosen][0]] else " ⚠️ kalit yo'q"
         lines.append(f"{title}: <b>{essay_ai.CHOICE_NAMES[chosen]}</b>{warn} → ishlayapti: {esc(working)}")
         rows.append([(("✅ " if key == chosen else "🔒 " if not keys[essay_ai.CHOICES[key][0]] else "")
-                      + f"{title.split()[0]} {name}", f"aiset:{task}:{key}") for key, name in essay_ai.CHOICE_NAMES.items()])
-    lines += ["", "Tugma: birinchi belgi — ish (📝 esse, ✍️ bepul yozma, 💎 pullik yozma, 🧾 chek)."]
+                      + f"{title.split()[0]} {name}", f"aiset:{task}:{key}") for key, name in essay_ai.CHOICE_NAMES.items()
+                     if key in essay_ai.allowed_choices(task)])  # esse — faqat Claude
+    lines += ["", "Tugma: birinchi belgi — ish (📝 esse, ✍️ bepul yozma, 💎 pullik yozma, 🧾 chek).",
+              "📝 Esseni faqat Claude baholaydi — Claude kaliti yo'q bo'lsa esse ustozga (qo'lda) ketadi."]
     rows.append([("📊 AI hisoboti", "aiusage"), ("↩️ Admin paneli", "admin")])
     return "\n".join(lines), inline(rows)
 
@@ -2110,7 +2112,7 @@ async def ai_settings_button(callback: CallbackQuery) -> None:
         await callback.answer("Faqat admin uchun", show_alert=True)
         return
     parts = callback.data.split(":")
-    if len(parts) == 3 and parts[1] in essay_ai.TASKS and parts[2] in essay_ai.CHOICES:
+    if len(parts) == 3 and parts[1] in essay_ai.TASKS and parts[2] in essay_ai.allowed_choices(parts[1]):
         provider = essay_ai.CHOICES[parts[2]][0]
         if not essay_ai._ready(provider):
             await callback.answer("Bu AI'ning kaliti yo'q — Render'da " + ("GEMINI_API_KEY" if provider == "gemini"

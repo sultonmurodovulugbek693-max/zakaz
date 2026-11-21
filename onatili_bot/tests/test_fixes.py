@@ -1773,11 +1773,15 @@ class AiRoutes(ServerBase):
 
     async def test_buttons_choose_ai_per_task(self):
         essay_ai.ANTHROPIC_API_KEY = ""
-        self.assertEqual(essay_ai.route("essay"), ("gemini", None))
+        self.assertEqual(essay_ai.route("essay"), (None, None))  # esseni faqat Claude — kalit yo'q: AI esse o'chiq
+        self.assertFalse(essay_ai.essay_enabled())
         replies, _ = await self.press("aiset:essay:sonnet")  # Claude kaliti yo'q — tanlanmaydi
         self.assertIn("ANTHROPIC_API_KEY", replies[0])
-        self.assertEqual(essay_ai.choice_of("essay"), "gemini")
         essay_ai.ANTHROPIC_API_KEY = "test-key"
+        replies, _ = await self.press("aiset:essay:gemini")  # esse uchun Gemini tanlovi yo'q
+        self.assertEqual(essay_ai.choice_of("essay"), "sonnet")
+        await self.press("aiset:essay:haiku")
+        self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.PAID_MODEL))
         await self.press("aiset:essay:sonnet")
         await self.press("aiset:receipt:haiku")
         await self.press("aiset:paid:sonnet")
@@ -1785,11 +1789,16 @@ class AiRoutes(ServerBase):
         self.assertEqual(essay_ai.route("receipt"), ("claude", essay_ai.PAID_MODEL))
         self.assertEqual(essay_ai._paid(True)["model"], essay_ai.CLAUDE_MODEL)
         self.assertEqual(essay_ai.route("written"), ("gemini", None))  # tegilmagan — standart
-        essay_ai.ANTHROPIC_API_KEY = ""  # kalit olib tashlandi — bor AI'ga o'tadi
-        self.assertEqual(essay_ai.route("essay"), ("gemini", None))
-        text, _ = bot.ai_settings_panel()
+        db.set_setting("ai:essay", "gemini")  # eski saqlangan tanlov — e'tiborga olinmaydi
+        essay_ai.forget_choices()
+        self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.CLAUDE_MODEL))
+        essay_ai.ANTHROPIC_API_KEY = ""  # kalit olib tashlandi — esse Gemini'ga o'tmaydi
+        self.assertEqual(essay_ai.route("essay"), (None, None))
+        self.assertEqual(essay_ai.route("receipt"), ("gemini", None))  # chek — bor AI'ga o'tadi
+        text, markup = bot.ai_settings_panel()
         self.assertIn("kalit yo'q", text)
-        replies, _ = await self.press("aiset:essay:gemini", admin=123)  # admin emas
+        self.assertNotIn("aiset:essay:gemini", str(markup))
+        replies, _ = await self.press("aiset:essay:sonnet", admin=123)  # admin emas
         self.assertIn("admin", replies[0].lower())
 
 
@@ -1947,6 +1956,51 @@ class PracticePublic(ServerBase):
         self.assertEqual((status, db.get_practice(res["id"])["kind"]), (200, "student"), res)
         self.user = {"id": OWNER, "name": "Ustoz", "username": None}
         self.assertEqual((await self.post("/api/practice/code", {"code": code}))[0], 400)  # o'z kodi
+
+    async def test_expert_check(self):
+        """«🎓 Ekspert»: narxni FREE_IDS qo'yadi (kreditda), o'quvchi tanlaydi, AI olmaydi, ekspert qo'lda baholaydi."""
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:
+            self.user = {"id": OWNER, "name": "Ekspert", "username": None}
+            self.assertEqual((await self.post("/api/teacher/settings", {"expert_price": 500}))[0], 400)
+            self.assertEqual((await self.post("/api/teacher/settings", {"expert_price": 30000}))[0], 200)
+            self.assertEqual(webapp.expert_credits(OWNER), 6)  # 30 000 ÷ 5 000 (1 kredit)
+
+            self.user = {"id": OTHER, "name": "Begona", "username": None}
+            t = (await self.get("/api/practice"))[1]["teachers"][0]
+            self.assertEqual((t["expert"], t["expert_price"]), (6, 30000))
+            expert = {"teacher_id": OWNER, "topic": "Kitob", "essay": self.ESSAY, "mode": "expert"}
+            status, res = await self.post("/api/practice", expert)
+            self.assertEqual(status, 402, res)  # kredit yo'q
+            db.wallet_add(OWNER, OTHER, 7)
+            status, res = await self.post("/api/practice", expert)
+            self.assertEqual((status, res["status"], res["credits"], res["balance"]), (200, "expert", 6, 1), res)
+            self.assertEqual(db.pending_practice(), [])  # AI navbatiga tushmaydi
+            self.assertTrue(any(c == OWNER and "Ekspert" in m for c, m in self.bot.messages))
+
+            self.assertEqual((await self.get("/api/expert/queue"))[0], 403)  # o'quvchi — ekspert emas
+            self.user = {"id": OWNER, "name": "Ekspert", "username": None}
+            queue = (await self.get("/api/expert/queue"))[1]
+            self.assertEqual([e["id"] for e in queue["essays"]], [res["id"]])
+            self.assertEqual(len(queue["rubric"]), 12)
+            scores = {k: 2 for k in essay_ai.RUBRIC_KEYS}
+            scores.pop("imlo")
+            self.assertEqual((await self.post(f"/api/expert/practice/{res['id']}", {"scores": scores}))[0], 400)
+            scores["imlo"] = 1
+            status, graded = await self.post(f"/api/expert/practice/{res['id']}",
+                                             {"scores": scores, "notes": {"imlo": "3 ta xato"}, "comment": "Yaxshi"})
+            self.assertEqual((status, graded["score_75"], graded["left"]), (200, 73, 0), graded)
+            self.assertEqual((await self.post(f"/api/expert/practice/{res['id']}", {"scores": scores}))[0], 409)
+            self.assertTrue(any(c == OTHER and "73" in m for c, m in self.bot.messages))
+
+            self.user = {"id": OTHER, "name": "Begona", "username": None}
+            essays = (await self.get("/api/bootstrap"))[1]["essays"]
+            self.assertEqual((essays[0]["status"], essays[0]["score_75"]), ("graded", 73))
+            item = (await self.get(f"/api/practice/{res['id']}"))[1]
+            self.assertEqual((item["comment"], item["criteria"][10]["comment"]), ("Yaxshi", "3 ta xato"))
+        finally:
+            plans.FREE_IDS = saved
 
     async def test_linked_student_no_plan_reason(self):
         """Ustozning o'quvchisi, lekin ustozda tarif yo'q — «kredit tugagan» emas, aniq sabab aytiladi."""

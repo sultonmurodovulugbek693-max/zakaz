@@ -225,6 +225,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
         "free_ai": unlimited and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
         "can_public": unlimited,  # «Bugungi mock»ni hamma o'quvchiga ko'rsatish — faqat FREE_IDS / admin
+        "expert_waiting": len(await run(db.expert_queue, uid)) if unlimited else 0,  # «🎓 Ekspert»: baholanmagan esselar
         "claude": await run(claude_capacity) if unlimited else None,  # Claude yana nechta esse tekshira oladi
         "default_channel": DEFAULT_MOCK_CHANNEL if unlimited else None,  # yangi mockda majburiy obuna — oldindan
         "joins_pending": sum(1 for r in joins if r["status"] == "pending"),
@@ -1489,6 +1490,8 @@ async def settings_view(user: dict) -> dict:
     return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": public_free(user["id"]),
             "earnings": await earnings_view(user["id"]),
             "can_public": plans.ai_unlimited(user["id"]), "student_tariffs": await run(student_tariffs, user["id"]),
+            "expert_price": await run(expert_price, user["id"]),  # «🎓 Ekspert tekshiruvi» (FREE_IDS)
+            "expert_waiting": len(await run(db.expert_queue, user["id"])) if plans.ai_unlimited(user["id"]) else 0,
             "announce_channels": await run(announce_channels, user["id"]),
             "claude": await run(claude_capacity) if plans.ai_unlimited(user["id"]) else None,
             "public_url": f"https://t.me/{username}?start={public_code(user['id'])}" if username else None}
@@ -1585,6 +1588,13 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
             raise ApiError(403, "E'lon kanali — faqat ruxsat berilgan ustozlar uchun")
         channels = await resolve_channels(payload.get("announce_channels") or [])  # bot kanalda admin ekanini tekshiradi
         await run(db.set_setting, f"announce_channels:{user['id']}", json.dumps(public_channels(channels), ensure_ascii=False))
+    if "expert_price" in payload:  # «🎓 Ekspert tekshiruvi» narxi (so'm, 1 esse) — faqat FREE_IDS / admin; 0 — o'chiq
+        if not plans.ai_unlimited(user["id"]):
+            raise ApiError(403, "Ekspert tekshiruvi — faqat ekspertlar (FREE_IDS) uchun")
+        price = to_int(payload.get("expert_price"), 0, "Ekspert narxi")
+        if price and not 1000 <= price <= 1_000_000:
+            raise ApiError(400, "Ekspert narxi: 0 (o'chiq) yoki 1 000 – 1 000 000 so'm")
+        await run(db.set_setting, f"expert_price:{user['id']}", str(price))
     if "student_tariffs" in payload:  # «💎 O'quvchi tariflari» — faqat FREE_IDS / admin
         if not plans.ai_unlimited(user["id"]):
             raise ApiError(403, "O'quvchi tariflari — faqat ruxsat berilgan ustozlar uchun")
@@ -1617,6 +1627,22 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
 
 
 # ---------- «💎 Tarif» (begona o'quvchi): FREE_IDS ustoz narxini qo'yadi, pul uning kartasiga; muddatida hamma mock bepul ----------
+
+def expert_price(teacher_id: int) -> int:
+    """Ekspert (FREE_IDS) qo'lda tekshirishi narxi, so'm (0 — o'chiq). Faqat FREE_IDS / admin."""
+    if not plans.ai_unlimited(teacher_id):
+        return 0
+    try:
+        return max(0, int(db.get_settings().get(f"expert_price:{teacher_id}") or 0))
+    except ValueError:
+        return 0
+
+
+def expert_credits(teacher_id: int) -> int:
+    """Ekspert tekshiruvi necha kredit: narx ÷ 1 kredit narxi (yuqoriga). 0 — o'chiq yoki kredit narxi yo'q."""
+    price, unit = expert_price(teacher_id), credit_unit_price(teacher_id)
+    return math.ceil(price / unit) if price and unit else 0
+
 
 def credit_unit_price(teacher_id: int) -> int:
     """1 kredit narxi (so'm): 1 kreditlik narx, bo'lmasa paketlardagi eng arzon bitta kredit."""
@@ -2640,6 +2666,7 @@ async def practice_home(request: web.Request) -> web.Response:
         free_left = max(0, quota - await run(db.public_free_used, tid, user["id"])) if is_open else 0
         card = await run(teacher_card, tid)
         teachers.append({"id": tid, "name": w["full_name"] or "Ustoz", "kind": "public", "open": is_open,
+                         "expert": await run(expert_credits, tid), "expert_price": await run(expert_price, tid),
                          "free_left": free_left, "free": quota, "balance": w["balance"],
                          "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])),
                          "packs": await run(essay_packs, tid) if card["number"] else []})
@@ -2654,11 +2681,79 @@ async def practice_home(request: web.Request) -> web.Response:
             continue
         who = await run(db.find_user, str(tid)) or {}
         teachers.append({"id": tid, "name": who.get("full_name") or "Idrok", "kind": "public", "open": True, "platform": True,
+                         "expert": await run(expert_credits, tid), "expert_price": await run(expert_price, tid),
                          "free_left": max(0, public_free(tid) - await run(db.public_free_used, tid, user["id"])),
                          "free": public_free(tid), "balance": await run(db.wallet_balance, tid, user["id"]),
                          "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])), "packs": packs})
     history = [_practice_view(p) for p in await run(db.practice_of_student, user["id"], 20)]
     return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
+
+
+async def practice_expert_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
+    """O'quvchi esseni ekspertga (FREE_IDS) yuboradi: narx (ekspert qo'ygan) kreditda yechiladi, esse ekspert
+    navbatiga tushadi va unga bot xabar beradi. Kredit yetmasa — avval kredit oladi."""
+    need = await run(expert_credits, teacher_id)
+    if not need:
+        raise ApiError(409, "Bu ekspert hozir qo'lda tekshiruv qabul qilmayapti")
+    balance = await run(db.wallet_balance, teacher_id, user["id"])
+    if balance < need:
+        raise ApiError(402, f"Ekspert tekshiruvi — {need} kredit, sizda {balance} ta. Avval kredit oling", need=need)
+    if not await run(db.wallet_use_n, teacher_id, user["id"], need):
+        raise ApiError(409, "Kredit yechilmadi — qayta urinib ko'ring")
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "expert", None, "expert",
+                            await run(expert_price, teacher_id))
+    if "send_text" in HOOKS:
+        try:
+            who = html.escape(user.get("name") or "o'quvchi")
+            await HOOKS["send_text"](teacher_id, f"🎓 <b>Ekspert tekshiruvi</b> · yangi esse ({len(text.split())} so'z) — "
+                                     f"{who}\nIlovada «🎓 Ekspert» bo'limida baholang.")
+        except Exception:
+            logger.warning("Ekspertga xabar yuborilmadi", exc_info=True)
+    return {"ok": True, "id": practice_id, "status": "expert", "credits": need,
+            "balance": await run(db.wallet_balance, teacher_id, user["id"])}
+
+
+async def expert_queue_view(request: web.Request) -> web.Response:
+    """Ekspert (FREE_IDS): qo'lda tekshirish uchun kutayotgan esselar."""
+    user = await auth(request)
+    if not plans.ai_unlimited(user["id"]):
+        raise ApiError(403, "Bu bo'lim ekspertlar (FREE_IDS) uchun")
+    rows = await run(db.expert_queue, user["id"])
+    return ok({"essays": [{"id": p["id"], "name": p.get("full_name") or "O'quvchi", "topic": p["topic"], "text": p["text"],
+                           "words": len(p["text"].split()), "created_at": p["created_at"], "price": p.get("price") or 0}
+                          for p in rows],
+               "rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in essay_ai.RUBRIC]})
+
+
+async def expert_grade(request: web.Request) -> web.Response:
+    """Ekspert baholadi: 12 mezon × 0–2 (jami 24 → 75 ballik) va izoh. O'quvchiga bot xabar beradi."""
+    user = await auth(request)
+    if not plans.ai_unlimited(user["id"]):
+        raise ApiError(403, "Bu bo'lim ekspertlar (FREE_IDS) uchun")
+    payload = await body(request)
+    raw = payload.get("scores") if isinstance(payload.get("scores"), dict) else {}
+    notes = payload.get("notes") if isinstance(payload.get("notes"), dict) else {}
+    criteria = []
+    for key in essay_ai.RUBRIC_KEYS:
+        score = raw.get(key)
+        if score not in (0, 1, 2):
+            raise ApiError(400, f"«{essay_ai.RUBRIC_TITLES[key]}» uchun 0, 1 yoki 2 ball qo'ying")
+        criteria.append({"key": key, "score": score, "comment": clean_text(notes.get(key), 300)})
+    result = {"score": sum(c["score"] for c in criteria), "criteria": criteria, "outline": False,
+              "comment": clean_text(payload.get("comment"), 600), "transcription": "", "by": "expert",
+              "expert": user.get("name") or "Ekspert"}
+    practice_id = int(request.match_info["practice_id"])
+    item = await run(db.get_practice, practice_id)
+    if not item or not await run(db.save_expert_result, practice_id, user["id"], result):
+        raise ApiError(409, "Bu esse topilmadi yoki allaqachon baholangan")
+    if "send_text" in HOOKS:
+        try:
+            await HOOKS["send_text"](item["student_id"], f"🎓 <b>Ekspert essengizni baholadi</b>: <b>{essay_to_75(result['score'])}</b> / 75\n"
+                                     "To'liq tahlil — ilovada «📊 Natijalar» → «✍️ Esselarim».")
+        except Exception:
+            logger.warning("O'quvchiga ekspert natijasi yuborilmadi", exc_info=True)
+    return ok({"ok": True, "score_75": essay_to_75(result["score"]), "left": len(await run(db.expert_queue, user["id"]))})
 
 
 async def practice_code(request: web.Request) -> web.Response:
@@ -2725,6 +2820,8 @@ async def practice_submit(request: web.Request) -> web.Response:
         raise ApiError(400, f"Esse juda qisqa — kamida {PRACTICE_MIN_WORDS} so'z yozing")
     if len(text) > PRACTICE_MAX_CHARS:
         raise ApiError(400, "Esse juda uzun")
+    if payload.get("mode") == "expert":  # «🎓 Ekspert»: FREE_IDS qo'lda tekshiradi — narxi kreditda, oldindan
+        return ok(await practice_expert_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
     if not linked:  # begona — ommaviy havola qoidalari (bepul / kredit)
         return ok(await practice_public_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
     if not await run(plans.essay_open, teacher_id):  # aniq sabab: ustozda tarif yo'q (kredit tugagan emas)
@@ -4540,6 +4637,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/practice/{practice_id:\\d+}", practice_get)
     app.router.add_post("/api/practice/wallet-order", practice_wallet_order)
     app.router.add_post("/api/practice/code", practice_code)
+    app.router.add_get("/api/expert/queue", expert_queue_view)
+    app.router.add_post(r"/api/expert/practice/{practice_id:\d+}", expert_grade)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)

@@ -1186,6 +1186,29 @@ def pending_practice(limit: int = 5) -> list[dict]:
     return [_practice(row) for row in rows]
 
 
+def expert_queue(teacher_id: int) -> list[dict]:
+    """Ekspertga (FREE_IDS) qo'lda tekshirish uchun yuborilgan esselar — eskisi birinchi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.*, u.full_name FROM practice_essays p LEFT JOIN users u ON u.tg_id = p.student_id "
+            "WHERE p.teacher_id = ? AND p.status = 'expert' ORDER BY p.id", (teacher_id,)).fetchall()
+    out = []
+    for row in rows:
+        item = _practice(row)
+        item["full_name"] = row["full_name"]
+        out.append(item)
+    return out
+
+
+def save_expert_result(practice_id: int, teacher_id: int, result: dict) -> bool:
+    """Ekspert baholadi: faqat shu ekspertning kutilayotgan essesi, bir marta."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "UPDATE practice_essays SET status = 'graded', ai_score = ?, ai_result = ?, graded_at = ?, error = NULL "
+            "WHERE id = ? AND teacher_id = ? AND status = 'expert'",
+            (result["score"], json.dumps(result, ensure_ascii=False), _now(), practice_id, teacher_id)).rowcount)
+
+
 def save_practice_result(practice_id: int, result: dict) -> None:
     with connect() as conn:
         conn.execute("UPDATE practice_essays SET status = 'graded', ai_score = ?, ai_result = ?, cost = cost + ?, "

@@ -191,7 +191,7 @@ def _ready(provider: str) -> bool:
 CHOICES = {"gemini": ("gemini", None), "sonnet": ("claude", None), "haiku": ("claude", None)}  # model — pastda
 CHOICE_NAMES = {"gemini": "Gemini", "sonnet": "Claude Sonnet", "haiku": "Claude Haiku"}
 TASKS = {  # ish: (nomi, standart tanlov)
-    "essay": ("📝 Esse baholash", None),
+    "essay": ("📝 Esse baholash", "sonnet"),  # faqat Claude (ekspert darajasi) — Gemini esse baholamaydi
     "written": ("✍️ Titul yozma javoblari — bepul variant", None),
     "paid": ("💎 Titul yozma javoblari — pullik variant", "haiku"),
     "receipt": ("🧾 Chek tekshirish", None),
@@ -226,14 +226,26 @@ def forget_choices() -> None:
     _ROUTE_CACHE["at"] = 0.0
 
 
+CLAUDE_ONLY = {"essay"}  # esseni faqat Claude baholaydi: kaliti yo'q / ishlamasa — Gemini'ga o'tmaydi, esse qo'lda
+
+
+def allowed_choices(task: str) -> list[str]:
+    """Shu ish uchun tanlash mumkin bo'lgan AI'lar (esse — faqat Claude Sonnet / Haiku)."""
+    return [c for c in CHOICES if task not in CLAUDE_ONLY or CHOICES[c][0] == "claude"]
+
+
 def choice_of(task: str) -> str:
     saved = _saved_choices().get(task)
-    return saved if saved in CHOICES else _default_choice(task)
+    return saved if saved in allowed_choices(task) else _default_choice(task)
 
 
 def route(task: str) -> tuple[str | None, str | None]:
-    """Ish → (provider, model). Tanlangan AI kaliti yo'q bo'lsa — bor kalitdagisi; hech biri yo'q — (None, None)."""
-    for choice in (choice_of(task), "gemini", "haiku" if task in ("paid", "written", "receipt") else "sonnet"):
+    """Ish → (provider, model). Tanlangan AI kaliti yo'q bo'lsa — bor kalitdagisi; hech biri yo'q — (None, None).
+    Esse (CLAUDE_ONLY) — faqat Claude: Claude kaliti yo'q bo'lsa AI esse o'chiq (Gemini'ga o'tmaydi)."""
+    fallback = "haiku" if task in ("paid", "written", "receipt") else "sonnet"
+    for choice in (choice_of(task), "gemini", fallback):
+        if choice not in allowed_choices(task):
+            continue
         provider = CHOICES[choice][0]
         if _ready(provider):
             return provider, _model_of(choice)

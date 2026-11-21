@@ -57,6 +57,9 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         plans.FREE_IDS.add(OWNER)
         self.user = {"id": OWNER}
         self.bot = FakeBot()
+        # Esseni faqat Claude baholaydi — test uchun soxta kalit (tarmoqqa chiqilmaydi)
+        self._claude_key = essay_ai.ANTHROPIC_API_KEY
+        essay_ai.ANTHROPIC_API_KEY = "test-key"
 
         async def fake_auth(_request):
             return {"id": self.user["id"], "name": "Ustoz"}
@@ -75,6 +78,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         webapp.auth = self._auth
+        essay_ai.ANTHROPIC_API_KEY = self._claude_key
         plans.FREE_IDS.clear()
         plans.FREE_IDS.update(self.saved_free)
         await self.client.close()
