@@ -511,6 +511,29 @@ class SalesClosed(ServerBase):
         plans.SALES_ENABLED, webapp.SALES_ENABLED = self._sales
         await super().asyncTearDown()
 
+    async def test_pdf_receipts_and_withdraw_lines(self):
+        """PDF chek qabul qilinadi va hujjat bo'lib yuboriladi; yechish arizasida balansni tashkil qilgan to'lovlar."""
+        self.assertTrue(bot.is_receipt_file("application/pdf"))
+        self.assertTrue(bot.is_receipt_file("image/png"))
+        self.assertFalse(bot.is_receipt_file("application/zip"))
+        sent = []
+
+        class Fake:
+            async def send_document(self, chat, file, **kw):
+                sent.append(("doc", file.filename))
+
+            async def send_photo(self, chat, file, **kw):
+                sent.append(("photo", file.filename))
+        await bot.send_receipt(Fake(), 1, b"%PDF-1.7 chek", "c")
+        await bot.send_receipt(Fake(), 1, b"\xff\xd8 rasm", "c")
+        self.assertEqual(sent, [("doc", "chek.pdf"), ("photo", "chek.jpg")])
+
+        db.remember_user(OTHER, "Ali Valiyev", None)
+        db.add_earning(OWNER, "essay", 5, OTHER, 15_000, 3_000)
+        rows = db.recent_earnings(OWNER)
+        text = bot.withdrawal_text({"amount": 3000, "teacher_id": OWNER, "card": "8600", "holder": "X"}, rows)
+        self.assertIn("15 000 so'm → 3 000 · Ali Valiyev", text)
+
     async def test_admin_undoes_ai_approved_payment(self):
         """AI soxta chekni tasdiqlab yuborsa: admin «Bekor qilish» — obuna kunlari / paket kreditlari qaytarib olinadi."""
         replies, edits = [], []
@@ -1895,9 +1918,13 @@ class PracticePublic(ServerBase):
         self.user = {"id": OTHER, "name": "Begona", "username": None}
         status, res = await self.send()
         self.assertEqual((res["status"], res["balance"]), ("pending", 3))
-        db.set_setting(f"essay_public:{OWNER}", "0")  # ustoz yopdi
-        self.assertEqual((await self.send())[0], 403)
-        self.assertEqual((await self.get("/api/practice"))[1]["teachers"][0]["open"], False)  # krediti bor — ko'rinadi
+        db.set_setting(f"essay_public:{OWNER}", "0")  # ustoz yopdi — sotib olingan kredit baribir ishlaydi
+        t = (await self.get("/api/practice"))[1]["teachers"][0]
+        self.assertEqual((t["open"], t["free_left"], t["balance"]), (False, 0, 3))  # krediti bor — ko'rinadi
+        for left in (2, 1, 0):
+            status, res = await self.send()
+            self.assertEqual((status, res["status"], res["balance"]), (200, "pending", left), res)
+        self.assertEqual((await self.send())[0], 403)  # kredit tugadi — endi yopiq
 
     async def test_code_in_app_and_platform_checker(self):
         """«✍️ Esse»: ustozi yo'q odamga FREE_IDS tekshiruvchisi (bepullar, keyin kredit); ustoz kodi bilan — ustoz limitidan."""
@@ -1906,7 +1933,7 @@ class PracticePublic(ServerBase):
         try:
             self.user = {"id": OTHER, "name": "Begona", "username": None}
             t = (await self.get("/api/practice"))[1]["teachers"]
-            self.assertEqual([(x["id"], x["kind"], x.get("platform"), x["free_left"]) for x in t], [(OWNER, "public", True, 2)])
+            self.assertEqual([(x["id"], x["kind"], x.get("platform"), x["free_left"]) for x in t], [(OWNER, "public", True, 1)])  # FREE_IDS — 1 ta bepul
         finally:
             plans.FREE_IDS = saved
         code = db.essay_code_of(OWNER)
@@ -1920,6 +1947,15 @@ class PracticePublic(ServerBase):
         self.assertEqual((status, db.get_practice(res["id"])["kind"]), (200, "student"), res)
         self.user = {"id": OWNER, "name": "Ustoz", "username": None}
         self.assertEqual((await self.post("/api/practice/code", {"code": code}))[0], 400)  # o'z kodi
+
+    async def test_linked_student_no_plan_reason(self):
+        """Ustozning o'quvchisi, lekin ustozda tarif yo'q — «kredit tugagan» emas, aniq sabab aytiladi."""
+        db.link_student(OWNER, STUDENT)
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.user = {"id": STUDENT, "name": "O'quvchi", "username": None}
+        status, res = await self.send()
+        self.assertEqual(status, 403, res)
+        self.assertIn("tarif yo'q", res["error"])
 
     async def test_linked_student_unchanged(self):
         db.link_student(OWNER, STUDENT)
@@ -2547,6 +2583,35 @@ class RevenueShare(ServerBase):
         status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Bola Bolayev", "answers": {},
                                                                            "essay": "Esse matni. " * 40})
         self.assertEqual((status, res["essay"]), (200, False), res)
+
+    async def test_paid_essay_survives_plan_expiry(self):
+        """O'quvchi esse uchun to'lagan yoki krediti bor — ustozning tarifi keyin tugasa ham esse qabul qilinadi va AI
+        tekshiradi (pul kuymaydi). To'lamagan begonaga esa yopiq."""
+        status, r = await self.mock(15000)
+        test = db.get_test(r["id"])
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        pay = db.open_essay_payment(OTHER)
+        self.receipt_for(15000)
+        await webapp.check_essay_receipt(pay["id"], b"chek-x", "image/jpeg")
+        await webapp.decide_essay_payment(pay["id"], True, OWNER)  # ustoz tasdiqladi — to'langan
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.assertFalse(plans.essay_open(OWNER))  # tarif tugadi
+
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertTrue(info["essay_open"])  # to'lagani uchun esse maydoni bor
+        self.assertEqual(await webapp.essay_ai_charge(test, OTHER), "free")  # AI tekshiradi (xarajat botdan)
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Begona Bola", "answers": {},
+                                                                           "essay": "Esse matni. " * 40})
+        self.assertEqual((status, res["essay"]), (200, True), res)
+
+        # Krediti bor begona — ham yozadi (1 kredit yechiladi)
+        db.wallet_add(OWNER, STUDENT, 2)
+        self.assertTrue(await webapp.essay_allowed(test, STUDENT))
+        self.assertEqual(await webapp.essay_ai_charge(test, STUDENT), "wallet")
+        self.assertEqual(db.wallet_balance(OWNER, STUDENT), 1)
+        # To'lamagan, kreditsiz begona — yopiq
+        self.assertFalse(await webapp.essay_allowed(test, 444))
 
     async def test_no_plan_no_essay(self):
         """Ustozda tarif yo'q — testni hamma bepul yechadi, 45-esse yopiq: to'lov so'ralmaydi, esse qabul qilinmaydi."""

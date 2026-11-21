@@ -1808,6 +1808,16 @@ def earnings_summary(teacher_id: int, month: str) -> dict:
             "total": int(total), "pending": pending, "history": history}
 
 
+def recent_earnings(teacher_id: int, limit: int = 10) -> list[dict]:
+    """Yechib olish arizasi uchun: o'qituvchi balansini tashkil qilgan oxirgi to'lovlar (bekor qilinganlari o'chgan)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT e.source, e.payment_id, e.amount, e.share, e.created_at, u.full_name FROM teacher_earnings e "
+            "LEFT JOIN users u ON u.tg_id = e.student_id WHERE e.teacher_id = ? ORDER BY e.id DESC LIMIT ?",
+            (teacher_id, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def request_withdrawal(teacher_id: int, amount: int, card: str, holder: str) -> dict | None:
     """Yechish so'rovi (kutilayotgani bo'lmasa va balans yetsa). None — mumkin emas (chaqirgan tomon sababini aytadi)."""
     with connect() as conn:

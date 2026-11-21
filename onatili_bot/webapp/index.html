@@ -3072,7 +3072,7 @@ function platformPayNote(x) {
 }
 function bindEssayPayments() {
   document.querySelectorAll("[data-eprc]").forEach(x => x.onclick = async () => {
-    try { const r = await api(`/api/teacher/essay-payment/${x.dataset.eprc}/receipt`); openModal("🧾 Chek", `<img src="${r.image}" alt="Chek" style="width:100%;border-radius:12px">`); }
+    try { const r = await api(`/api/teacher/essay-payment/${x.dataset.eprc}/receipt`); openModal("🧾 Chek", receiptHTML(r.image)); }
     catch (e) { toast(e.message); }
   });
   const decide = (id, action) => async () => {
@@ -3431,7 +3431,7 @@ function walletPaymentsHTML(list) {
 }
 function bindWalletPayments() {
   document.querySelectorAll("[data-wprc]").forEach(x => x.onclick = async () => {
-    try { const r = await api(`/api/teacher/wallet-payment/${x.dataset.wprc}/receipt`); openModal("🧾 Chek", `<img src="${r.image}" alt="Chek" style="width:100%;border-radius:12px">`); }
+    try { const r = await api(`/api/teacher/wallet-payment/${x.dataset.wprc}/receipt`); openModal("🧾 Chek", receiptHTML(r.image)); }
     catch (e) { toast(e.message); }
   });
   const decide = (id, action) => async () => {
@@ -3517,7 +3517,7 @@ VIEWS.practice = async () => {
     if (teacher.kind !== "public") { box.innerHTML = `<span class="muted small">Bu oy yana ${teacher.left} / ${teacher.limit} ta esse tekshirtira olasiz.</span>`; return; }
     const packs = teacher.packs || [];
     packEssays = packs.length ? packs[packs.length - 1].essays : 1;
-    box.innerHTML = `${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.</span>` : ""}
+    box.innerHTML = `${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.${teacher.balance ? " Sotib olgan kreditlaringiz baribir ishlaydi." : ""}</span>` : ""}
       <div class="row" style="gap:8px;flex-wrap:wrap">${teacher.free_left ? `<span class="pill-tag done">🎁 Bepul: ${teacher.free_left} / ${teacher.free}</span>` : ""}
         <span class="pill-tag ${teacher.balance ? "done" : "wait"}">💳 Kredit: ${teacher.balance} ta</span>
         ${teacher.waiting ? `<span class="pill-tag wait">⏳ ${teacher.waiting} ta esse kredit kutmoqda</span>` : ""}</div>
@@ -3549,7 +3549,7 @@ VIEWS.practice = async () => {
     if (words() < 60) { toast("Esse juda qisqa — kamida 60 so'z"); haptic("error"); return essay.focus(); }
     const pub = teacher.kind === "public";
     if (!pub && !teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
-    if (pub && !teacher.open) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
+    if (pub && !teacher.open && !teacher.balance) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
     btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
       const res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim() });
@@ -3582,6 +3582,13 @@ async function watchPractice(id, note = "Ustozingiz kreditidan tekshirildi.") {
     box.innerHTML = `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">Odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi — bot xabar beradi.</span></div>`;
     await new Promise(r => setTimeout(r, 4000));
   }
+}
+
+// Chek: rasm — ko'rsatiladi; PDF (bank ilovasi cheki) — ilova ichida ochilmaydi, bot xabarida turadi
+function receiptHTML(src) {
+  return String(src || "").startsWith("data:application/pdf")
+    ? `<div class="card"><b>📄 Chek PDF ko'rinishida</b><span class="muted small">Uni botdagi chek xabaridan oching — u yerda hujjat bo'lib turibdi.</span></div>`
+    : `<img src="${src}" alt="Chek" style="width:100%;border-radius:12px">`;
 }
 
 async function showPractice(id) {

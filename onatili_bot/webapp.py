@@ -544,15 +544,25 @@ async def mock_gate(test: dict, user: dict) -> None:
 CHOICES = {"ai": "🤖 AI tekshiradi", "teacher": "👩‍🏫 Ustoz tekshiradi", "none": "📝 Essesiz — faqat test (bepul)"}
 
 
+async def paid_for_essay(test: dict, student_id: int) -> bool:
+    """O'quvchi shu test essesi uchun pul to'lagan (tasdiqlangan) yoki ustozdan krediti bor. Ustozning tarifi keyin
+    tugasa ham bunday o'quvchi essesini yozadi va AI tekshiradi — to'lagan puli kuymaydi."""
+    pay = await run(db.essay_payment_of, test["id"], student_id)
+    if pay and pay["status"] == "paid" and int(pay.get("amount") or 0) > 0 and pay.get("choice") != "none":
+        return True
+    return await run(db.wallet_balance, test["owner_id"], student_id) > 0
+
+
 async def essay_allowed(test: dict, student_id: int) -> bool:
-    """Shu o'quvchi shu testda esse yoza oladimi: milliy, ustozda tarif bor va «Bugungi mock»da «Essesiz» tanlanmagan."""
-    if test["fmt"] != "milliy" or not await run(plans.essay_open, test["owner_id"]):
+    """Shu o'quvchi shu testda esse yoza oladimi: milliy, ustozda tarif bor (yoki o'quvchi esse uchun to'lagan /
+    krediti bor) va «Bugungi mock»da «Essesiz» tanlanmagan."""
+    if test["fmt"] != "milliy":
         return False
     if test.get("opens_at"):
         pay = await run(db.essay_payment_of, test["id"], student_id)
         if pay and pay.get("choice") == "none":
             return False
-    return True
+    return await run(plans.essay_open, test["owner_id"]) or await paid_for_essay(test, student_id)
 DEFAULT_MOCK_CHANNEL = "@Til_va_adabiyot_Xalilov"  # yangi mockning majburiy obunasida oldindan turadi (o'chirsa bo'ladi)
 
 
@@ -954,8 +964,10 @@ async def essay_ai_charge(test: dict, student_id: int) -> str | None:
     o'zi to'lagan bo'lsa. None — AI tekshirmaydi; "free" — kredit yechilmadi (o'quvchi pul to'lagan / AI cheksiz);
     "wallet" — o'quvchining shu ustozdagi 1 krediti; "teacher" — ustozning 1 krediti. AI esseni tekshira olmasa,
     yechilgan kredit qaytariladi (bot.grade_one)."""
-    if not essay_ai.essay_enabled() or not await run(plans.essay_open, test["owner_id"]):
+    if not essay_ai.essay_enabled():
         return None
+    if not await run(plans.essay_open, test["owner_id"]) and not await paid_for_essay(test, student_id):
+        return None  # tarif yo'q va o'quvchi to'lamagan — AI tekshirmaydi (to'lagan bo'lsa — davom etadi)
     if test.get("opens_at"):  # «Bugungi mock»: o'quvchi tanlovi — «🤖 AI tekshirsin» (to'langan) yoki «👩‍🏫 Ustoz»
         pay = await run(db.essay_payment_of, test["id"], student_id)
         if not pay or pay["status"] != "paid" or pay.get("choice") != "ai":
@@ -1474,7 +1486,7 @@ async def settings_view(user: dict) -> dict:
     username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
     card, packs, is_open = await asyncio.gather(run(teacher_card, user["id"]), run(essay_packs, user["id"]),
                                                 run(public_open, user["id"]))
-    return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": PUBLIC_FREE,
+    return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": public_free(user["id"]),
             "earnings": await earnings_view(user["id"]),
             "can_public": plans.ai_unlimited(user["id"]), "student_tariffs": await run(student_tariffs, user["id"]),
             "announce_channels": await run(announce_channels, user["id"]),
@@ -2480,7 +2492,14 @@ async def send_pdf(request: web.Request) -> web.Response:
 
 STUDENT_LIMIT_DEFAULT = 10
 PRACTICE_MIN_WORDS, PRACTICE_MAX_CHARS = 60, 20000
-PUBLIC_FREE = 2  # ommaviy havola: begona o'quvchiga shuncha bepul esse, keyin kredit
+PUBLIC_FREE = 2  # ommaviy havola: begona o'quvchiga shuncha bepul esse (ustoz limitidan), keyin kredit
+PLATFORM_FREE = 1  # FREE_IDS / admin tekshiruvchisi («✍️ Esse», ustozi yo'qlar): AI xarajati bot egasidan — 1 ta
+
+
+def public_free(teacher_id: int) -> int:
+    """Begonaga nechta bepul esse: FREE_IDS / admin — 1 ta (xarajat bot egasidan, ko'p akkaunt bilan suiiste'mol
+    qilinmasin), oddiy ustoz — 2 ta (o'z limitidan)."""
+    return PLATFORM_FREE if plans.ai_unlimited(teacher_id) else PUBLIC_FREE
 
 
 def public_open(teacher_id: int) -> bool:
@@ -2617,10 +2636,11 @@ async def practice_home(request: web.Request) -> web.Response:
         is_open = await run(public_open, tid)
         if not is_open and not w["balance"]:
             continue
-        free_left = max(0, PUBLIC_FREE - await run(db.public_free_used, tid, user["id"]))
+        quota = public_free(tid)  # yopiq bo'lsa bepul yo'q — faqat sotib olingan kredit ishlaydi
+        free_left = max(0, quota - await run(db.public_free_used, tid, user["id"])) if is_open else 0
         card = await run(teacher_card, tid)
         teachers.append({"id": tid, "name": w["full_name"] or "Ustoz", "kind": "public", "open": is_open,
-                         "free_left": free_left, "free": PUBLIC_FREE, "balance": w["balance"],
+                         "free_left": free_left, "free": quota, "balance": w["balance"],
                          "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])),
                          "packs": await run(essay_packs, tid) if card["number"] else []})
     # Ustozi yo'q odam ham tekshirtira olsin: FREE_IDS / admin ustozlarining ommaviy tekshiruvi (bepullar, keyin kredit)
@@ -2634,8 +2654,8 @@ async def practice_home(request: web.Request) -> web.Response:
             continue
         who = await run(db.find_user, str(tid)) or {}
         teachers.append({"id": tid, "name": who.get("full_name") or "Idrok", "kind": "public", "open": True, "platform": True,
-                         "free_left": max(0, PUBLIC_FREE - await run(db.public_free_used, tid, user["id"])),
-                         "free": PUBLIC_FREE, "balance": await run(db.wallet_balance, tid, user["id"]),
+                         "free_left": max(0, public_free(tid) - await run(db.public_free_used, tid, user["id"])),
+                         "free": public_free(tid), "balance": await run(db.wallet_balance, tid, user["id"]),
                          "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])), "packs": packs})
     history = [_practice_view(p) for p in await run(db.practice_of_student, user["id"], 20)]
     return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
@@ -2659,11 +2679,13 @@ async def practice_code(request: web.Request) -> web.Response:
 async def practice_public_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
     """Begona o'quvchi ilovada: bepullari bo'lsa — ustoz kreditidan; tugagan bo'lsa — o'z kreditidan (yo'q bo'lsa
     esse saqlanadi va kredit olgach o'zi tekshiriladi). Botdagi ommaviy havola bilan bir xil qoidalar."""
-    if not await run(public_open, teacher_id):
+    is_open = await run(public_open, teacher_id)
+    balance = await run(db.wallet_balance, teacher_id, user["id"])
+    if not is_open and balance <= 0:  # yopiq bo'lsa ham sotib olingan kredit kuymaydi — faqat kreditsizga yopiq
         raise ApiError(403, "Ustoz ommaviy esse tekshiruvini yopgan")
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
     await run(db.remember_public, teacher_id, user["id"])
-    if await run(db.public_free_used, teacher_id, user["id"]) < PUBLIC_FREE:
+    if is_open and await run(db.public_free_used, teacher_id, user["id"]) < public_free(teacher_id):
         if not await ai_allowed(teacher_id, "essays"):
             raise ApiError(402, "Ustozning AI krediti tugagan — keyinroq urinib ko'ring yoki ustozga ayting")
         practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public")
@@ -2705,6 +2727,8 @@ async def practice_submit(request: web.Request) -> web.Response:
         raise ApiError(400, "Esse juda uzun")
     if not linked:  # begona — ommaviy havola qoidalari (bepul / kredit)
         return ok(await practice_public_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
+    if not await run(plans.essay_open, teacher_id):  # aniq sabab: ustozda tarif yo'q (kredit tugagan emas)
+        raise ApiError(403, "Ustozingizda hozir tarif yo'q — esse tekshiruvi yopiq. Ustozingizga ayting.")
     limit = await run(student_limit, teacher_id)
     if await run(db.practice_used, teacher_id, user["id"], plans.month_key()) >= limit:
         raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
