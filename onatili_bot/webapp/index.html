@@ -797,6 +797,45 @@ svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke
 @keyframes m-ping { from { box-shadow: 0 0 0 0 currentColor; } to { box-shadow: 0 0 0 6px transparent; } }
 .tcard .t-scan { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Bir xil ko'rinish: «Bugungi mock», tarif va mock taymeri — ilovaning o'z ranglarida (yorug' mavzuda oq karta + yashil
+   urg'u, tungi mavzuda tungi ranglar). Alohida to'q ko'k fon yo'q */
+.mock-card.mk2 { color: var(--ink); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.mock-card.mk2 h2, .mock-card.mk2 .mk2-steps b, .mock-card.mk2 .mk2-count .val b, .mock-card.mk2 .mk-people b, .mock-card.mk2 .mk-info b { color: var(--ink); }
+.mock-card.mk2 .mk2-logo { box-shadow: 0 0 0 2px var(--accent-soft); }
+.mock-card.mk2 .mk2-kicker, .mock-card.mk2 .mk-note2 { color: var(--accent); }
+.mock-card.mk2 .mk2-titles small, .mock-card.mk2 .mk2-steps span, .mock-card.mk2 .mk2-count .lbl, .mock-card.mk2 .mk-note,
+.mock-card.mk2 .mk-sub, .mock-card.mk2 .mk-info { color: var(--muted); }
+.mock-card.mk2 .mk2-hours { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.mock-card.mk2 .mk2-steps li { background: var(--bg); border-color: var(--line); }
+.mock-card.mk2 .mk2-steps li.on { background: var(--accent-soft); border-color: var(--accent); }
+.mock-card.mk2 .mk2-line { background: var(--line); }
+.mock-card.mk2 .mk2-line > i { background: var(--grad); }
+.mock-card.mk2 .mk2-count { background: var(--accent-soft); border-color: transparent; }
+.mock-card.mk2 .mk2-count .val b { text-shadow: none; }
+.mock-card.mk2 .mk2-count .val small, .mock-card.mk2 .mk2-count .val i { color: var(--accent); }
+.mock-card.mk2 .mk-people .faces i { border-color: var(--surface); }
+.mock-card.mk2 .mk-btn { background: var(--grad); color: var(--btn-fg); box-shadow: 0 10px 22px -12px var(--accent); }
+.mock-card.mk2 .mk-btn.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+.mock-card.mk2 .mk-done { background: var(--accent-soft); color: var(--ink); }
+.mock-card.mk2 .mk-info { background: var(--bg); border-color: var(--line); }
+section.pass-card { --ps-a: var(--accent); color: var(--ink); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+section.pass-card.low { --ps-a: var(--warn); } section.pass-card.end { --ps-a: var(--bad); }
+section.pass-card .ps-badge { color: #fff; }
+section.pass-card .ps-name, section.pass-card .ps-days small, section.pass-card .ps-text, section.pass-card .ps-lead,
+section.pass-card .ps-tariff small { color: var(--muted); }
+section.pass-card .ps-days b, section.pass-card .ps-text > b, section.pass-card .ps-tariff { color: var(--ink); }
+section.pass-card .ps-ring .bg { stroke: var(--line); }
+section.pass-card .ps-ring .fg { filter: none; }
+section.pass-card .ps-warn, section.pass-card .ps-ended, section.pass-card .ps-wait { background: var(--bg); color: var(--ink); }
+section.pass-card .ps-ended b { color: var(--bad); }
+section.pass-card .ps-tariff { background: var(--bg); border-color: var(--line); }
+section.pass-card .ps-tariff.on { border-color: var(--ps-a); background: color-mix(in srgb, var(--ps-a) 10%, transparent); }
+section.pass-card .ps-btn { background: var(--grad); color: var(--btn-fg); }
+.mock-timer { background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.mock-timer > b { color: var(--accent); }
+.mock-timer.warn { background: color-mix(in srgb, var(--bad) 12%, var(--surface)); color: var(--bad); }
+.mock-timer.warn > b { color: var(--bad); }
 </style>
 </head>
 <body>
