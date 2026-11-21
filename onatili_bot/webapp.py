@@ -16,6 +16,7 @@ import hmac
 import html
 import io
 import json
+import math
 import random
 import secrets
 import logging
@@ -1301,9 +1302,17 @@ async def pass_offers(user: dict) -> list[dict]:
         teacher = await run(db.find_user, str(teacher_id)) or {}
         until = await run(db.pass_until, teacher_id, user["id"])
         pay = await run(db.open_pass_payment, user["id"])
-        out.append({"teacher_id": teacher_id, "name": teacher.get("full_name") or "Ustoz", "tariffs": tariffs,
-                    "until": until if until and until > plans.now().strftime(TIME_FMT) else None,
-                    "status": pay["status"] if pay and pay["teacher_id"] == teacher_id else None})
+        offer = {"teacher_id": teacher_id, "name": teacher.get("full_name") or "Ustoz", "tariffs": tariffs,
+                 "until": None, "days_left": 0, "total_days": 0, "expired": None,
+                 "status": pay["status"] if pay and pay["teacher_id"] == teacher_id else None}
+        end, now = _at(until), plans.now()
+        if end and end > now:  # faol: «29 kun qoldi» (oxirgi kunda — 1), halqa — qolgan / jami
+            left = math.ceil((end - now).total_seconds() / 86400)
+            offer.update(until=until, days_left=left,
+                         total_days=max(left, await run(db.last_pass_days, teacher_id, user["id"])))
+        elif end and now - end < timedelta(days=7):  # yaqinda tugagan — «yangilang»
+            offer["expired"] = until
+        out.append(offer)
     return out
 
 
@@ -1976,9 +1985,27 @@ async def teacher_test(request: web.Request) -> web.Response:
             "written_status": written_jobs.get(a["id"]),  # skanerlangan titul: pending | done | failed
         })
     rows.sort(key=lambda r: (-(r["rasch"] or 0), -r["total"]))
-    analysis = [{"label": item["label"],
-                 "share": round(sum(1 for a in attempts if item["label"] not in a["wrong"]) * 100 / len(attempts))}
-                for item in test["items"]] if attempts else []
+    # Savol tahlili: to'g'ri ulushi va (test savollarida) har variantni nechta o'quvchi tanlagani — kalitdagi xatoni topish uchun
+    main_key = keys.get("A") or (next(iter(keys.values())) if keys else {})
+    analysis = []
+    for item in test["items"] if attempts else []:
+        row = {"label": item["label"], "kind": item["kind"],
+               "share": round(sum(1 for a in attempts if item["label"] not in a["wrong"]) * 100 / len(attempts))}
+        if item["kind"] == "choice":
+            dist = {letter: 0 for letter in LETTERS[: item.get("options", 4)]}
+            blank = 0
+            for a in attempts:
+                chosen = str(a["answers"].get(item["label"]) or "").upper()
+                if chosen in dist:
+                    dist[chosen] += 1
+                else:
+                    blank += 1
+            key = str(main_key.get(item["label"]) or "").upper()
+            wrong = {k: v for k, v in dist.items() if k not in key}
+            top = max(wrong, key=wrong.get) if wrong and max(wrong.values()) else None
+            row.update(dist=dist, blank=blank, key=key, top_wrong=top,
+                       suspicious=bool(top and dist[top] > max([dist.get(k, 0) for k in key] or [0])))
+        analysis.append(row)
     grades = {}
     for _, grade_name in rasch.values():
         grades[grade_name] = grades.get(grade_name, 0) + 1
@@ -2504,7 +2531,95 @@ async def attempt_answers(request: web.Request) -> web.Response:
         "written": {"status": job["status"], "error": job["error"], "ai": json.loads(job["result"]) if job["result"] else None,
                     "image": _image_data_url(job["image"], job["mime"])} if job else None,
         "closed": bool(test["closed"]),
+        "offline": attempt["tg_id"] < 0,  # titul natijasi — boshqa o'quvchiga ko'chirsa bo'ladi
+        "test_id": test["id"],
     })
+
+
+def sheet_token(attempt_id: int, expires: int) -> str:
+    payload = f"{attempt_id}.{expires}"
+    return f"{payload}.{_sign('sp:' + payload)}"
+
+
+async def attempt_sheet(request: web.Request) -> web.Response:
+    """Skanerlangan titul surati (imzolangan havola) va doirachalar joyi — ilova belgilarni o'zi chizadi."""
+    user = await auth(request)
+    attempt, _test = await _own_attempt(request, user)
+    sheet = await run(db.get_sheet, attempt["id"])
+    if not sheet:
+        raise ApiError(404, "Bu natijaning titul surati yo'q (qo'lda kiritilgan yoki eski skaner)")
+    if not sheet["file_id"]:
+        return ok({"pending": True})  # surat hali botga yuborilmagan (albom to'lmagan) — «Yuborish tugadi»dan keyin
+    marks = {}
+    try:
+        marks = json.loads(sheet["marks"] or "{}")
+    except ValueError:
+        pass
+    return ok({"url": f"/sp/{sheet_token(attempt['id'], int(time.time()) + 3600)}", "marks": marks})
+
+
+async def sheet_photo(request: web.Request) -> web.StreamResponse:
+    parts = request.match_info["token"].split(".")
+    if len(parts) != 3 or not all(p.isalnum() for p in parts):
+        raise web.HTTPNotFound(text="Havola noto'g'ri")
+    attempt_id, expires, sig = parts
+    if not hmac.compare_digest(sig, _sign(f"sp:{attempt_id}.{expires}")) or int(expires) < time.time():
+        raise web.HTTPNotFound(text="Havola eskirgan")
+    sheet = await run(db.get_sheet, int(attempt_id))
+    if not sheet or not sheet["file_id"] or "download_file" not in HOOKS:
+        raise web.HTTPNotFound(text="Surat topilmadi")
+    data = await HOOKS["download_file"](sheet["file_id"])
+    return web.Response(body=data, headers={"Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600"})
+
+
+async def attempt_delete(request: web.Request) -> web.Response:
+    """Noto'g'ri skanerlangan natijani o'chirish (ro'yxatdagi o'quvchi qoladi — qayta skanerlash yoki qo'lda kiritish)."""
+    user = await auth(request)
+    attempt, _test = await _own_attempt(request, user)
+    await run(db.delete_attempt, attempt["id"])
+    return ok({"ok": True})
+
+
+async def attempt_rename(request: web.Request) -> web.Response:
+    user = await auth(request)
+    attempt, _test = await _own_attempt(request, user)
+    name = clean_name((await body(request)).get("name"))
+    if len(name) < 3:
+        raise ApiError(400, "Ism va familiyani to'liq yozing")
+    await run(db.rename_attempt, attempt["id"], name)
+    return ok({"ok": True, "name": name})
+
+
+async def attempt_move(request: web.Request) -> web.Response:
+    """ID xato o'qilgan: natija boshqa o'quvchiga (ro'yxatdan yoki sinfdagi ID bo'yicha). U o'quvchining natijasi bor
+    bo'lsa — replace=True bilan almashtiriladi."""
+    user = await auth(request)
+    attempt, test = await _own_attempt(request, user)
+    if attempt["tg_id"] >= 0:
+        raise ApiError(400, "Onlayn natijani boshqa o'quvchiga ko'chirib bo'lmaydi")
+    payload = await body(request)
+    target = None
+    if payload.get("student_id"):
+        target = await run(db.get_student, test["id"], to_int(payload["student_id"], 0, "O'quvchi"))
+    elif str(payload.get("number") or "").isdigit():
+        number = int(payload["number"])
+        target = await run(db.get_student, test["id"], None, number)
+        if not target:  # test ro'yxatida yo'q — sinfdan (doimiy ID)
+            pupil = (await pupils_of(test["owner_id"])).get(number)
+            if not pupil:
+                raise ApiError(404, f"ID {number:04d} ro'yxatda ham, sinflarda ham yo'q")
+            target = (await run(db.add_students, test["id"], [pupil["name"]], [attempt["variant"]], [number]))[-1]
+    if not target:
+        raise ApiError(404, "O'quvchi topilmadi")
+    if target["attempt_id"] == attempt["id"]:
+        return ok({"ok": True, "name": target["name"]})
+    if target["attempt_id"]:
+        if not payload.get("replace"):
+            raise ApiError(409, f"{target['name']}ning natijasi bor — almashtirasizmi?", busy=True)
+        await run(db.delete_attempt, target["attempt_id"])
+    await run(db.move_attempt, attempt["id"], db.offline_tg_id(test["id"], target["number"]), target["name"])
+    await run(db.link_student_attempt, target["id"], attempt["id"])
+    return ok({"ok": True, "name": target["name"], "number": target["number"]})
 
 
 async def attempt_answers_save(request: web.Request) -> web.Response:
@@ -3617,11 +3732,12 @@ SHEET_PHOTO_MAX = 1_500_000
 _SHEET_PHOTOS: dict[tuple[int, int], list[tuple[bytes, str]]] = {}
 
 
-def queue_sheet_photos(user_id: int, test: dict, photos: list[bytes], caption: str) -> None:
+def queue_sheet_photos(user_id: int, test: dict, photos: list[bytes], caption: str, attempt_id: int | None = None) -> None:
+    """attempt_id — birinchi surat (1-varaq) shu natijaga bog'lanadi: ilovada titul rasmi belgilar bilan ko'rinadi."""
     items = _SHEET_PHOTOS.setdefault((user_id, test["id"]), [])
-    for photo in photos:
+    for index, photo in enumerate(photos):
         if photo[:2] == b"\xff\xd8" and len(photo) <= SHEET_PHOTO_MAX:  # faqat JPEG
-            items.append((photo, caption[:900]))
+            items.append((photo, caption[:900], attempt_id if index == 0 else None))
     if len(items) >= 10:
         flush_sheet_photos(user_id, test)
 
@@ -3692,7 +3808,10 @@ async def scan_upload(request: web.Request) -> web.Response:
         number = student.get("number")
         caption = (f"№ {number:03d} " if isinstance(number, int) else "") + f"{student['name']} · test " \
                   f"{attempt['test_correct']}/{len(choice_items(test['items']))}"
-        queue_sheet_photos(user["id"], test, photos, caption)
+        queue_sheet_photos(user["id"], test, photos, caption, attempt["id"])
+        marks = str(form.get("marks") or "")
+        if marks.startswith("{") and len(marks) < 200_000:  # doirachalar joyi — belgilarni qayta chizish uchun
+            await run(db.save_sheet_marks, attempt["id"], marks)
     response = {"ok": True, "attempt_id": attempt["id"], "student_id": student["id"], "name": student["name"],
                 "written_queued": queued, "essay_status": essay_status, "essay_pending": essay_pending(test, attempt),
                 "points": None if essay_pending(test, attempt) else total_points(attempt),
@@ -3955,6 +4074,11 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/settings", teacher_settings_save)
     app.router.add_post("/api/mock/{code:\\d{5}}/signup", mock_signup)
     app.router.add_post("/api/pass/order", pass_order)
+    app.router.add_get("/api/teacher/attempt/{attempt_id:\\d+}/sheet", attempt_sheet)
+    app.router.add_get("/sp/{token}", sheet_photo)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/delete", attempt_delete)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/rename", attempt_rename)
+    app.router.add_post("/api/teacher/attempt/{attempt_id:\\d+}/move", attempt_move)
     app.router.add_post("/api/test/{code:\\d{5}}/mock-choice", mock_choice)
     app.router.add_get("/mf/{token}", mock_file)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/schedule", schedule_save)

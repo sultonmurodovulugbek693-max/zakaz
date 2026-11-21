@@ -1964,3 +1964,109 @@ class ScheduledMock(ServerBase):
         self.assertEqual(db.pass_until(OWNER, OTHER), "2026-11-20 19:00")
         err = (await self.get(f"/api/test/{test['code']}"))[1]
         self.assertEqual(err["mock_choice"]["options"][0]["price"], 15000)
+
+    async def test_pass_countdown_and_reminders(self):
+        """Tarif: «30 kun qoldi» → ertasi 29 …; 1 kun qolganda va tugaganda bot xabar beradi, keyin o'zi o'chadi."""
+        await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": "Ustoz Aliyev"})
+        await self.post("/api/teacher/settings", {"student_tariffs": [{"days": 30, "price": "50000"}]})
+        pay = db.start_pass_payment(OWNER, OTHER, 30, 50000)
+        self.assertEqual(db.pay_pass_payment(pay["id"], ("open",), "2026-11-20 19:00"), "2026-12-20 19:00")
+        self.as_user(OTHER)
+        offer = (await self.get("/api/bootstrap"))[1]["passes"][0]
+        self.assertEqual((offer["days_left"], offer["total_days"]), (30, 30))
+        self.clock = self.clock.replace(day=21, hour=8)  # ertasi kuni
+        offer = (await self.get("/api/bootstrap"))[1]["passes"][0]
+        self.assertEqual(offer["days_left"], 30)  # 29 kun 11 soat — 30-kun hali tugamagan
+        self.clock = self.clock.replace(day=22, hour=20)
+        self.assertEqual((await self.get("/api/bootstrap"))[1]["passes"][0]["days_left"], 28)
+
+        self.clock = self.clock.replace(month=12, day=19, hour=21)  # 22 soat qoldi
+        await bot.pass_reminders(self.bot, self.clock)
+        await bot.pass_reminders(self.bot, self.clock)  # takror yuborilmaydi
+        self.assertEqual(sum(1 for c, m in self.bot.messages if c == OTHER and "1 kun qoldi" in m), 1)
+        self.assertEqual((await self.get("/api/bootstrap"))[1]["passes"][0]["days_left"], 1)
+
+        self.clock = self.clock.replace(day=20, hour=19, minute=30)  # tugadi
+        await bot.pass_reminders(self.bot, self.clock)
+        self.assertEqual(sum(1 for c, m in self.bot.messages if c == OTHER and "Tarifingiz tugadi" in m), 1)
+        offer = (await self.get("/api/bootstrap"))[1]["passes"][0]
+        self.assertEqual((offer["until"], offer["expired"]), (None, "2026-12-20 19:00"))
+        self.assertFalse(await webapp.pass_active(OWNER, OTHER))  # o'zi o'chdi — mocklar yana pullik
+
+
+class ScanResults(ServerBase):
+    """Titul natijalari: surat belgilar bilan, ism, boshqa o'quvchiga ko'chirish, o'chirish, qo'lda kiritish, A/B/C/D tahlili."""
+
+    async def upload(self, test, payload, photo=None, marks=None):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("data", json.dumps(payload))
+        if photo:
+            form.add_field("photo", photo, filename="titul.jpg", content_type="image/jpeg")
+        if marks:
+            form.add_field("marks", json.dumps(marks))
+        response = await self.client.post(f"/api/teacher/test/{test['id']}/scan/upload", data=form)
+        return response.status, await response.json()
+
+    async def test_sheet_edit_move_delete_manual(self):
+        _, r = await self.create("offline")
+        test = db.get_test(r["id"])
+        db.add_students(test["id"], ["Ali Valiyev", "Vali Karimov"], ["A", "A"], [7, 8])
+
+        class AlbumBot(FakeBot):
+            async def send_photo(self, chat_id, photo, **_):
+                return types.SimpleNamespace(photo=[types.SimpleNamespace(file_id="TG-PHOTO-1")])
+        album = AlbumBot()
+        webapp.HOOKS["scan_photos"] = lambda c, t, items: bot.send_scan_photos(album, c, t, items)
+        webapp.HOOKS["download_file"] = lambda file_id: asyncio.sleep(0, b"\xff\xd8 rasm " + file_id.encode())
+
+        marks = {"positions": {"1": {"A": [10, 20, 4], "B": [20, 20, 4]}}, "page_w": 595}
+        _, res = await self.upload(test, {"uid": "u1", "number": "7", "variant": "A", "answers": {"1": "A", "2": "B"}},
+                                   b"\xff\xd8 titul", marks)
+        attempt_id = res["attempt_id"]
+        self.assertEqual((await self.get(f"/api/teacher/attempt/{attempt_id}/sheet"))[1], {"pending": True})  # albom to'lmagan
+        await self.post(f"/api/teacher/test/{test['id']}/scan/upload/done", {"saved": 1})
+        await asyncio.sleep(0.05)
+        status, sheet = await self.get(f"/api/teacher/attempt/{attempt_id}/sheet")
+        self.assertEqual((status, sheet["marks"]), (200, marks))
+        photo = await self.client.get(sheet["url"])
+        self.assertEqual((photo.status, await photo.read()), (200, b"\xff\xd8 rasm TG-PHOTO-1"))
+
+        # Ism tuzatish — natijada ham, ro'yxatda ham
+        await self.post(f"/api/teacher/attempt/{attempt_id}/rename", {"name": "Ali  Valiyevich"})
+        self.assertEqual(db.get_attempt(attempt_id)["student_name"], "Ali Valiyevich")
+        self.assertEqual(db.get_student(test["id"], None, 7)["name"], "Ali Valiyevich")
+
+        # ID xato o'qilgan: natija 8-ga; 7 bo'shaydi
+        status, moved = await self.post(f"/api/teacher/attempt/{attempt_id}/move", {"number": "8"})
+        self.assertEqual((status, moved["name"]), (200, "Vali Karimov"))
+        self.assertEqual(db.get_student(test["id"], None, 8)["attempt_id"], attempt_id)
+        self.assertIsNone(db.get_student(test["id"], None, 7)["attempt_id"])
+        self.assertEqual(db.get_attempt(attempt_id)["tg_id"], db.offline_tg_id(test["id"], 8))
+
+        # 7-ga qo'lda kiritish, keyin 8-ning natijasini 7-ga ko'chirmoqchi — band: avval so'raydi, keyin almashtiradi
+        seven = db.get_student(test["id"], None, 7)
+        status, manual = await self.post(f"/api/teacher/test/{test['id']}/scan/save",
+                                         {"student_id": seven["id"], "variant": "A", "answers": {"1": "B", "2": "A"}})
+        self.assertEqual(status, 200, manual)
+        status, busy = await self.post(f"/api/teacher/attempt/{attempt_id}/move", {"number": "7"})
+        self.assertEqual((status, busy.get("busy")), (409, True))
+        status, _ = await self.post(f"/api/teacher/attempt/{attempt_id}/move", {"number": "7", "replace": True})
+        self.assertEqual(status, 200)
+        self.assertIsNone(db.get_attempt(manual["attempt_id"]))
+        self.assertEqual(db.get_student(test["id"], None, 7)["attempt_id"], attempt_id)
+
+        # A/B/C/D tahlili: 2-savolga hammasi B (kalit — A) — «kalitni tekshiring»
+        eight = db.get_student(test["id"], None, 8)
+        await self.post(f"/api/teacher/test/{test['id']}/scan/save", {"student_id": eight["id"], "variant": "A", "answers": {"1": "A", "2": "B"}})
+        page = (await self.get(f"/api/teacher/test/{test['id']}"))[1]
+        q1, q2 = page["analysis"][0], page["analysis"][1]
+        self.assertEqual((q1["dist"]["A"], q1["key"], q1["suspicious"]), (2, "A", False))
+        self.assertEqual((q2["dist"]["B"], q2["top_wrong"], q2["suspicious"]), (2, "B", True))
+        self.assertEqual(q2["blank"], 0)
+
+        # O'chirish — natija yo'q, o'quvchi ro'yxatda qoladi
+        status, _ = await self.post(f"/api/teacher/attempt/{attempt_id}/delete", {})
+        self.assertEqual(status, 200)
+        self.assertIsNone(db.get_attempt(attempt_id))
+        self.assertIsNone(db.get_student(test["id"], None, 7)["attempt_id"])

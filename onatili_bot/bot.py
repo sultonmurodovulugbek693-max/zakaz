@@ -1518,8 +1518,29 @@ async def mock_worker(bot: Bot) -> None:
         await asyncio.sleep(MOCK_TICK)
 
 
+_PASS_CHECK = {"at": 0.0}
+
+
+async def pass_reminders(bot: Bot, now) -> None:
+    """«💎 Tarif»: 1 kun qolganda va tugaganda o'quvchiga xabar (tarif muddati o'tishi bilan o'zi o'chadi)."""
+    fmt = lambda moment: moment.strftime(webapp.TIME_FMT)
+    for row in await asyncio.to_thread(db.passes_to_remind, fmt(now + timedelta(days=1)), fmt(now)):
+        ended = webapp._at(row["expires_at"]) <= now
+        await asyncio.to_thread(db.set_pass_stage, row["teacher_id"], row["student_id"], 2 if ended else 1)
+        name = esc(row.get("teacher_name") or "ustoz")
+        text = (f"⌛ <b>Tarifingiz tugadi</b> · {name}\nEndi mocklar yana pullik. Yangilash — ilovadagi «💎 Tarif» kartasida."
+                if ended else
+                f"⏳ <b>Tarifingiz tugashiga 1 kun qoldi</b> · {name}\n{row['expires_at'][:10]} {row['expires_at'][11:16]} gacha "
+                "hamma mocklar bepul. Uzaytirish — ilovadagi «💎 Tarif» kartasida.")
+        await send_with_retry(bot, row["student_id"], text, reply_markup=app_markup("💎 Tarifni ochish"))
+        await asyncio.sleep(0.05)
+
+
 async def mock_tick(bot: Bot) -> None:
     now = plans.now()
+    if time.time() - _PASS_CHECK["at"] > 600:  # tarif eslatmalari — 10 daqiqada bir
+        _PASS_CHECK["at"] = time.time()
+        await pass_reminders(bot, now)
     fmt = lambda moment: moment.strftime(webapp.TIME_FMT)
     for test in await asyncio.to_thread(db.mocks_to_remind, fmt(now + timedelta(minutes=30)), fmt(now)):
         opened = webapp._at(test["opens_at"]) <= now
@@ -1936,18 +1957,23 @@ async def written_notice(bot: Bot, test: dict) -> None:
         logger.warning("Yozma javoblar haqida xabar yuborilmadi")
 
 
-async def send_scan_photos(bot: Bot, chat_id: int, test: dict, items: list[tuple[bytes, str]]) -> None:
-    """Skanerlangan titullarning suratlari (telefon tayyorlagan JPEG) — 10 tadan albom, har birining izohi bilan."""
+async def send_scan_photos(bot: Bot, chat_id: int, test: dict, items: list[tuple]) -> None:
+    """Skanerlangan titullarning suratlari (telefon tayyorlagan JPEG) — 10 tadan albom, har birining izohi bilan.
+    Surat Telegram'da qoladi: file_id natijaga bog'lanadi — ilovada titul belgilar bilan ko'rinadi."""
     for start in range(0, len(items), 10):
-        chunk = items[start:start + 10]
+        chunk = [(item[0], item[1], item[2] if len(item) > 2 else None) for item in items[start:start + 10]]
         files = [(BufferedInputFile(photo, filename=f"titul_{test['code']}_{start + k + 1}.jpg"), caption)
-                 for k, (photo, caption) in enumerate(chunk)]
+                 for k, (photo, caption, _a) in enumerate(chunk)]
         head = f"📷 <b>{esc(test['title'])}</b> · titullar\n"
         if len(files) == 1:
-            await bot.send_photo(chat_id, files[0][0], caption=head + esc(files[0][1]))
+            sent = [await bot.send_photo(chat_id, files[0][0], caption=head + esc(files[0][1]))]
         else:
-            await bot.send_media_group(chat_id, [InputMediaPhoto(media=f, caption=(head if k == 0 else "") + esc(c))
-                                                 for k, (f, c) in enumerate(files)])
+            sent = await bot.send_media_group(chat_id, [InputMediaPhoto(media=f, caption=(head if k == 0 else "") + esc(c))
+                                                        for k, (f, c) in enumerate(files)])
+        for (_p, _c, attempt_id), message in zip(chunk, sent or []):
+            photos = getattr(message, "photo", None)
+            if attempt_id and photos:
+                await asyncio.to_thread(db.set_sheet_file, attempt_id, photos[-1].file_id)
         await asyncio.sleep(1)  # Telegram cheklovi: bitta chatga ketma-ket albomlar orasida tanaffus
 
 

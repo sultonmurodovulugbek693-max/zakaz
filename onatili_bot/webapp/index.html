@@ -598,6 +598,54 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .mk-done { padding: 13px 14px; border-radius: 18px; background: rgba(255,255,255,.07); color: #dfe3ff; font-size: 14px; }
 .mk-info { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 18px; border: 1px solid #2f3a73; background: rgba(255,255,255,.04); font-size: 13.5px; color: #dfe3ff; }
 .mk-info b { color: #fff; }
+/* Natija: skanerlangan titul surati (belgilar bilan), amallar; «🧩 Tahlil» — variantlar; skaner ostidagi ro'yxat */
+.ed-canvas { width: 100%; border-radius: 12px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
+.ed-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.an-list { gap: 12px; }
+.an-row { display: grid; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.an-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.an-row.warn { background: color-mix(in srgb, var(--warn) 9%, transparent); border-radius: 12px; padding: 8px 10px; }
+.an-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.an-bars { display: grid; gap: 4px; }
+.an-bar { display: grid; grid-template-columns: 22px 1fr 34px; gap: 8px; align-items: center; font-size: 13px; }
+.an-bar i { height: 10px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 35%, transparent); min-width: 2px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.an-bar.key i { background: var(--good); } .an-bar.top i { background: var(--bad); } .an-bar.blank { opacity: .65; }
+.an-bar b { text-align: right; font-variant-numeric: tabular-nums; }
+.sc-r-wait small, .sc-r-err small { color: var(--warn); } .sc-r-err small { color: var(--bad); } .sc-r-done small { color: var(--good); }
+/* «💎 Tarif» kartasi: qolgan kunlar halqasi (har mavzuda bir xil — to'q binafsha / zumrad) */
+.pass-card { --ps-a: #5ef2b8; position: relative; overflow: hidden; display: grid; gap: 12px; padding: 18px 16px 16px; border-radius: 26px; color: #f1fffa;
+  background: radial-gradient(90% 60% at 100% 0%, rgba(94,242,184,.22), transparent 60%), linear-gradient(155deg, #2a1857, #12133a 70%);
+  box-shadow: 0 18px 40px -22px #120a33; animation: m-rise .45s cubic-bezier(.2,.8,.2,1) backwards; }
+.pass-card.low { --ps-a: #ffd84d; } .pass-card.end { --ps-a: #ff7a6b; }
+.ps-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ps-badge { background: var(--ps-a); color: #10132a; font-weight: 800; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; padding: 7px 13px; border-radius: 99px; }
+.ps-name { color: #cfc8ff; font-size: 14px; font-weight: 600; }
+.ps-main { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 14px; position: relative; }
+.ps-ring { width: 112px; height: 112px; transform: rotate(-90deg); }
+.ps-ring circle { fill: none; stroke-width: 10; }
+.ps-ring .bg { stroke: rgba(255,255,255,.1); }
+.ps-ring .fg { stroke: var(--ps-a); stroke-linecap: round; filter: drop-shadow(0 0 6px var(--ps-a)); animation: ps-fill 1.1s cubic-bezier(.2,.8,.2,1) backwards; }
+@keyframes ps-fill { from { stroke-dashoffset: 290; } }
+.ps-days { position: absolute; left: 0; width: 112px; display: grid; place-items: center; text-align: center; line-height: 1; }
+.ps-days b { font-size: 36px; font-weight: 800; color: #fff; }
+.ps-days small { font-size: 11px; color: #cfc8ff; margin-top: 4px; }
+.ps-text { display: grid; gap: 4px; font-size: 13.5px; color: #d9d4ff; }
+.ps-text > b { font-size: 20px; color: #fff; }
+.ps-text span b { color: var(--ps-a); }
+.ps-warn, .ps-ended, .ps-wait { padding: 11px 13px; border-radius: 16px; background: rgba(255,255,255,.07); font-size: 13.5px; color: #f1fffa; }
+.pass-card.low .ps-warn, .pass-card.end .ps-warn { background: color-mix(in srgb, var(--ps-a) 16%, transparent); }
+.ps-ended b { color: #ffb3a8; }
+.ps-lead { margin: 0; color: #d9d4ff; font-size: 14px; line-height: 1.45; } .ps-lead b { color: var(--ps-a); }
+.ps-tariffs { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.ps-tariff { display: grid; justify-items: center; gap: 2px; padding: 12px 6px; border-radius: 18px; cursor: pointer; color: #f1fffa;
+  border: 1.5px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); transition: transform .12s, border-color .2s, background .2s; }
+.ps-tariff b { font-size: 26px; font-weight: 800; line-height: 1; } .ps-tariff small { color: #cfc8ff; font-size: 12px; }
+.ps-tariff span { font-size: 12.5px; font-weight: 700; margin-top: 4px; }
+.ps-tariff.on { border-color: var(--ps-a); background: color-mix(in srgb, var(--ps-a) 14%, transparent); }
+.ps-tariff:active { transform: scale(.96); }
+.ps-btn { width: 100%; padding: 15px 18px; border: 0; border-radius: 99px; font-weight: 800; font-size: 16px; cursor: pointer; color: #10132a;
+  background: linear-gradient(90deg, var(--ps-a), #a98bff); transition: transform .12s; }
+.ps-btn:active { transform: scale(.97); }
 .mock-timer { position: sticky; top: 8px; z-index: 5; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 18px;
   background: linear-gradient(160deg, #17204a, #10183a); color: #f3f5ff; box-shadow: 0 10px 24px -16px #0b1233; font-weight: 700; }
 .mock-timer > b { font-size: 20px; font-variant-numeric: tabular-nums; color: #ffd84d; }
@@ -1964,15 +2012,30 @@ function bindStudentTariffs() {
   };
 }
 // O'quvchi bosh sahifasi: har ustozning tarif kartasi (amaldagi muddat, chek tekshirilmoqda, sotib olish)
+const dmyOf = v => v ? `${v.slice(8, 10)}.${v.slice(5, 7)}.${v.slice(0, 4)}` : "";
 function passCardHTML(p) {
-  const until = p.until ? `${p.until.slice(8, 10)}.${p.until.slice(5, 7)}.${p.until.slice(0, 4)}` : null;
-  return `<div class="card pass-card" data-pass="${p.teacher_id}">
-    <div class="row between"><b>💎 Tarif · ${esc(p.name)}</b>${until ? `<span class="pill-tag done">✅ ${until} gacha</span>` : ""}</div>
-    <span class="muted small">${until ? "Tarifingiz faol — ustozning hamma mocklari siz uchun bepul. Uzaytirish mumkin:" : "Muddat davomida ustozning hamma mocklari bepul — har biri uchun alohida to'lamaysiz."}</span>
-    ${p.status === "review" ? `<span class="small">⏳ Chekingiz tekshirilmoqda — tasdiqlansa bot xabar beradi.</span>` : `
-    <div class="chips">${p.tariffs.map((t, i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-pass-days="${t.days}">${t.days} kun · ${sum(t.price)} so'm</button>`).join("")}</div>
-    <button type="button" class="btn block" data-pass-buy>💎 ${until ? "Uzaytirish" : "Tarif sotib olish"}</button>`}
-  </div>`;
+  const active = !!p.until, left = p.days_left || 0, total = Math.max(p.total_days || left, 1);
+  // Halqa: qolgan kun / jami (30 kunlikda 29 qolsa — deyarli to'la); oxirgi 3 kunda — sariq, oxirgisida — qizil
+  const R = 46, C = 2 * Math.PI * R, share = Math.max(0.04, Math.min(1, left / total));
+  const tone = left <= 1 ? "end" : left <= 3 ? "low" : "";
+  const options = p.status === "review" ? `<div class="ps-wait">⏳ Chekingiz tekshirilmoqda — tasdiqlansa bot xabar beradi.</div>` : `
+    <div class="ps-tariffs">${p.tariffs.map((t, i) => `<button type="button" class="ps-tariff ${i === 0 ? "on" : ""}" data-pass-days="${t.days}">
+      <b>${t.days}</b><small>kun</small><span>${sum(t.price)} so'm</span></button>`).join("")}</div>
+    <button type="button" class="ps-btn" data-pass-buy>💎 ${active ? "Uzaytirish" : p.expired ? "Tarifni yangilash" : "Tarif sotib olish"}</button>`;
+  return `<section class="pass-card ${tone} ${active ? "is-on" : ""}" data-pass="${p.teacher_id}">
+    <div class="ps-top"><span class="ps-badge">💎 Tarif</span><span class="ps-name">${esc(p.name)}</span></div>
+    ${active ? `<div class="ps-main">
+        <svg class="ps-ring" viewBox="0 0 110 110" aria-hidden="true"><circle class="bg" cx="55" cy="55" r="${R}"/>
+          <circle class="fg" cx="55" cy="55" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - share)).toFixed(1)}"/></svg>
+        <div class="ps-days"><b>${left}</b><small>kun qoldi</small></div>
+        <div class="ps-text"><b>${left <= 1 ? "Bugun tugaydi" : `${left} kun qoldi`}</b>
+          <span>${dmyOf(p.until)} gacha · ${p.until.slice(11, 16)}</span>
+          <span>Ustozning hamma mocklari siz uchun <b>bepul</b> ✅</span></div></div>
+      ${left <= 3 ? `<div class="ps-warn">⏳ Tugashiga oz qoldi — uzaytirsangiz, kunlar oxiriga qo'shiladi.</div>` : ""}`
+    : p.expired ? `<div class="ps-ended">⌛ <b>Tarifingiz tugadi</b> (${dmyOf(p.expired)}) — mocklar yana pullik. Yangilang:</div>`
+    : `<p class="ps-lead">Muddat davomida ustozning <b>hamma mocklari bepul</b> — har biri uchun alohida to'lamaysiz. Tugagach o'zi o'chadi.</p>`}
+    ${options}
+  </section>`;
 }
 function bindPassCards() {
   document.querySelectorAll(".pass-card").forEach(card => {
@@ -2413,7 +2476,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     ${tab === "students" ? rosterHTML(d) : ""}
     ${tab === "live" ? `<div id="live" class="list"><div class="card empty">Yuklanmoqda…</div></div>` : ""}
     ${tab === "people" ? `${toResults}${n ? `<span class="muted small">O'quvchini bosing — javoblarini ko'rasiz va kerak bo'lsa tuzatasiz.</span>` : ""}<div class="list people">${people || `<div class="card empty"><div class="big">👀</div>Hali hech kim javob yubormagan.<br>Kod: <b>${t.code}</b></div>`}</div>` : ""}
-    ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
+    ${tab === "questions" ? (n ? `<div class="card"><span class="muted small">Har savolni necha foiz yechgan: qizil — qiyin, yashil — oson</span><div class="heat">${heat}</div></div>${analysisHTML(d.analysis, n)}` : `<div class="card empty"><div class="big">🧩</div>Tahlil javoblar kelgach chiqadi</div>`) : ""}
     ${tab === "essays" ? `<div class="card small">${d.essay_on_paper ? `📄 Esselar qog'ozda (3–4-varaq). ${d.essays_missing ? `<b>${d.essays_missing} ta</b> o'quvchining bahosi kiritilmagan — natijasi chiqmaydi.` : "Hamma esse baholangan ✅"}`
       : d.ai ? `🤖 AI: ${esc(d.ai_provider)} · navbatda ${pending} ta · sarf $${d.essay_cost}` : "🤖 AI o'chiq — esselarni o'zingiz baholaysiz"}
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
@@ -3840,7 +3903,7 @@ function rosterHTML(d) {
   const vs = d.test.variants;
   const rows = d.students.map(s => `<div class="item" style="cursor:default"><span class="rank" title="O'quvchi ID'si"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
     <span><b>${esc(s.name)}</b><small>${s.class_name ? `🏫 ${esc(s.class_name)} · ` : ""}${s.scanned ? "✅ skanerlangan" : "⏳ titul kutilmoqda"}</small></span>
-    <span class="row" style="gap:6px">${vs.length > 1 ? `<button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button>` : ""}<button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
+    <span class="row" style="gap:6px">${s.scanned ? `<button class="btn ghost sm" data-open-att="${s.attempt_id}">📝 Natija</button>` : `<button class="btn ghost sm" data-manual="${s.id}">✏️ Qo'lda</button>`}${vs.length > 1 ? `<button class="chip" data-var-of="${s.id}" title="Variantni almashtirish">${s.variant}</button>` : ""}<button class="btn plain sm" data-del-st="${s.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
   return `<div class="card"><h2>O'quvchilarni qo'shish</h2>
     <textarea class="input" id="names" rows="5" placeholder="Har bir o'quvchi yangi qatorda:\nAli Valiyev\nMadina Yusupova\n…"></textarea>
     ${vs.length > 1 ? `<div class="field"><label>Variantlar</label><div class="chips" id="vmode">
@@ -3885,6 +3948,10 @@ function bindRoster(d, id) {
     const next = vs[(vs.indexOf(x.textContent.trim()) + 1) % vs.length];
     try { await api(`/api/teacher/test/${id}/students/${x.dataset.varOf}`, { variant: next }); x.textContent = next; haptic("select"); }
     catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll("[data-open-att]").forEach(x => x.onclick = () => attemptEditor(x.dataset.openAtt));
+  document.querySelectorAll("[data-manual]").forEach(x => x.onclick = () => {
+    const st = d.students.find(s => String(s.id) === x.dataset.manual); if (st) manualEntry(id, st, () => rerender());
   });
   document.querySelectorAll("[data-del-st]").forEach(x => x.onclick = async () => {
     if (!(await confirmBox("O'quvchini ro'yxatdan o'chirasizmi? Skanerlangan natijasi ham o'chadi."))) return;
@@ -4155,7 +4222,8 @@ VIEWS.scan = async ({ id }) => {
       <span class="muted small" id="q-hint">Titullar shu telefonda saqlanadi — internet shart emas. Hammasini skanerlab bo'lgach «Botga yuborish»ni bosing. Tekshirish yoki tuzatish uchun ro'yxatdagi titulni bosing.</span>
       <div class="list" id="q-list"></div>
       <button type="button" class="btn block" id="q-send" disabled>📤 Botga yuborish</button>
-    </div>` : ""}
+    </div>
+    <div class="card" id="sc-roster" hidden></div>` : ""}
   </div>`;
   const video = document.getElementById("video"), still = document.getElementById("still"), cam = document.getElementById("cam");
   const statusEl = document.getElementById("cam-status"), quad = document.querySelector("#quad polygon"), review = document.getElementById("review");
@@ -4296,6 +4364,7 @@ VIEWS.scan = async ({ id }) => {
     const rec = {
       uid: newUid(), testId: testKey, created: Date.now(), payload: null, written, name, essays: [], error: null,
       photos: photo ? [photo] : [],
+      marks: { positions: (a.read.result && a.read.result.positions) || {}, page_w: SHEET_PAGE.width },
       r: {
         student: student ? { ...student } : null, pupil, id_source: idSource, id_read: number, id_status: res.sheet_number_status,
         code_status: student ? "ok" : (res.sheet_code === 0 ? "blank" : "unclear"), variant, variant_read: res.variant,
@@ -4413,6 +4482,33 @@ VIEWS.scan = async ({ id }) => {
     const label = st ? `№ ${pad3(st.number)} · ${esc(st.name)}` : p.name ? `${p.number ? `№ ${pad3(p.number)} · ` : ""}${esc(p.name)}` : "❗ O'quvchi aniqlanmadi — bosib tanlang";
     return label + (cls ? ` · 🏫 ${esc(cls)}` : "");
   }
+  function renderRoster() {
+    const box = document.getElementById("sc-roster"); if (!box || !d.students.length) return;
+    const queued = new Map();
+    for (const rec of queue) {
+      if (isPage2(rec)) continue;
+      const p = recPayload(rec), st = p.student_id ? d.students.find(x => x.id === p.student_id) : p.number ? d.students.find(x => x.number === +p.number) : null;
+      if (st) queued.set(st.id, rec);
+    }
+    const state = st => st.scanned ? "done" : queued.has(st.id) ? (queued.get(st.id).error ? "err" : "queue") : "wait";
+    const rank = { err: 0, wait: 1, queue: 2, done: 3 };
+    const rows = d.students.map(st => ({ st, s: state(st) })).sort((x, y) => rank[x.s] - rank[y.s] || x.st.number - y.st.number);
+    const count = k => rows.filter(r => r.s === k).length, missing = count("wait") + count("err");
+    const label = { done: "✅ skanerlangan", queue: "📥 telefonda — yuborilmagan", err: "❗ yuborilmadi — qayta urinib ko'ring", wait: "⏳ skanerlanmagan" };
+    box.hidden = false;
+    box.innerHTML = `<div class="row between"><b>👥 Ro'yxat: ${count("done") + count("queue")} / ${rows.length}</b>${missing ? `<span class="pill-tag wait">⏳ ${missing} ta yo'q</span>` : `<span class="pill-tag done">hammasi ✓</span>`}</div>
+      ${missing ? `<span class="muted small">Titul skanerlanmagan yoki o'qilmagan bo'lsa — qayta skanerlang yoki «✏️ Qo'lda» bosib javoblarini kiriting.</span>` : ""}
+      <div class="list">${rows.map(({ st, s }) => `<div class="item sc-r-${s}" style="cursor:default"><span class="rank">${pad3(st.number)}</span>
+        <span><b>${esc(st.name)}</b><small>${label[s]}</small></span>
+        ${s === "done" && st.attempt_id ? `<button type="button" class="btn plain sm" data-sc-open="${st.attempt_id}">📝 Natija</button>`
+          : s === "wait" || s === "err" ? `<button type="button" class="btn ghost sm" data-sc-manual="${st.id}">✏️ Qo'lda</button>` : ""}</div>`).join("")}</div>`;
+    box.querySelectorAll("[data-sc-open]").forEach(x => x.onclick = () => attemptEditor(x.dataset.scOpen));
+    box.querySelectorAll("[data-sc-manual]").forEach(x => x.onclick = () => {
+      const st = d.students.find(y => String(y.id) === x.dataset.scManual);
+      if (st) manualEntry(id, st, r => { st.scanned = true; st.attempt_id = r && r.attempt_id; renderRoster(); });
+    });
+  }
+
   async function refreshQueue() {
     if (!local) return;
     queue = await scanDB.all(testKey);
@@ -4431,6 +4527,7 @@ VIEWS.scan = async ({ id }) => {
     }).join("");
     qList.querySelectorAll("[data-rec]").forEach(el => el.onclick = () => { const rec = queue.find(x => x.uid === el.dataset.rec); if (rec) openRec(rec); });
     if (!sending) { qSend.disabled = !queue.length; qSend.textContent = queue.length ? `📤 Botga yuborish (${queue.length} ta)` : "📤 Botga yuborish"; }
+    renderRoster();
   }
 
   // Ro'yxatdagi titulni ochib tekshirish/tuzatish (skaner shu vaqtda to'xtab turadi)
@@ -4487,7 +4584,10 @@ VIEWS.scan = async ({ id }) => {
         if (rec.written) form.append("written", rec.written, "yozma.jpg");
         rec.essays.forEach((blob, i) => form.append("essay", blob, `esse-${i + 1}.jpg`));
         (rec.photos || []).forEach((blob, i) => form.append("photo", blob, `titul-${i + 1}.jpg`));
+        if (rec.marks && !isPage2(rec)) form.append("marks", JSON.stringify(rec.marks));
         const res = await apiForm(`/api/teacher/test/${id}/scan/upload`, form);
+        const done = d.students.find(x => x.id === res.student_id);  // ro'yxatda — «✅ skanerlangan»
+        if (done && res.attempt_id) { done.scanned = true; done.attempt_id = res.attempt_id; }
         saved++; if (res.written_queued) written++; if (rec.essays.length) essays++;
         await scanDB.del(rec.uid);
       } catch (e) {
@@ -4692,7 +4792,8 @@ async function attemptEditor(attemptId) {
   const mark = l => `<small class="${wrong.has(l) ? "bad-text" : "good-text"}">${wrong.has(l) ? "✗" : "✓"} kalit: ${esc(a.key[l] || "—")}</small>`;
   const modal = openModal(esc(a.name), `
     <div class="row between"><b id="ed-score">${num(a.points)} / ${num(a.max_points)} ball</b><button type="button" class="btn ghost sm" id="ed-card">📊 Natija kartasi</button></div>
-    ${a.closed ? `<span class="pill-tag wait" style="justify-self:start">⚠️ Natijalar e'lon qilingan — tuzatsangiz, o'quvchiga qayta yuborilmaydi</span>` : ""}
+    <div id="ed-sheet"></div>
+    ${a.closed ?`<span class="pill-tag wait" style="justify-self:start">⚠️ Natijalar e'lon qilingan — tuzatsangiz, o'quvchiga qayta yuborilmaydi</span>` : ""}
     ${a.variants.length > 1 ? `<div class="field"><label>Variant</label><div class="chips">${a.variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-ev="${v}">${v}</button>`).join("")}</div></div>` : ""}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2></div>
       ${w && w.image ? `<img src="${w.image}" alt="Yozma kataklar" style="width:100%;border-radius:10px;border:1px solid var(--line)">` : ""}
@@ -4700,15 +4801,71 @@ async function attemptEditor(attemptId) {
       ${w && w.status === "failed" && w.image ? `<button type="button" class="btn ghost sm" id="ed-retry" style="justify-self:start">🔁 AI qayta o'qisin</button>` : ""}
       ${texts.map(i => `<div class="textq"><b>${i.label}</b><span style="display:grid;gap:2px"><input class="input wq" data-q="${i.label}" value="${esc(answers[i.label] || "")}" placeholder="Javob" autocomplete="off">${mark(i.label)}</span></div>`).join("")}` : ""}
     ${choices.length ? `<div class="section-title"><h2>Test javoblari</h2><span class="muted small">xatolar qizil chiziq bilan</span></div>${bubbleSheet(choices, answers)}` : ""}
-    <button type="button" class="btn block" id="ed-save">💾 Saqlash va qayta hisoblash</button>`);
+    <button type="button" class="btn block" id="ed-save">💾 Saqlash va qayta hisoblash</button>
+    <div class="ed-actions">
+      <button type="button" class="btn ghost sm" id="ed-rename">✏️ Ismni tuzatish</button>
+      ${a.offline ? `<button type="button" class="btn ghost sm" id="ed-move">🔀 Boshqa o'quvchiga</button>` : ""}
+      <button type="button" class="btn ghost sm" id="ed-del" style="color:var(--bad)">🗑 O'chirish</button></div>
+    <div id="ed-form" hidden></div>`);
   const dialog = modal.firstElementChild;
+  // Skanerlangan titul surati: belgilangan javoblar — yashil (to'g'ri) / qizil (xato), to'g'risi — yashil halqa
+  const sheetBox = dialog.querySelector("#ed-sheet");
+  let drawSheet = () => {};
+  api(`/api/teacher/attempt/${attemptId}/sheet`).then(sh => {
+    if (sh.pending) { sheetBox.innerHTML = `<span class="muted small">📷 Titul surati botga yuborilgach shu yerda ko'rinadi (skanerda «Yuborish»ni tugating).</span>`; return; }
+    const img = new Image();
+    img.onload = () => {
+      sheetBox.innerHTML = `<canvas class="ed-canvas" title="Bosing — kattalashtirish"></canvas><span class="muted small">🟢 to'g'ri · 🔴 xato · javobni pastda o'zgartirsangiz — belgilar ham o'zgaradi</span>`;
+      const canvas = sheetBox.querySelector("canvas");
+      drawSheet = () => drawSheetMarks(canvas, img, sh.marks || {}, answers, a.key);
+      drawSheet();
+      canvas.onclick = () => openFileLink(sh.url);
+    };
+    img.src = sh.url;
+  }).catch(() => { sheetBox.remove(); });  // qo'lda kiritilgan yoki eski skaner — surat yo'q
   const markChoices = () => choices.forEach(i => {
     const row = dialog.querySelector(`.qrow[data-q="${i.label}"]`); if (!row) return;
     row.style.boxShadow = wrong.has(i.label) ? "inset 3px 0 0 var(--bad)" : "";
     row.title = `To'g'ri javob: ${a.key[i.label] || "—"}`;
   });
   markChoices();
-  if (choices.length) bindBubbles(answers);
+  if (choices.length) bindBubbles(answers, () => drawSheet());
+  // Ism, boshqa o'quvchiga ko'chirish (ID xato o'qilgan), o'chirish
+  const form = dialog.querySelector("#ed-form");
+  const closeAndRefresh = () => { S.teacherCache = null; S.useCache = false; modal.remove(); };
+  dialog.querySelector("#ed-rename").onclick = () => {
+    form.hidden = false;
+    form.innerHTML = `<div class="row" style="gap:8px"><input class="input" id="ef-name" value="${esc(a.name)}" style="flex:1" autocomplete="off"><button type="button" class="btn" id="ef-go">Saqlash</button></div>`;
+    form.querySelector("#ef-go").onclick = async () => {
+      try { await api(`/api/teacher/attempt/${attemptId}/rename`, { name: form.querySelector("#ef-name").value }); haptic("success"); toast("✅ Ism tuzatildi"); closeAndRefresh(); }
+      catch (e) { toast(e.message); haptic("error"); }
+    };
+  };
+  const move = dialog.querySelector("#ed-move");
+  if (move) move.onclick = () => {
+    form.hidden = false;
+    form.innerHTML = `<span class="muted small">Titulda ID xato bo'yalgan yoki xato o'qilgan bo'lsa: to'g'ri o'quvchining ID'sini yozing (ro'yxatdan yoki sinfdan).</span>
+      <div class="row" style="gap:8px"><input class="input" id="ef-num" inputmode="numeric" maxlength="4" placeholder="ID, masalan 0007" style="flex:1"><button type="button" class="btn" id="ef-go">Ko'chirish</button></div>`;
+    const go = form.querySelector("#ef-go");
+    go.onclick = async () => {
+      const number = form.querySelector("#ef-num").value.replace(/\D/g, "");
+      if (!number) return toast("ID'ni yozing");
+      try {
+        let r;
+        try { r = await api(`/api/teacher/attempt/${attemptId}/move`, { number }); }
+        catch (e) {
+          if (!(e.data && e.data.busy) || !(await confirmBox(e.message + "\n\nEski natijasi o'chadi."))) throw e;
+          r = await api(`/api/teacher/attempt/${attemptId}/move`, { number, replace: true });
+        }
+        haptic("success"); toast(`✅ Natija ${r.name} (ID ${pad3(r.number)}) ga ko'chirildi`); closeAndRefresh();
+      } catch (e) { toast(e.message); haptic("error"); }
+    };
+  };
+  dialog.querySelector("#ed-del").onclick = async () => {
+    if (!(await confirmBox(`${a.name} natijasini o'chirasizmi?\n\nO'quvchi ro'yxatda qoladi — titulni qayta skanerlash yoki qo'lda kiritish mumkin.`))) return;
+    try { await api(`/api/teacher/attempt/${attemptId}/delete`, {}); haptic("success"); toast("🗑 Natija o'chirildi"); closeAndRefresh(); }
+    catch (e) { toast(e.message); haptic("error"); }
+  };
   dialog.querySelectorAll("[data-ev]").forEach(x => x.onclick = () => { variant = x.dataset.ev; dialog.querySelectorAll("[data-ev]").forEach(y => y.classList.toggle("on", y === x)); haptic("select"); });
   dialog.querySelector("#ed-card").onclick = () => { modal.remove(); go("result", { id: attemptId }); };
   const retry = dialog.querySelector("#ed-retry");
@@ -4737,6 +4894,76 @@ async function attemptEditor(attemptId) {
   // Yopilganda ro'yxat yangi ballar bilan qayta chiziladi
   const observer = new MutationObserver(() => { if (!document.body.contains(modal)) { observer.disconnect(); if (!S.teacherCache) rerender(); } });
   observer.observe(document.body, { childList: true });
+}
+
+// Titul surati ustida: belgilangan javob to'g'ri — yashil, xato — qizil; to'g'ri javob (belgilanmagan) — yashil halqa.
+// marks.positions — {savol: {harf: [x, y, r]}} (titul sahifasi punktlarida), marks.page_w — sahifa kengligi
+function drawSheetMarks(canvas, img, marks, answers, key) {
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  const g = canvas.getContext("2d"); g.drawImage(img, 0, 0);
+  const pos = marks.positions || {}, k = marks.page_w ? img.naturalWidth / marks.page_w : 1;
+  const ring = (xy, color, fill) => {
+    if (!xy) return;
+    const [x, y, r] = xy;
+    g.beginPath(); g.arc(x * k, y * k, (r + 1.6) * k, 0, Math.PI * 2);
+    g.lineWidth = Math.max(2.5, 1.4 * k); g.strokeStyle = color; g.stroke();
+    if (fill) { g.fillStyle = fill; g.fill(); }
+  };
+  for (const [label, row] of Object.entries(pos)) {
+    const correct = String(key[label] || "").toUpperCase(), chosen = String(answers[label] || "").toUpperCase();
+    if (!correct) continue;
+    if (chosen && correct.includes(chosen)) ring(row[chosen], "#16a34a", "rgba(22,163,74,.28)");
+    else {
+      if (chosen) ring(row[chosen], "#dc2626", "rgba(220,38,38,.28)");
+      for (const letter of correct) ring(row[letter], "#16a34a", null);
+    }
+  }
+}
+
+// Skanerlanmagan (yo'qolgan, yirtilgan yoki o'qilmagan) titul: javoblarni qo'lda belgilab saqlash
+async function manualEntry(testId, student, onDone) {
+  let k; try { k = await api(`/api/teacher/test/${testId}/keys`); } catch (e) { return toast(e.message); }
+  const answers = {}, variants = Object.keys(k.keys || {});
+  let variant = student.variant && variants.includes(student.variant) ? student.variant : variants[0];
+  const choices = k.items.filter(i => i.kind === "choice").map(i => ({ ...i, options: i.options || 4 })), texts = k.items.filter(i => i.kind === "text");
+  const modal = openModal(`✏️ ${esc(student.name)}${student.number ? ` · ID ${pad3(student.number)}` : ""}`, `
+    <span class="muted small">Titul skanerlanmagan yoki o'qilmagan — javoblarni qog'ozga qarab belgilang. Saqlansa, ball va Rasch o'zi hisoblanadi.</span>
+    ${variants.length > 1 ? `<div class="field"><label>Variant</label><div class="chips">${variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-mv="${v}">${v}</button>`).join("")}</div></div>` : ""}
+    ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2></div>${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" placeholder="Javob" autocomplete="off"></div>`).join("")}` : ""}
+    ${choices.length ? `<div class="section-title"><h2>Test javoblari</h2><span class="muted small" id="me-count">0 / ${choices.length}</span></div>${bubbleSheet(choices, answers)}` : ""}
+    <button type="button" class="btn block" id="me-save">💾 Saqlash</button>`);
+  const dialog = modal.firstElementChild;
+  const count = () => { const el = dialog.querySelector("#me-count"); if (el) el.textContent = `${Object.keys(answers).length} / ${choices.length}`; };
+  if (choices.length) bindBubbles(answers, count);
+  dialog.querySelectorAll("[data-mv]").forEach(x => x.onclick = () => { variant = x.dataset.mv; haptic("select");
+    dialog.querySelectorAll("[data-mv]").forEach(y => y.classList.toggle("on", y === x)); });
+  const save = dialog.querySelector("#me-save");
+  save.onclick = async () => {
+    const payload = { student_id: student.id, variant, answers: { ...answers } };
+    dialog.querySelectorAll(".wq").forEach(x => { if (x.value.trim()) payload.answers[x.dataset.q] = x.value.trim(); });
+    if (!Object.keys(payload.answers).length && !(await confirmBox("Birorta javob belgilanmagan. Shunday saqlaysizmi?"))) return;
+    save.disabled = true; save.textContent = "Saqlanmoqda…";
+    try {
+      const r = await api(`/api/teacher/test/${testId}/scan/save`, payload);
+      haptic("success"); toast(`✅ ${r.name}: ${r.points == null ? "saqlandi (esse bahosi kutilmoqda)" : `${num(r.points)} / ${num(r.max_points)} ball`}`);
+      modal.remove(); S.teacherCache = null; S.useCache = false; onDone && onDone(r);
+    } catch (e) { toast(e.message); haptic("error"); save.disabled = false; save.textContent = "💾 Saqlash"; }
+  };
+}
+
+// «🧩 Tahlil»: har savol — necha foiz to'g'ri, har variantni nechta o'quvchi tanlagan; xato javob kalitdagidan ko'p
+// tanlangan bo'lsa — «kalitni tekshiring» (kalit xato kiritilgan bo'lishi mumkin)
+function analysisHTML(list, n) {
+  const rows = list.filter(q => q.dist).map(q => {
+    const max = Math.max(1, ...Object.values(q.dist));
+    return `<div class="an-row ${q.suspicious ? "warn" : ""}"><div class="an-head"><b>${q.label}</b><span class="${q.share >= 70 ? "good-text" : q.share >= 40 ? "" : "bad-text"}">${q.share}% to'g'ri</span>
+        ${q.suspicious ? `<span class="pill-tag wait">⚠️ Kalitni tekshiring</span>` : ""}</div>
+      <div class="an-bars">${Object.entries(q.dist).map(([l, c]) => `<div class="an-bar ${q.key.includes(l) ? "key" : l === q.top_wrong ? "top" : ""}">
+        <span>${l}</span><i style="width:${Math.round(c / max * 100)}%"></i><b>${c}</b></div>`).join("")}
+        ${q.blank ? `<div class="an-bar blank"><span>—</span><i style="width:${Math.round(q.blank / max * 100)}%"></i><b>${q.blank}</b></div>` : ""}</div></div>`;
+  }).join("");
+  return rows ? `<div class="section-title"><h2>Variantlar bo'yicha</h2><span class="muted small">${n} ta o'quvchi · yashil — kalit, qizil — eng ko'p xato</span></div>
+    <div class="card an-list">${rows}</div>` : "";
 }
 
 // ---------- Yozma javoblarni qo'lda tekshirish (36–44) ----------

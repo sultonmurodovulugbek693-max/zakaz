@@ -363,6 +363,13 @@ SCHEMA = [
         created_at TEXT,
         UNIQUE (tg_id, region, district)
     )""",
+    # Skanerlangan titul surati (Telegram'da — file_id) va doirachalar joyi: natijada yashil / qizil belgilar bilan
+    f"""CREATE TABLE IF NOT EXISTS attempt_sheets (
+        attempt_id {BIG} PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
+        file_id    TEXT,
+        marks      TEXT,
+        created_at TEXT
+    )""",
     # O'quvchi tarifi (FREE_IDS ustoz sotadi): muddat tugaguncha shu ustozning hamma mocklari bepul (o'z o'quvchisidek)
     f"""CREATE TABLE IF NOT EXISTS student_passes (
         teacher_id {BIG} NOT NULL,
@@ -471,7 +478,8 @@ MIGRATIONS = [
     ("tests", "mock_state", "TEXT NOT NULL DEFAULT ''"),     # '' → soon (30 daq qoldi) → opened → done (natija va sertifikat)
     # Jadvalli mockda price — «🤖 AI tekshiradi» narxi, price_teacher — «👩‍🏫 Ustoz tekshiradi» narxi (0 — bepul)
     ("tests", "price_teacher", "INTEGER NOT NULL DEFAULT 0"),
-    ("essay_payments", "choice", "TEXT"),  # mock oldidan o'quvchi tanlovi: ai | teacher (essesini kim tekshiradi)
+    ("essay_payments", "choice", "TEXT"),
+    ("student_passes", "stage", "INTEGER NOT NULL DEFAULT 0"),  # eslatma: 0 — yo'q, 1 — «1 kun qoldi», 2 — «tugadi»  # mock oldidan o'quvchi tanlovi: ai | teacher (essesini kim tekshiradi)
 ]
 
 
@@ -1203,10 +1211,34 @@ def _extend_pass(conn, teacher_id: int, student_id: int, days: int, now_at: str)
                        (teacher_id, student_id)).fetchone()
     start = max(row["expires_at"], now_at) if row else now_at
     until = (datetime.strptime(start[:16], "%Y-%m-%d %H:%M") + timedelta(days=days)).strftime("%Y-%m-%d %H:%M")
-    conn.execute("INSERT INTO student_passes (teacher_id, student_id, expires_at) VALUES (?, ?, ?) "
-                 "ON CONFLICT(teacher_id, student_id) DO UPDATE SET expires_at = excluded.expires_at",
-                 (teacher_id, student_id, until))
+    conn.execute("INSERT INTO student_passes (teacher_id, student_id, expires_at, stage) VALUES (?, ?, ?, 0) "
+                 "ON CONFLICT(teacher_id, student_id) DO UPDATE SET expires_at = excluded.expires_at, stage = 0",
+                 (teacher_id, student_id, until))  # uzaytirildi — eslatmalar qaytadan
     return until
+
+
+def last_pass_days(teacher_id: int, student_id: int) -> int:
+    """Oxirgi sotib olingan tarif necha kunlik (ilovadagi halqa: qolgan kun / jami)."""
+    with connect() as conn:
+        row = conn.execute("SELECT days FROM pass_payments WHERE teacher_id = ? AND student_id = ? AND status = 'paid' "
+                           "ORDER BY id DESC LIMIT 1", (teacher_id, student_id)).fetchone()
+    return row["days"] if row else 0
+
+
+def passes_to_remind(soon_at: str, now_at: str) -> list[dict]:
+    """Eslatma vaqti kelgan tariflar: 1 kun qolgan (stage 0) yoki tugagan (stage < 2)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.teacher_id, p.student_id, p.expires_at, p.stage, u.full_name AS teacher_name FROM student_passes p "
+            "LEFT JOIN users u ON u.tg_id = p.teacher_id "
+            "WHERE (p.stage = 0 AND p.expires_at <= ? AND p.expires_at > ?) OR (p.stage < 2 AND p.expires_at <= ?)",
+            (soon_at, now_at, now_at)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_pass_stage(teacher_id: int, student_id: int, stage: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE student_passes SET stage = ? WHERE teacher_id = ? AND student_id = ?", (stage, teacher_id, student_id))
 
 
 _PASS_COLS = "id, teacher_id, student_id, days, amount, status, txn, note, created_at, decided_at"
@@ -1842,6 +1874,7 @@ BACKUP_TABLES = {
     "essay_wallets": "*",  # begonalarning esse krediti (pul to'langan — yo'qolmasin)
     "wallet_payments": "id, teacher_id, student_id, essays, amount, status, receipt_hash, txn, note, created_at, decided_at",
     "mock_signups": "*",
+    "attempt_sheets": "*",
     "student_passes": "*",
     "pass_payments": "id, teacher_id, student_id, days, amount, status, receipt_hash, txn, note, created_at, decided_at",
     "test_files": "*",  # faqat Telegram file_id — fayllarning o'zi Telegram'da
@@ -2497,6 +2530,38 @@ def delete_student(test_id: int, student_id: int) -> None:
         if row and row["attempt_id"]:
             conn.execute("DELETE FROM attempts WHERE id = ?", (row["attempt_id"],))
         conn.execute("DELETE FROM students WHERE id = ? AND test_id = ?", (student_id, test_id))
+
+
+def save_sheet_marks(attempt_id: int, marks: str) -> None:
+    """Titul o'qilganda: doirachalar joyi (surat file_id'si — bot albomni yuborgach)."""
+    with connect() as conn:
+        conn.execute("INSERT INTO attempt_sheets (attempt_id, marks, created_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(attempt_id) DO UPDATE SET marks = excluded.marks, file_id = NULL", (attempt_id, marks, _now()))
+
+
+def set_sheet_file(attempt_id: int, file_id: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO attempt_sheets (attempt_id, file_id, created_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(attempt_id) DO UPDATE SET file_id = excluded.file_id", (attempt_id, file_id, _now()))
+
+
+def get_sheet(attempt_id: int) -> dict | None:
+    with connect() as conn:
+        return _row(conn.execute("SELECT * FROM attempt_sheets WHERE attempt_id = ?", (attempt_id,)).fetchone())
+
+
+def move_attempt(attempt_id: int, tg_id: int, name: str) -> None:
+    """Natija boshqa o'quvchiga (ID xato o'qilgan): ichki ID va ism; eski ro'yxat bog'lanishi uziladi."""
+    with connect() as conn:
+        conn.execute("UPDATE students SET attempt_id = NULL WHERE attempt_id = ?", (attempt_id,))
+        conn.execute("UPDATE attempts SET tg_id = ?, student_name = ? WHERE id = ?", (tg_id, name, attempt_id))
+
+
+def rename_attempt(attempt_id: int, name: str) -> None:
+    """Natijadagi ism (va ro'yxatdagi o'quvchi ismi ham — bog'langan bo'lsa)."""
+    with connect() as conn:
+        conn.execute("UPDATE attempts SET student_name = ? WHERE id = ?", (name, attempt_id))
+        conn.execute("UPDATE students SET name = ? WHERE attempt_id = ?", (name, attempt_id))
 
 
 def link_student_attempt(student_id: int, attempt_id: int | None) -> None:
