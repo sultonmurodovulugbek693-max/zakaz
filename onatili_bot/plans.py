@@ -316,6 +316,19 @@ def grant(tg_id: int, period: str, count: int = 1) -> dict:
     return status(tg_id)
 
 
+def revoke(tg_id: int, period: str) -> dict:
+    """AI tasdiqlagan obuna bekor qilindi (soxta chek): shu to'lov qo'shgan kunlar olib tashlanadi (hozirdan oldinga emas)."""
+    months = tariff_months(period)
+    key = f"m{months}" if months is not None else ALIASES.get(str(period).lower().strip())
+    sub = db.get_subscription(tg_id)
+    if key is None or not sub:
+        return status(tg_id)
+    days = 30 * months if months is not None else PERIODS[key][1]
+    ends = max(now(), _expires(sub) - timedelta(days=days))
+    db.set_subscription(tg_id, sub["plan"], ends.isoformat(timespec="seconds"))
+    return status(tg_id)
+
+
 def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written".
     Avval oylik limitdan, u tugasa — esse paketidan (faqat faol obuna bilan)."""

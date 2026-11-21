@@ -1014,9 +1014,9 @@ async def send_receipt_to_admins(bot: Bot, payment_id: int, as_photo: bool, reas
         return
     caption = (f"🧾 <b>Yangi to'lov</b> · {plans.payment_title(payment)} — "
                f"<b>{plans.money(payment['amount'])} so'm</b>\n{LINE}\n{_who(payment)}")
-    if note:
-        caption += f"\n{LINE}\n{esc(note)}"
-        markup = None
+    if note:  # AI tasdiqlagan — kartangizga tushmagan bo'lsa «Bekor qilish» (obuna kunlari / paket olinadi)
+        caption += f"\n{LINE}\n{esc(note)}\nPul kartangizga tushganini tekshiring. Tushmagan bo'lsa — «Bekor qilish»."
+        markup = inline([[("❌ Bekor qilish", f"pay:undo:{payment_id}")]])
     else:
         if reasons:
             caption += f"\n🤖 AI: {esc('; '.join(reasons))}"
@@ -1054,6 +1054,31 @@ async def decide_payment(callback: CallbackQuery) -> None:
     payment = await asyncio.to_thread(db.get_payment, int(raw))
     if not payment:
         await callback.answer("To'lov topilmadi", show_alert=True)
+        return
+    if action == "undo":  # AI tasdiqlagan, lekin pul tushmagan — obuna kunlari yoki paket qaytarib olinadi
+        if not await asyncio.to_thread(db.undo_payment, payment["id"], callback.from_user.id):
+            await callback.answer("Bu to'lov allaqachon bekor qilingan", show_alert=True)
+            return
+        if payment["period"] == plans.PACK:
+            essays = payment["essays"] or (await asyncio.to_thread(plans.pack))["essays"]
+            left = await asyncio.to_thread(db.take_credits, payment["tg_id"], essays)
+            done = f"−{essays} esse (qoldi {left})"
+        else:
+            status = await asyncio.to_thread(plans.revoke, payment["tg_id"], payment["period"])
+            done = f"obuna {status.get('expires') or 'tugadi'} gacha qisqardi"
+        await callback.answer("❌ Bekor qilindi")
+        try:
+            await callback.bot.send_message(
+                payment["tg_id"], "❌ <b>To'lovingiz bekor qilindi</b> — pul kartaga tushmagan. "
+                f"{esc(plans.payment_title(payment))} qaytarib olindi."
+                + (f" Xato bo'lsa — @{esc(config.ADMIN_CONTACT)} ga yozing." if config.ADMIN_CONTACT else ""))
+        except Exception:
+            logger.warning("Bekor qilish xabari yuborilmadi")
+        try:
+            await callback.message.edit_caption(caption=f"{callback.message.caption or ''}\n{LINE}\n"
+                                                f"❌ Bekor qildi: {esc(callback.from_user.full_name)} — {esc(done)}")
+        except TelegramBadRequest:
+            pass
         return
     decided = await asyncio.to_thread(db.decide_payment, payment["id"], "paid" if action == "ok" else "rejected",
                                       callback.from_user.id)

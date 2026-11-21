@@ -511,6 +511,48 @@ class SalesClosed(ServerBase):
         plans.SALES_ENABLED, webapp.SALES_ENABLED = self._sales
         await super().asyncTearDown()
 
+    async def test_admin_undoes_ai_approved_payment(self):
+        """AI soxta chekni tasdiqlab yuborsa: admin «Bekor qilish» — obuna kunlari / paket kreditlari qaytarib olinadi."""
+        replies, edits = [], []
+
+        async def answer(text=None, **_):
+            replies.append(text)
+
+        async def edit_caption(caption=None, **_):
+            edits.append(caption)
+        admin = next(iter(plans.ADMIN_IDS), None) or 999
+        added = admin not in plans.ADMIN_IDS
+        plans.ADMIN_IDS.add(admin)
+        try:
+            before = plans._expires(db.get_subscription(OWNER))
+            pay = db.create_payment(OWNER, "month", 99_000)
+            db.attach_receipt(pay["id"], "file-1")
+            self.assertTrue(db.decide_payment(pay["id"], "paid", 0))  # AI tasdiqladi
+            plans.grant(OWNER, "month")
+            cb = types.SimpleNamespace(data=f"pay:undo:{pay['id']}", from_user=types.SimpleNamespace(id=admin, full_name="Admin"),
+                                       answer=answer, bot=self.bot,
+                                       message=types.SimpleNamespace(caption="chek", edit_caption=edit_caption))
+            await bot.decide_payment(cb)
+            self.assertEqual(replies[-1], "❌ Bekor qilindi")
+            after = plans._expires(db.get_subscription(OWNER))
+            self.assertLess(abs((after - before).total_seconds()), 5)  # qo'shilgan 30 kun olib tashlandi
+            self.assertEqual(db.get_payment(pay["id"])["status"], "rejected")
+            await bot.decide_payment(cb)  # ikkinchi marta — o'zgarmaydi
+            self.assertIn("allaqachon", replies[-1])
+
+            pack = db.create_payment(OWNER, plans.PACK, 59_000, 100)
+            db.attach_receipt(pack["id"], "file-2")
+            db.decide_payment(pack["id"], "paid", 0)
+            plans.add_pack(OWNER, 100)
+            db.add_credits(OWNER, 5)  # boshqa yo'l bilan olingan kredit — tegilmaydi
+            cb.data = f"pay:undo:{pack['id']}"
+            await bot.decide_payment(cb)
+            self.assertEqual(db.get_credits(OWNER), 5)
+            self.assertEqual(db.take_credits(OWNER, 50), 0)  # manfiyga tushmaydi
+        finally:
+            if added:
+                plans.ADMIN_IDS.discard(admin)
+
     async def test_anyone_creates_essay_needs_plan(self):
         """Bot hamma uchun bepul: obunasiz o'qituvchi ham test yaratadi; 45-esse faqat tarif (obuna) bilan ochiladi."""
         status, _ = await self.create()

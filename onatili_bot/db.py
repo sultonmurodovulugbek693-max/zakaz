@@ -2494,6 +2494,23 @@ def decide_payment(payment_id: int, status: str, admin_id: int) -> bool:
             (status, _now(), admin_id, payment_id)).rowcount)
 
 
+def undo_payment(payment_id: int, admin_id: int) -> bool:
+    """AI tasdiqlagan to'lovni admin bekor qildi (soxta chek): paid → rejected, bir marta."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "UPDATE payments SET status = 'rejected', decided_at = ?, admin_id = ? WHERE id = ? AND status = 'paid'",
+            (_now(), admin_id, payment_id)).rowcount)
+
+
+def take_credits(tg_id: int, essays: int) -> int:
+    """Paket bekor qilindi: kreditlar olinadi (manfiyga tushmaydi). Qaytaradi — qolgan kredit."""
+    with connect() as conn:
+        # CASE — SQLite (skalyar MAX) va PostgreSQL (GREATEST) ikkalasida bir xil ishlaydi
+        row = conn.execute("UPDATE credits SET essays = CASE WHEN essays > ? THEN essays - ? ELSE 0 END, updated_at = ? "
+                           "WHERE tg_id = ? RETURNING essays", (essays, essays, _now(), tg_id)).fetchone()
+    return row["essays"] if row else 0
+
+
 def list_payments(status: str | None = None, limit: int = 30) -> list[dict]:
     with connect() as conn:
         sql = ("SELECT p.*, u.full_name, u.username FROM payments p LEFT JOIN users u ON u.tg_id = p.tg_id "
