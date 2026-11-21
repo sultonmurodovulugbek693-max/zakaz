@@ -127,6 +127,36 @@ def tariff_months(key: str) -> int | None:
     return int(key[1:]) if key[:1] == "m" and key[1:].isdigit() and 1 <= int(key[1:]) <= TARIFF_MONTHS_MAX else None
 
 
+# ---------- Begona o'qituvchi (admin / FREE_IDS emas): begonalar puli platformaga, ulushi o'qituvchi balansiga ----------
+# Begona o'quvchi mock essesi yoki kredit paketi uchun to'laydi → pul PLATFORMA kartasiga (card()) → tasdiqlangach
+# o'qituvchi balansiga ulushi (20%) yoziladi → balans withdraw_min ga yetsa «💸 Yechib olish» → admin o'tkazadi.
+# AI xarajati platformaniki (shu 80% dan). platform_share = 0 — o'chiq: pul avvalgidek o'qituvchi kartasiga.
+REVSHARE = {"platform_share": 80, "min_essay_price": 10_000, "withdraw_min": 100_000}
+
+
+def platform_share() -> int:
+    return max(0, min(100, setting("platform_share", REVSHARE["platform_share"])))
+
+
+def platform_routed(teacher_id: int) -> bool:
+    """Shu o'qituvchining begonalari to'lagan pul platformaga tushadimi (admin / FREE_IDS — o'z kartasiga)."""
+    return not ai_unlimited(teacher_id) and platform_share() > 0
+
+
+def teacher_cut(amount: int) -> int:
+    """To'lovdan o'qituvchiga tegishli qism (so'm): 10 000 → 2 000 (platforma 80%)."""
+    return max(0, amount - round(amount * platform_share() / 100))
+
+
+def min_essay_price() -> int:
+    """Begona o'qituvchida bitta esse (1 kredit) narxi kamida shuncha — AI xarajati va platforma ulushi qoplansin."""
+    return max(0, setting("min_essay_price", REVSHARE["min_essay_price"]))
+
+
+def withdraw_min() -> int:
+    return max(1000, setting("withdraw_min", REVSHARE["withdraw_min"]))
+
+
 def ai_unlimited(tg_id: int) -> bool:
     """AI cheksiz: admin va Render'dagi FREE_IDS. Botda /ruxsat bilan qo'shilgan o'qituvchi test yaratadi,
     lekin AI esse tekshiruvi uning kreditidan yechiladi (o'qituvchi to'laydi — o'quvchilari foydalanadi)."""

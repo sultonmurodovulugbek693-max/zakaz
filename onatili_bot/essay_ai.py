@@ -142,6 +142,8 @@ RECEIPT_PROMPT = (
     "qo'shib yozilgan yoki shrift mos emasga o'xshasa true. note — qisqa izoh (o'zbekcha)."
 )
 
+RECEIPT_MODEL_TIMEOUT = 20
+
 RECEIPT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -158,8 +160,9 @@ RECEIPT_SCHEMA = {
 
 async def read_receipt(image: bytes, mime: str = "image/jpeg") -> dict:
     """To'lov chekini o'qiydi (AI_PROVIDER'da, arzon): summa, sana, qabul qiluvchi karta/ism, tranzaksiya raqami."""
+    # Har Gemini modeliga 20 soniya: asosiy model osilib qolsa ham zaxiralar umumiy 90 soniyaga (webapp) sig'adi
     out, _usage = await _call(RECEIPT_PROMPT, "Shu chekni o'qing.", [(image, mime)], RECEIPT_SCHEMA, effort="low",
-                              kind="receipt")
+                              kind="receipt", timeout=RECEIPT_MODEL_TIMEOUT)
     try:
         data = json.loads(out)
     except json.JSONDecodeError as error:
@@ -309,7 +312,9 @@ def _gemini_schema(schema: dict) -> dict:
     return schema
 
 
-async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None) -> tuple[str, dict]:
+async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
+                  timeout: float = 120) -> tuple[str, dict]:
+    """timeout — har model uchun (soniya): javob bermasa navbatdagi zaxira modelga o'tiladi."""
     import aiohttp
 
     parts = [{"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode()}} for data, mime in images]
@@ -331,7 +336,7 @@ async def _gemini(system: str, text: str, images: list[tuple[bytes, str]], schem
     for index, model in enumerate(models):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY}) as response:
                     payload = await response.json(content_type=None)
                     if response.status == 429 or response.status >= 500:
@@ -423,7 +428,7 @@ def _record(kind: str, model: str, usage: dict | None, limited: bool = False) ->
 
 async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema: dict | None,
                 provider: str | None = None, effort: str = "medium", kind: str = "other",
-                model: str | None = None) -> tuple[str, dict]:
+                model: str | None = None, timeout: float | None = None) -> tuple[str, dict]:
     if not provider:  # ish turiga qarab — admin tanlovi
         provider, routed_model = route({"essay": "essay", "receipt": "receipt"}.get(kind, "written"))
         model = model or routed_model
@@ -437,7 +442,7 @@ async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema:
         if provider == "claude":
             out, usage = await _claude(system, text, images, schema, effort, model)
         else:
-            out, usage = await _gemini(system, text, images, schema)
+            out, usage = await _gemini(system, text, images, schema, **({"timeout": timeout} if timeout else {}))
     except AIError as error:
         text_error = str(error).lower()
         await asyncio.to_thread(_record, kind, model, None, "429" in text_error or "limit" in text_error)

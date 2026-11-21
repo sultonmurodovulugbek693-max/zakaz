@@ -211,6 +211,9 @@ async def bootstrap(request: web.Request) -> web.Response:
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
         "practice": essay_ai.essay_enabled() and (bool(teachers) or bool(wallets)),
         "my_card": my_card,
+        # Begona o'qituvchi: begonalar puli platformaga, ulushi balansiga; esse narxi kamida min_price
+        "revshare": {"teacher_percent": 100 - await run(plans.platform_share), "min_price": await run(plans.min_essay_price)}
+        if await run(plans.platform_routed, uid) else None,
         "paid_ai": essay_ai.paid_enabled(),  # oflayn testda «💎 AI tekshiruvi (Claude)» tanlovi
         "free_ai": unlimited and essay_ai.enabled(),  # yozma javoblarni bepul Gemini o'qiydi
         "can_public": unlimited,  # «Bugungi mock»ni hamma o'quvchiga ko'rsatish — faqat FREE_IDS / admin
@@ -333,9 +336,61 @@ async def essay_warning(test: dict, user: dict) -> str | None:
 
 
 def teacher_card(teacher_id: int) -> dict:
-    """Ustozning to'lov kartasi (begonalar esse tekshiruvini shunga to'laydi) — mock yaratishda bir marta kiritiladi."""
+    """Ustozning to'lov kartasi (begonalar esse tekshiruvini shunga to'laydi) — mock yaratishda bir marta kiritiladi.
+    Begona o'qituvchida (plans.platform_routed) begonalar platformaga to'laydi — bu karta daromadini olish uchun."""
     saved = db.get_settings()
     return {"number": saved.get(f"teacher_card:{teacher_id}", ""), "holder": saved.get(f"teacher_holder:{teacher_id}", "")}
+
+
+def payee_of(teacher_id: int) -> str | None:
+    """Begona o'quvchi puli kimga: "platform" — platforma kartasiga (begona o'qituvchi), None — ustozning o'ziga."""
+    return "platform" if plans.platform_routed(teacher_id) else None
+
+
+def pay_card(teacher_id: int, payee: str | None) -> dict:
+    """To'lov kartasi: platformaga bo'lsa — platforma kartasi (admin /sozlama), aks holda ustoz kartasi."""
+    return plans.card() if payee == "platform" else teacher_card(teacher_id)
+
+
+def essay_price_of(test: dict) -> int:
+    """Begonaning mock esse narxi: begona o'qituvchida kamida min_essay_price (oldin qo'yilgan arzon narx ham)."""
+    price = int(test.get("price") or 0)
+    if price and plans.platform_routed(test["owner_id"]):
+        price = max(price, plans.min_essay_price())
+    return price
+
+
+async def credit_share(source: str, pay: dict, teacher_id: int) -> None:
+    """Platformaga tushgan to'lov tasdiqlandi — o'qituvchi ulushi balansiga (bitta to'lov — bir marta)."""
+    amount = int(pay.get("amount") or 0)
+    if pay.get("payee") != "platform" or amount <= 0:
+        return
+    share = await run(plans.teacher_cut, amount)
+    await run(db.add_earning, teacher_id, source, pay["id"], pay.get("student_id"), amount, share)
+
+
+def platform_decider(by_id: int) -> bool:
+    """Platformaga tushgan to'lovni ustozdan tashqari kim bekor qila / tasdiqlay oladi: admin va FREE_IDS (karta ularniki)."""
+    return plans.can_manage(by_id)
+
+
+async def read_receipt_for(pay: dict, teacher_id: int, data: bytes, mime: str) -> tuple[bool, list[str], str | None]:
+    """Chekni AI o'qiydi faqat admin / FREE_IDS ustozlarida. Begona o'qituvchida (pul platformaga) — AI o'qimaydi,
+    chek ustozga boradi va u o'zi tasdiqlaydi (nusxasi adminga — teacher_approved_notice)."""
+    if pay.get("payee") == "platform":
+        return False, ["chekni ustoz tekshiradi"], None
+    return await verify_receipt(data, mime, pay["amount"], await run(pay_card, teacher_id, pay.get("payee")))
+
+
+async def teacher_approved_notice(kind: str, pay: dict, by_id: int) -> None:
+    """Ustoz platforma kartasiga tushgan chekni o'zi tasdiqladi (20% balansiga): nusxasi adminlarga «Bekor qilish» bilan —
+    soxta chek bo'lsa admin bekor qiladi, ulush ham qaytib olinadi."""
+    if pay.get("payee") != "platform" or platform_decider(by_id) or "platform_approved_notice" not in HOOKS:
+        return
+    try:
+        await HOOKS["platform_approved_notice"](kind, pay["id"])
+    except Exception:
+        logger.warning("Ustoz tasdiqlagan chek adminga yuborilmadi", exc_info=True)
 
 
 async def is_outsider(test: dict, student_id: int) -> bool:
@@ -358,7 +413,8 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
     Chekni botga yuboradi, AI tekshiradi. None — to'lov kerak emas (o'quvchisi, to'langan yoki narx qo'yilmagan)."""
     if test["fmt"] != "milliy" or not await is_outsider(test, user["id"]):
         return None
-    price, card = int(test.get("price") or 0), await run(teacher_card, test["owner_id"])
+    price = await run(essay_price_of, test)
+    card = await run(pay_card, test["owner_id"], await run(payee_of, test["owner_id"]))
     if not price or not card["number"]:
         return None
     if test.get("opens_at"):  # «Bugungi mock» — o'quvchi tanlovi va to'lovi (mock_choice_info)
@@ -427,7 +483,7 @@ async def mock_gate(test: dict, user: dict) -> None:
     if phase == "closed":
         raise ApiError(409, "Mock yopilgan — natijalar tekshirilgach e'lon qilinadi", mock=card)
     started = await run(db.live_started, test["id"], user["id"])
-    if phase == "late" and not started:
+    if phase == "late" and not started and not await mock_entered(test, user["id"]):
         raise ApiError(409, f"Kirish vaqti tugagan ({test['entry_until'][11:16]} gacha edi)", mock=card)
     choice = await mock_choice_info(test, user)
     if choice:  # avval: esseni kim tekshiradi (AI / ustoz) va pullik bo'lsa — to'lov (karta → chek → AI)
@@ -438,6 +494,14 @@ async def mock_gate(test: dict, user: dict) -> None:
 
 CHOICES = {"ai": "🤖 AI tekshiradi", "teacher": "👩‍🏫 Ustoz tekshiradi"}
 DEFAULT_MOCK_CHANNEL = "@Til_va_adabiyot_Xalilov"  # yangi mockning majburiy obunasida oldindan turadi (o'chirsa bo'ladi)
+
+
+async def mock_entered(test: dict, student_id: int) -> bool:
+    """Kirish vaqtida kirgan: mockni boshlagan yoki tanlov / to'lovni boshlagan (to'lov yozuvi faqat kirish vaqtida
+    ochiladi). To'lov va chek tekshiruvi cho'zilib, shu orada kirish vaqti o'tsa ham o'quvchi mockdan qolmaydi."""
+    if await run(db.live_started, test["id"], student_id):
+        return True
+    return bool(await run(db.essay_payment_of, test["id"], student_id))
 
 
 async def mock_choice_info(test: dict, user: dict) -> dict | None:
@@ -473,8 +537,11 @@ async def mock_choice(request: web.Request) -> web.Response:
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test or not test.get("opens_at"):
         raise ApiError(404, "Mock topilmadi")
-    if mock_phase(test) == "closed":
-        raise ApiError(409, "Mock yopilgan")
+    phase = mock_phase(test)
+    if phase in ("soon", "closed"):  # tanlov / to'lov — faqat kirish vaqtida (shu bilan «kirgan» hisoblanadi)
+        raise ApiError(409, "Mock hali ochilmagan" if phase == "soon" else "Mock yopilgan")
+    if phase == "late" and not await mock_entered(test, user["id"]):  # kirish vaqtidan keyin yangi to'lov olinmaydi
+        raise ApiError(409, f"Kirish vaqti tugagan ({test['entry_until'][11:16]} gacha edi)")
     info = await mock_choice_info(test, user)
     if not info:
         return ok({"ok": True, "status": "paid"})
@@ -530,8 +597,9 @@ async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -
 
 async def mock_cards(user: dict) -> list[dict]:
     """Hamma o'quvchiga ko'rinadigan mocklar (FREE_IDS / admin ustozlarniki): bo'lajak, ochiq va 12 soat ichida yopilgan."""
-    since = (plans.now() - timedelta(hours=12)).strftime(TIME_FMT)
-    rows = [t for t in await run(db.public_mocks, since) if plans.ai_unlimited(t["owner_id"])]
+    now = plans.now()
+    since = (now - timedelta(hours=12)).strftime(TIME_FMT)
+    rows = [t for t in await run(db.public_mocks, since, now.strftime(TIME_FMT)) if plans.ai_unlimited(t["owner_id"])]
     if not rows:
         return []
     return [await mock_card(row, user, await run(db.mock_signups, row["id"])) for row in rows]
@@ -797,32 +865,50 @@ async def essay_scan_upload(request: web.Request) -> web.Response:
     return ok(await read_essay_scan(user["id"], test["id"], notify=False))
 
 
-async def essay_ai_ok(test: dict, student_id: int) -> bool:
-    """Onlayn mock essesini AI tekshiradimi: ustozning o'quvchisi — ustoz kreditidan; begona — o'zi to'lagan bo'lsa."""
+async def _teacher_charge(owner_id: int) -> str | None:
+    """Ustozning 1 AI krediti: yechildi — "teacher" (AI cheksiz bo'lsa — "free", qaytarish shart emas), yetmadi — None."""
+    if not await ai_allowed(owner_id, "essays"):
+        return None
+    return "free" if plans.ai_unlimited(owner_id) else "teacher"
+
+
+async def essay_ai_charge(test: dict, student_id: int) -> str | None:
+    """Onlayn mock essesini AI tekshiradimi va kimning hisobidan: ustozning o'quvchisi — ustoz kreditidan; begona —
+    o'zi to'lagan bo'lsa. None — AI tekshirmaydi; "free" — kredit yechilmadi (o'quvchi pul to'lagan / AI cheksiz);
+    "wallet" — o'quvchining shu ustozdagi 1 krediti; "teacher" — ustozning 1 krediti. AI esseni tekshira olmasa,
+    yechilgan kredit qaytariladi (bot.grade_one)."""
     if not essay_ai.essay_enabled():
-        return False
+        return None
     if test.get("opens_at"):  # «Bugungi mock»: o'quvchi tanlovi — «🤖 AI tekshirsin» (to'langan) yoki «👩‍🏫 Ustoz»
         pay = await run(db.essay_payment_of, test["id"], student_id)
         if not pay or pay["status"] != "paid" or pay.get("choice") != "ai":
-            return False
-        return pay["amount"] > 0 or await ai_allowed(test["owner_id"], "essays")  # bepul — ustoz kreditidan
+            return None
+        return "free" if pay["amount"] > 0 else await _teacher_charge(test["owner_id"])  # bepul — ustoz kreditidan
     if await is_outsider(test, student_id):
         pay = await run(db.essay_payment_of, test["id"], student_id)
         if pay and pay["status"] == "paid":
-            return True  # ustoz krediti ishlatilmaydi
-        return await run(db.wallet_use, test["owner_id"], student_id)  # yoki o'quvchining shu ustozdagi 1 krediti
-    return await ai_allowed(test["owner_id"], "essays")
+            return "free"  # ustoz krediti ishlatilmaydi
+        # yoki o'quvchining shu ustozdagi 1 krediti
+        return "wallet" if await run(db.wallet_use, test["owner_id"], student_id) else None
+    return await _teacher_charge(test["owner_id"])
+
+
+async def essay_ai_ok(test: dict, student_id: int) -> bool:
+    return bool(await essay_ai_charge(test, student_id))
 
 
 async def _paid_test(request: web.Request, user: dict) -> dict:
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test or (test.get("mode") or "online") != "online" or test["fmt"] != "milliy":
         raise ApiError(404, "Test topilmadi")
+    if test.get("opens_at"):  # jadvalli mockda to'lov — faqat «mock-choice» orqali (kirish vaqti tekshiriladi)
+        raise ApiError(409, "To'lov kerak emas")
     if test["closed"]:
         raise ApiError(409, "Mock yopilgan — natijalar e'lon qilingan")
     if not await is_outsider(test, user["id"]):
         raise ApiError(409, "Siz ustozning o'quvchisisiz — to'lov kerak emas")
-    if not test.get("price") or not (await run(teacher_card, test["owner_id"]))["number"]:
+    payee = await run(payee_of, test["owner_id"])
+    if not test.get("price") or not (await run(pay_card, test["owner_id"], payee))["number"]:
         raise ApiError(409, "To'lov kerak emas")
     return test
 
@@ -832,8 +918,9 @@ async def essay_pay_start(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await _paid_test(request, user)
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
-    price, card = int(test["price"]), await run(teacher_card, test["owner_id"])
-    pay = await run(db.start_essay_payment, test["id"], user["id"], price)
+    payee = await run(payee_of, test["owner_id"])
+    price, card = await run(essay_price_of, test), await run(pay_card, test["owner_id"], payee)
+    pay = await run(db.start_essay_payment, test["id"], user["id"], price, None, payee)
     if pay["status"] == "open" and "send_text" in HOOKS:
         try:
             await HOOKS["send_text"](
@@ -900,16 +987,18 @@ async def check_essay_receipt(payment_id: int, data: bytes, mime: str) -> dict:
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
     digest = hashlib.sha256(data).hexdigest()
-    good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["owner_id"]))
+    good, reasons, txn = await read_receipt_for(pay, pay["owner_id"], data, mime)
     if await run(db.receipt_used, digest, txn, payment_id):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
     status = "paid" if good else "review"
     await run(db.save_essay_receipt, payment_id, base64.b64encode(data).decode(), mime, digest, txn, "; ".join(reasons), status)
+    if good:
+        await credit_share("essay", pay, pay["owner_id"])
     if "send_text" in HOOKS:
         text = (f"✅ <b>To'landi!</b> · {html.escape(pay['title'])}\nEsse maydoni ochildi — ilovada kod "
                 f"<b>{pay['code']}</b> ni kiriting. Essengizni AI imtihondagidek tekshiradi." if good else
                 f"⏳ <b>Chek tekshirilmoqda — kutib turing</b> · {html.escape(pay['title'])}\n"
-                "Avtomatik tasdiqlanmadi, ustoz ko'rib chiqadi va bot xabar beradi.")
+                "Ustoz ko'rib chiqadi va bot xabar beradi.")
         try:
             await HOOKS["send_text"](pay["student_id"], text)
         except Exception:
@@ -947,11 +1036,17 @@ async def essay_payment_decide(request: web.Request) -> web.Response:
 async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> dict:
     """Mock egasi (yoki admin): chekni tasdiqlaydi (esse ochiladi) yoki rad etadi / AI tasdiqlaganini bekor qiladi."""
     pay = await run(db.get_essay_payment, payment_id)
-    if not pay or (pay["owner_id"] != by_id and by_id not in ADMIN_IDS):
+    platform = bool(pay) and pay.get("payee") == "platform"
+    if not pay or (pay["owner_id"] != by_id and by_id not in ADMIN_IDS and not (platform and platform_decider(by_id))):
         raise ApiError(404, "To'lov topilmadi")
     allowed = ("open", "review", "rejected") if approve else ("open", "review", "paid")
     if not await run(db.decide_essay_payment, payment_id, "paid" if approve else "rejected", allowed):
         raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+    if approve:
+        await credit_share("essay", pay, pay["owner_id"])
+        await teacher_approved_notice("essay", pay, by_id)
+    else:
+        await run(db.remove_earning, "essay", payment_id)
     if "send_text" in HOOKS:
         text = (f"✅ <b>To'lov tasdiqlandi</b> · {html.escape(pay['title'])}\nEsse maydoni ochildi — kod "
                 f"<b>{pay['code']}</b>." if approve else
@@ -976,7 +1071,9 @@ PACK_PRICE_MIN, PACK_PRICE_MAX = 1000, 5_000_000
 def essay_packs(teacher_id: int) -> list[dict]:
     """Ustozning paketlari: [{essays, price, discount}], 1 talik (esse narxi) birinchi. Chegirma — 1 talikka nisbatan."""
     saved = db.get_settings()
+    floor = plans.min_essay_price() if plans.platform_routed(teacher_id) else 0  # oldin qo'yilgan arzon narx ham
     single = int(saved.get(f"essay_price:{teacher_id}") or 0)
+    single = max(single, floor) if single else 0
     out = [{"essays": 1, "price": single}] if single else []
     try:
         raw = json.loads(saved.get(f"essay_packs:{teacher_id}") or "[]")
@@ -988,7 +1085,7 @@ def essay_packs(teacher_id: int) -> list[dict]:
         except (TypeError, ValueError, IndexError):
             continue
         if 2 <= essays <= 100 and PACK_PRICE_MIN <= price <= PACK_PRICE_MAX and all(p["essays"] != essays for p in out):
-            out.append({"essays": essays, "price": price})
+            out.append({"essays": essays, "price": max(price, floor * essays)})
     out.sort(key=lambda p: p["essays"])
     for p in out:
         full = single * p["essays"]
@@ -1020,9 +1117,16 @@ def clean_packs(rows) -> list[list[int]]:
 def save_packs(teacher_id: int, single: int | None, rows) -> list[dict]:
     """1 ta esse narxi (None — o'zgarmaydi) va paketlar saqlanadi."""
     packs = clean_packs(rows)
+    floor = plans.min_essay_price() if plans.platform_routed(teacher_id) else 0
+    for essays, price in packs:
+        if price < floor * essays:
+            raise ValueError(f"Har bir kredit kamida {plans.money(floor)} so'm: {essays} ta — kamida "
+                             f"{plans.money(floor * essays)} so'm")
     if single is not None:
         if single and not PACK_PRICE_MIN <= single <= 1_000_000:
             raise ValueError("1 ta esse narxi 1 000 – 1 000 000 so'm bo'lsin")
+        if single and single < floor:
+            raise ValueError(f"1 ta esse narxi kamida {plans.money(floor)} so'm bo'lsin")
         db.set_setting(f"essay_price:{teacher_id}", str(single))
     db.set_setting(f"essay_packs:{teacher_id}", json.dumps(packs))
     return essay_packs(teacher_id)
@@ -1039,11 +1143,12 @@ async def wallet_order(teacher_id: int, student: dict, essays: int) -> dict:
     if teacher_id == student["id"]:
         raise ApiError(400, "O'zingizdan kredit sotib ololmaysiz")
     pack = next((p for p in await run(essay_packs, teacher_id) if p["essays"] == essays), None)
-    card = await run(teacher_card, teacher_id)
+    payee = await run(payee_of, teacher_id)
+    card = await run(pay_card, teacher_id, payee)
     if not pack or not card["number"]:
         raise ApiError(409, "Ustoz bu paketni sotmayapti — narx yoki karta qo'yilmagan")
     await run(db.remember_user, student["id"], student.get("name"), student.get("username"))
-    pay = await run(db.start_wallet_payment, teacher_id, student["id"], pack["essays"], pack["price"])
+    pay = await run(db.start_wallet_payment, teacher_id, student["id"], pack["essays"], pack["price"], payee)
     if pay["status"] == "review":
         raise ApiError(409, "Oldingi chekingiz hali tekshirilmoqda — tasdiqlangach yangi paket olasiz")
     if "send_text" in HOOKS:
@@ -1065,10 +1170,11 @@ async def release_waiting(teacher_id: int, student_id: int) -> tuple[int, bool]:
     """Kredit kutayotgan esselar (eng eskisidan): har biriga 1 kredit va ustozning 1 AI krediti → AI navbatiga.
     Qaytaradi: (nechtasi navbatga qo'yildi, ustozning AI krediti tugaganmi)."""
     released, teacher_out = 0, False
+    routed = await run(plans.platform_routed, teacher_id)  # kredit puli platformada — AI'ni platforma to'laydi
     for practice in await run(db.practice_awaiting_credit, teacher_id, student_id):
         if not await run(db.wallet_use, teacher_id, student_id):
             break
-        if not await ai_allowed(teacher_id, "essays"):
+        if not routed and not await ai_allowed(teacher_id, "essays"):
             await run(db.wallet_add, teacher_id, student_id, 1)  # AI tekshirmaydi — kredit yechilmaydi
             teacher_out = True
             break
@@ -1107,17 +1213,18 @@ async def check_wallet_receipt(payment_id: int, data: bytes, mime: str) -> dict:
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
     digest = hashlib.sha256(data).hexdigest()
-    good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["teacher_id"]))
+    good, reasons, txn = await read_receipt_for(pay, pay["teacher_id"], data, mime)
     if await run(db.receipt_used, digest, txn, payment_id, "wallet_payments"):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
     await run(db.save_wallet_receipt, payment_id, base64.b64encode(data).decode(), mime, digest, txn, "; ".join(reasons))
     balance = await run(db.pay_wallet_payment, payment_id, ("review",)) if good else None
     if balance is not None:
+        await credit_share("wallet", pay, pay["teacher_id"])
         await credited(pay, balance, by_ai=True)
     elif "send_text" in HOOKS:
         try:
             await HOOKS["send_text"](pay["student_id"], f"⏳ <b>Chek tekshirilmoqda — kutib turing</b> · {pay['essays']} ta kredit\n"
-                                                        "Avtomatik tasdiqlanmadi, ustoz ko'rib chiqadi va bot xabar beradi.")
+                                                        "Ustoz ko'rib chiqadi va bot xabar beradi.")
         except Exception:
             logger.warning("Chek holati o'quvchiga yuborilmadi", exc_info=True)
     if "wallet_receipt_notice" in HOOKS:
@@ -1131,16 +1238,20 @@ async def check_wallet_receipt(payment_id: int, data: bytes, mime: str) -> dict:
 async def decide_wallet_payment(payment_id: int, approve: bool, by_id: int) -> dict:
     """Ustoz (yoki admin): kredit chekini tasdiqlaydi yoki rad etadi / AI tasdiqlaganini bekor qiladi (kredit qaytib olinadi)."""
     pay = await run(db.get_wallet_payment, payment_id)
-    if not pay or (pay["teacher_id"] != by_id and by_id not in ADMIN_IDS):
+    platform = bool(pay) and pay.get("payee") == "platform"
+    if not pay or (pay["teacher_id"] != by_id and by_id not in ADMIN_IDS and not (platform and platform_decider(by_id))):
         raise ApiError(404, "To'lov topilmadi")
     if approve:
         balance = await run(db.pay_wallet_payment, payment_id, ("open", "review", "rejected"))
         if balance is None:
             raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        await credit_share("wallet", pay, pay["teacher_id"])
+        await teacher_approved_notice("wallet", pay, by_id)
         await credited(pay, balance, by_ai=False)
     else:
         if not await run(db.reject_wallet_payment, payment_id, ("open", "review", "paid")):
             raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
+        await run(db.remove_earning, "wallet", payment_id)
         if "send_text" in HOOKS:
             try:
                 await HOOKS["send_text"](pay["student_id"], f"❌ <b>Kredit to'lovi tasdiqlanmadi</b> · {pay['essays']} ta\n"
@@ -1188,7 +1299,28 @@ async def sales_admin_view() -> dict:
     pending = await run(db.list_payments, "sent", 20)
     return {"tariffs": tariffs, "card": card["number"], "holder": card["holder"], "sales_on": on,
             "forced": bool(SALES_ENABLED),  # Render'da PLANS_ENABLED=1 — ilovadan o'chirib bo'lmaydi
-            "pending": len(pending)}
+            "pending": len(pending), "revshare": await revshare_admin_view()}
+
+
+async def revshare_admin_view() -> dict:
+    """«💰 Begonalar puli» (admin): ulush, minimal narx, yechish chegarasi, shu oy tushum va kutilayotgan yechishlar."""
+    share, floor, minimum = await asyncio.gather(run(plans.platform_share), run(plans.min_essay_price),
+                                                 run(plans.withdraw_min))
+    income, waiting = await asyncio.gather(run(db.platform_income, plans.month_key()), run(db.pending_withdrawals))
+    return {"platform_share": share, "min_essay_price": floor, "withdraw_min": minimum, "income": income,
+            "withdrawals": [{"id": w["id"], "amount": w["amount"], "card": w["card"], "holder": w["holder"],
+                             "name": w.get("full_name") or str(w["teacher_id"]), "username": w.get("username"),
+                             "created_at": w["created_at"]} for w in waiting]}
+
+
+async def withdrawal_admin_decide(request: web.Request) -> web.Response:
+    """Admin ilovada: yechish so'rovi — «✅ To'landi» (pul o'tkazildi) yoki «❌ Rad etish» (summa balansga qaytadi)."""
+    user = await auth(request)
+    action = (await body(request)).get("action")
+    if action not in ("paid", "reject"):
+        raise ApiError(400, "Amal noto'g'ri")
+    await decide_withdrawal(int(request.match_info["withdrawal_id"]), action == "paid", user["id"])
+    return ok(await sales_admin_view())
 
 
 async def sales_admin(request: web.Request) -> web.Response:
@@ -1231,6 +1363,19 @@ async def sales_admin_save(request: web.Request) -> web.Response:
             raise ApiError(400, "Karta egasining ism-familiyasini yozing — AI chekda shuni tekshiradi")
         await run(db.set_setting, "card_number", " ".join(number[i:i + 4] for i in range(0, 16, 4)))
         await run(db.set_setting, "card_holder", holder)
+    if "revshare" in payload:  # «💰 Begonalar puli»: platforma ulushi (%), minimal esse narxi, yechish chegarasi
+        raw = payload.get("revshare") if isinstance(payload.get("revshare"), dict) else {}
+        share = to_int(raw.get("platform_share"), 0, "Platforma ulushi")
+        floor = to_int(raw.get("min_essay_price"), 0, "Minimal esse narxi")
+        minimum = to_int(raw.get("withdraw_min"), 0, "Yechish chegarasi")
+        if not 0 <= share <= 100:
+            raise ApiError(400, "Platforma ulushi 0 dan 100 foizgacha bo'lsin")
+        if not 0 <= floor <= 1_000_000:
+            raise ApiError(400, "Minimal esse narxi 0 – 1 000 000 so'm bo'lsin")
+        if not 1000 <= minimum <= 100_000_000:
+            raise ApiError(400, "Yechish chegarasi kamida 1 000 so'm bo'lsin")
+        for key, value in (("platform_share", share), ("min_essay_price", floor), ("withdraw_min", minimum)):
+            await run(db.set_setting, key, str(value))
     if "sales_on" in payload:
         turn_on = bool(payload.get("sales_on"))
         if turn_on:
@@ -1249,6 +1394,7 @@ async def settings_view(user: dict) -> dict:
     card, packs, is_open = await asyncio.gather(run(teacher_card, user["id"]), run(essay_packs, user["id"]),
                                                 run(public_open, user["id"]))
     return {"card": card["number"], "holder": card["holder"], "public": is_open, "packs": packs, "free": PUBLIC_FREE,
+            "earnings": await earnings_view(user["id"]),
             "can_public": plans.ai_unlimited(user["id"]), "student_tariffs": await run(student_tariffs, user["id"]),
             "announce_channels": await run(announce_channels, user["id"]),
             "claude": await run(claude_capacity) if plans.ai_unlimited(user["id"]) else None,
@@ -1257,6 +1403,65 @@ async def settings_view(user: dict) -> dict:
 
 async def teacher_settings(request: web.Request) -> web.Response:
     return ok(await settings_view(await auth(request)))
+
+
+async def earnings_view(teacher_id: int) -> dict | None:
+    """«💰 Daromad»: begonalar puli platformaga tushadigan o'qituvchi (yoki balansi qolgan) — balans, shu oy, yechishlar.
+    None — bo'lim ko'rsatilmaydi (pul o'qituvchining o'z kartasiga tushadi)."""
+    routed = await run(plans.platform_routed, teacher_id)
+    summary = await run(db.earnings_summary, teacher_id, plans.month_key())
+    if not routed and not summary["balance"] and not summary["pending"] and not summary["total"]:
+        return None
+    share, minimum, floor = await asyncio.gather(run(plans.platform_share), run(plans.withdraw_min),
+                                                 run(plans.min_essay_price))
+    return {**summary, "routed": routed, "teacher_percent": 100 - share, "withdraw_min": minimum, "min_price": floor,
+            "can_withdraw": summary["balance"] >= minimum and not summary["pending"]}
+
+
+async def withdraw(request: web.Request) -> web.Response:
+    """«💸 Yechib olish»: butun balans so'raladi — adminga xabar boradi, u kartaga o'tkazib «✅ To'landi» bosadi."""
+    user = await auth(request)
+    card = await run(teacher_card, user["id"])
+    if not card["number"]:
+        raise ApiError(400, "Avval «💳 Karta»ni kiriting — pul shu kartaga o'tkaziladi")
+    summary = await run(db.earnings_summary, user["id"], plans.month_key())
+    if summary["pending"]:
+        raise ApiError(409, "Oldingi so'rovingiz hali ko'rib chiqilmoqda — o'tkazilgach bot xabar beradi")
+    minimum = await run(plans.withdraw_min)
+    if summary["balance"] < minimum:
+        raise ApiError(409, f"Yechib olish uchun balans kamida {plans.money(minimum)} so'm bo'lsin — "
+                            f"hozir {plans.money(max(0, summary['balance']))} so'm")
+    item = await run(db.request_withdrawal, user["id"], summary["balance"], card["number"], card["holder"])
+    if not item:
+        raise ApiError(409, "So'rov yuborilmadi — sahifani yangilab, qayta urinib ko'ring")
+    if "withdraw_notice" in HOOKS:
+        try:
+            await HOOKS["withdraw_notice"](item["id"])
+        except Exception:
+            logger.warning("Yechish so'rovi adminga yuborilmadi", exc_info=True)
+    return ok({"ok": True, "amount": item["amount"], "earnings": await earnings_view(user["id"])})
+
+
+async def decide_withdrawal(withdrawal_id: int, paid: bool, by_id: int) -> dict:
+    """Admin: pul o'tkazildi («paid») yoki rad etildi (summa balansga qaytadi) — o'qituvchiga xabar."""
+    if not platform_decider(by_id):
+        raise ApiError(403, "Faqat admin uchun")
+    item = await run(db.get_withdrawal, withdrawal_id)
+    if not item:
+        raise ApiError(404, "So'rov topilmadi")
+    if not await run(db.decide_withdrawal, withdrawal_id, "paid" if paid else "rejected", by_id):
+        raise ApiError(409, "Bu so'rov allaqachon ko'rib chiqilgan")
+    if "send_text" in HOOKS:
+        last4 = _digits(item["card"])[-4:]
+        text = (f"✅ <b>{plans.money(item['amount'])} so'm kartangizga o'tkazildi</b> (•••• {last4})\n"
+                "Begona o'quvchilardan tushgan daromadingiz. Rahmat!" if paid else
+                f"❌ <b>Yechish so'rovi rad etildi</b> · {plans.money(item['amount'])} so'm\n"
+                "Summa balansingizga qaytdi. Kartangizni tekshirib, qayta so'rang yoki admin bilan bog'laning.")
+        try:
+            await HOOKS["send_text"](item["teacher_id"], text)
+        except Exception:
+            logger.warning("Yechish qarori o'qituvchiga yuborilmadi", exc_info=True)
+    return {**item, "status": "paid" if paid else "rejected"}
 
 
 async def teacher_settings_save(request: web.Request) -> web.Response:
@@ -1543,7 +1748,7 @@ async def submit(request: web.Request) -> web.Response:
     if phase and test["owner_id"] != user["id"]:  # «Bugungi mock»: faqat vaqt oralig'ida va (pullik bo'lsa) to'laganlar
         if phase in ("soon", "closed"):
             raise ApiError(409, "Mock hali ochilmagan" if phase == "soon" else "Mock yopilgan — javob qabul qilinmaydi")
-        if phase == "late" and not await run(db.live_started, test["id"], user["id"]):
+        if phase == "late" and not await mock_entered(test, user["id"]):
             raise ApiError(409, "Kirish vaqti tugagan")
         if await mock_choice_info(test, user):
             raise ApiError(402, "Mockni boshlashdan oldin esseni kim tekshirishini tanlang (pullik bo'lsa — to'lang)")
@@ -1948,6 +2153,9 @@ async def create_test(request: web.Request) -> web.Response:
     if price:
         if not 1000 <= price <= 1_000_000:
             raise ApiError(400, "Esse tekshiruvi narxini so'mda yozing (1 000 – 1 000 000)")
+        floor = await run(plans.min_essay_price) if await run(plans.platform_routed, user["id"]) else 0
+        if price < floor:
+            raise ApiError(400, f"Begonalar uchun esse narxi kamida {plans.money(floor)} so'm bo'lsin")
         if len(_digits(card)) < 12:
             raise ApiError(400, "Begonalar to'laydigan kartangiz raqamini yozing")
     check_mode = "paid" if payload.get("check_mode") == "paid" and mode == "offline" else "free"
@@ -3630,8 +3838,9 @@ async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
     essay = await run(db.get_offline_essay, test["id"], number)
     if not essay:
         return False
-    ai = essay_ai.essay_enabled() and await ai_allowed(test["owner_id"], "essays")
-    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if ai else "manual")
+    charge = await _teacher_charge(test["owner_id"]) if essay_ai.essay_enabled() else None
+    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if charge else "manual")
+    await run(db.set_essay_charge, attempt_id, charge if charge == "teacher" else None)
     return True
 
 
@@ -3794,11 +4003,13 @@ async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]
         page = f" · {index}-bet" if len(pages) > 1 else ""
         file_ids.append(await HOOKS["store_photo"](user["id"], data,
                                                    f"📝 Esse · {attempt['student_name']}{page} · {test['title']}"))
-    status = "pending" if essay_ai.essay_enabled() and await ai_allowed(test["owner_id"], "essays") else "manual"
+    charge = await _teacher_charge(test["owner_id"]) if essay_ai.essay_enabled() else None
+    status = "pending" if charge else "manual"
     if not await run(db.get_essay, attempt["id"]):
         await run(db.create_essay, attempt["id"], None, file_ids, status)
     else:
         await run(db.set_essay_photos, attempt["id"], file_ids, status)
+    await run(db.set_essay_charge, attempt["id"], charge if charge == "teacher" else None)
     return status
 
 
@@ -4159,6 +4370,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/essay-payment/{payment_id:\\d+}", essay_payment_decide)
     app.router.add_post("/api/test/{code:\\d{5}}/wallet-order", wallet_order_for_test)
     app.router.add_post("/api/teacher/packs", packs_save)
+    app.router.add_post("/api/teacher/withdraw", withdraw)
+    app.router.add_post("/api/admin/withdrawal/{withdrawal_id:\\d+}", withdrawal_admin_decide)
     app.router.add_get("/api/admin/sales", sales_admin)
     app.router.add_post("/api/admin/sales", sales_admin_save)
     app.router.add_get("/api/teacher/settings", teacher_settings)

@@ -47,6 +47,7 @@ def buttons(markup):
 class EssayBot(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _env.fresh_db()
+        db.set_setting("platform_share", "0")  # eski tartib: begonalar puli ustoz kartasiga (yangisi — test_fixes.RevenueShare)
         self.bot = FakeBot()
         self.storage = MemoryStorage()
         self.replies = []

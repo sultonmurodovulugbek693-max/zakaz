@@ -845,6 +845,26 @@ class TeacherCredits(EssaySelfCheck):
         boot = await (await self.client.get("/api/bootstrap")).json()
         self.assertEqual(boot["ai_credits"], 0)
 
+    async def test_failed_essay_refunds_teacher_credit(self):
+        """AI esseni tekshira olmadi — ustozning yechilgan krediti qaytadi; «qayta urinish»dan keyin yana bo'lmasa —
+        ikkinchi marta qaytmaydi."""
+        _, r = await self.create(fmt="milliy")
+        test = db.get_test(r["id"])
+        db.add_credits(OWNER, 1)
+        self.assertEqual(await self.submit(test, 601), "pending")
+        self.assertEqual(db.get_credits(OWNER), 0)
+
+        async def broken(*_a, **_k):
+            raise self.essay_ai.AIError("Buzilgan javob", retry=False)
+        self.essay_ai.grade = broken
+        essay = db.pending_essays(5)[0]
+        await bot.grade_one(self.bot, essay)
+        self.assertEqual(db.get_essay(essay["attempt_id"])["status"], "failed")
+        self.assertEqual(db.get_credits(OWNER), 1)  # kredit qaytdi
+        db.retry_essay(essay["attempt_id"])  # ustoz «qayta urinish» — kredit yechilmaydi
+        await bot.grade_one(self.bot, db.pending_essays(5)[0])
+        self.assertEqual(db.get_credits(OWNER), 1)  # ikkinchi marta qaytmadi
+
     async def test_admin_and_free_ids_unlimited(self):
         self.assertTrue(plans.ai_unlimited(next(iter(plans.ADMIN_IDS), 0)) if plans.ADMIN_IDS else True)
         self.assertFalse(plans.ai_unlimited(OWNER))  # /ruxsat — test yaratadi, lekin AI kreditdan
@@ -856,6 +876,7 @@ class LinkedPractice(TeacherCredits):
 
     test_essays_spend_teacher_credits = None
     test_admin_and_free_ids_unlimited = None
+    test_failed_essay_refunds_teacher_credit = None
 
     async def practice(self, uid, words=80):
         self.user = {"id": uid, "name": "O'quvchi", "username": None}
@@ -943,6 +964,7 @@ class EssayPaid(ServerBase):
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        db.set_setting("platform_share", "0")  # eski tartib: begonalar puli ustoz kartasiga (yangisi — RevenueShare)
         self._enabled, self._essay_enabled, self._read = essay_ai.enabled, essay_ai.essay_enabled, essay_ai.read_receipt
         essay_ai.enabled = essay_ai.essay_enabled = lambda: True
         self.receipt = {}
@@ -1030,6 +1052,26 @@ class EssayPaid(ServerBase):
         self.assertTrue(await webapp.essay_ai_ok(test, OTHER))
         self.assertEqual((await self.submit(test, self.ESSAY))[0], 200)
         self.assertEqual(db.get_credits(OWNER), credits)  # ustoz krediti ishlatilmadi
+
+    async def test_failed_essay_refunds_student_credit(self):
+        """Begona o'quvchi essesi 1 kreditidan: AI tekshira olmasa — kredit o'quvchiga qaytadi va xabar boradi."""
+        test = await self.paid_mock()
+        db.wallet_add(OWNER, OTHER, 1)
+        await self.as_student(OTHER)
+        status, res = await self.submit(test, self.ESSAY)
+        self.assertEqual(status, 200, res)
+        self.assertEqual((db.get_essay(res["attempt_id"])["status"], db.wallet_balance(OWNER, OTHER)), ("pending", 0))
+        saved = essay_ai.grade
+
+        async def broken(*_a, **_k):
+            raise essay_ai.AIError("o'qib bo'lmadi", retry=False)
+        essay_ai.grade = broken
+        try:
+            await bot.grade_one(self.bot, db.pending_essays(5)[0])
+        finally:
+            essay_ai.grade = saved
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 1)
+        self.assertTrue(any(c == OTHER and "kreditingiz qaytarildi" in t for c, t in self.bot.messages))
 
     async def test_outsider_can_submit_without_essay(self):
         test = await self.paid_mock()
@@ -1257,6 +1299,45 @@ class EssayPaid(ServerBase):
         to_owner = [t for c, t in self.bot.messages if c == OWNER]
         self.assertTrue(to_owner and "Yozmalarni tekshirish" in to_owner[-1] and "Esselar" in to_owner[-1])
         self.assertTrue(any(c == 999 and "429" in t for c, t in self.bot.messages))
+
+    async def test_receipt_hung_model_falls_back_in_time(self):
+        """Asosiy Gemini modeli osilib qolsa — chek uchun 20 soniyadan keyin zaxira modelga o'tiladi (90 s ichida)."""
+        import aiohttp
+        models, timeouts = (essay_ai.GEMINI_MODEL, essay_ai.GEMINI_FALLBACK, essay_ai.GEMINI_API_KEY), []
+        good = ('{"is_receipt": true, "success": true, "amount": 15000, "date": "2026-11-21", "time": "", '
+                '"recipient_card": "", "recipient_name": "", "transaction_id": "", "looks_edited": false, "note": ""}')
+
+        class Resp:
+            status = 200
+            async def json(self, content_type=None):
+                return {"candidates": [{"content": {"parts": [{"text": good}]}}]}
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        class Session:
+            def __init__(self, timeout):
+                timeouts.append(timeout.total)
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            def post(self, url, **kw):
+                if "hung" in url:
+                    raise asyncio.TimeoutError()
+                return Resp()
+        essay_ai.GEMINI_MODEL, essay_ai.GEMINI_FALLBACK, essay_ai.GEMINI_API_KEY = "hung", ["lite"], "k"
+        original = aiohttp.ClientSession
+        aiohttp.ClientSession = Session
+        try:
+            r = await self._read(b"x", "image/jpeg")  # asl read_receipt (setUp soxtasini emas)
+        finally:
+            aiohttp.ClientSession = original
+            essay_ai.GEMINI_MODEL, essay_ai.GEMINI_FALLBACK, essay_ai.GEMINI_API_KEY = models
+        self.assertEqual(r["amount"], 15000)
+        self.assertEqual(timeouts, [essay_ai.RECEIPT_MODEL_TIMEOUT] * 2)
+        self.assertLess(essay_ai.RECEIPT_MODEL_TIMEOUT * 3, webapp.RECEIPT_AI_TIMEOUT)  # 2 ta osilgan model + 1 ta ishlagani
 
     async def test_ai_usage_recorded(self):
         ready, gemini = essay_ai._ready, essay_ai._gemini
@@ -1495,6 +1576,7 @@ class EssayScan(ServerBase):
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        db.set_setting("platform_share", "0")  # eski tartib: begonalar puli ustoz kartasiga (yangisi — RevenueShare)
         self._saved = (essay_ai.ANTHROPIC_API_KEY, essay_ai._call)
         essay_ai.ANTHROPIC_API_KEY = "test-key"
         self.calls = []
@@ -1730,6 +1812,7 @@ class PracticePublic(ServerBase):
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        db.set_setting("platform_share", "0")  # eski tartib: begonalar puli ustoz kartasiga (yangisi — RevenueShare)
         self._essay_enabled = essay_ai.essay_enabled
         essay_ai.essay_enabled = lambda: True
         db.remember_user(OWNER, "Ustoz Aliyev", None)
@@ -2105,6 +2188,51 @@ class ScheduledMock(ServerBase):
         self.assertEqual((c["usd"], c["per_essay"], c["essays_left"], c["checked"]), (9.9, 0.05, 198, 2))
         self.assertEqual((await self.get("/api/bootstrap"))[1]["default_channel"], "@Til_va_adabiyot_Xalilov")
 
+    async def test_paying_student_not_locked_out_after_entry(self):
+        """Kirish vaqtida to'lovni boshlagan o'quvchi — chek tekshirilguncha kirish vaqti o'tsa ham mockka kiradi.
+        Ochmagan o'quvchi kirish vaqtidan keyin to'lay olmaydi (kredit ham yechilmaydi); ochilmasdan oldin ham."""
+        await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": "Ustoz Aliyev"})
+        await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 5000}]})
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00", "entry": "22:00",
+                                                                     "closes": "23:00", "public": True, "price_ai": 15000})
+        for uid in (OTHER, STUDENT):
+            self.give_history(uid)  # birinchi mock bepul emas
+        self.as_user(OTHER)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"}))[0], 409)  # hali ochilmagan
+
+        self.at(21, 55)  # kirishga 5 daqiqa qolganda ochdi va to'lovni boshladi
+        self.assertEqual((await self.get(f"/api/test/{test['code']}"))[0], 402)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"}))[1]["status"], "open")
+        self.at(22, 5)  # chek tekshirilguncha kirish vaqti o'tdi
+        self.assertEqual((await self.get(f"/api/test/{test['code']}"))[0], 402)  # «Kirish vaqti tugagan» emas
+        db.decide_essay_payment(db.essay_payment_of(test["id"], OTHER)["id"], "paid", ("open",))
+        self.assertEqual((await self.get(f"/api/test/{test['code']}"))[0], 200)
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Begona Bola", "answers": {}, "essay": self.ESSAY})
+        self.assertEqual(status, 200, res)
+
+        # Kirish vaqtida ochmagan o'quvchi: kirolmaydi, to'lay olmaydi, krediti yechilmaydi
+        self.as_user(STUDENT)
+        db.wallet_add(OWNER, STUDENT, 5)
+        self.assertEqual((await self.get(f"/api/test/{test['code']}"))[0], 409)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai", "pay": "credit"}))[0], 409)
+        self.assertEqual(db.wallet_balance(OWNER, STUDENT), 5)
+        self.assertEqual((await self.post(f"/api/test/{test['code']}/essay-pay", {}))[0], 409)  # jadvalli mockda — faqat tanlov
+
+    async def test_upcoming_mock_shown_before_closed_ones(self):
+        """Bosh sahifa: bugun yopilgan 3 ta mock bo'lsa ham kechqurungi (bo'lajak) mock kartasi chiqadi — birinchi bo'lib."""
+        items = structure.build_items("milliy", 45)
+        key = {"A": {i["label"]: "A" for i in items}}
+        for hour in (8, 10, 12):
+            done = db.create_test(OWNER, f"Ertalabki {hour}", "milliy", 45, items, key)
+            db.set_schedule(done["id"], f"2026-11-20 {hour:02d}:00", f"2026-11-20 {hour:02d}:30", f"2026-11-20 {hour + 1:02d}:00", True)
+        evening = db.create_test(OWNER, "Kechki mock", "milliy", 45, items, key)
+        db.set_schedule(evening["id"], "2026-11-20 20:00", "2026-11-20 22:00", "2026-11-20 23:00", True)
+        self.as_user(OTHER)
+        mocks = (await self.get("/api/bootstrap"))[1]["mocks"]
+        self.assertEqual([m["title"] for m in mocks], ["Kechki mock", "Ertalabki 12", "Ertalabki 10"])
+
     async def test_channel_post_falls_back_to_required_channel(self):
         """E'lon kanali sozlanmagan — e'lon mockning majburiy obuna kanaliga; tugma «Mockda qatnashish»."""
         _, r = await self.create("online", fmt="milliy", channels=["@Til_va_adabiyot_Xalilov"])
@@ -2210,3 +2338,216 @@ class ScanResults(ServerBase):
         self.assertEqual(status, 200)
         self.assertIsNone(db.get_attempt(attempt_id))
         self.assertIsNone(db.get_student(test["id"], None, 7)["attempt_id"])
+
+
+class RevenueShare(ServerBase):
+    """Begona o'qituvchi (admin / FREE_IDS emas): begona o'quvchi puli PLATFORMA kartasiga, o'qituvchiga 20% balans,
+    esse narxi kamida 10 000; chekni faqat admin tasdiqlaydi; balans 100 000 ga yetsa — «💸 Yechib olish» → admin."""
+
+    ADMIN = 999
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        webapp.ADMIN_IDS.add(self.ADMIN)
+        db.set_setting("card_number", "9860 1111 2222 3333")
+        db.set_setting("card_holder", "Platforma Egasi")
+        self._enabled, self._essay_enabled, self._read = essay_ai.enabled, essay_ai.essay_enabled, essay_ai.read_receipt
+        essay_ai.enabled = essay_ai.essay_enabled = lambda: True
+        self.receipt = {}
+
+        async def fake_read(image, mime="image/jpeg"):
+            return dict(self.receipt)
+        essay_ai.read_receipt = fake_read
+        self.notices = []
+
+        async def notice(*args):
+            self.notices.append(args)
+        webapp.HOOKS["essay_receipt_notice"] = webapp.HOOKS["wallet_receipt_notice"] = notice
+        webapp.HOOKS["withdraw_notice"] = lambda wid: bot.withdraw_notice(self.bot, wid)
+        webapp.HOOKS["bot_username"] = lambda: asyncio.sleep(0, "test_bot")
+
+    async def asyncTearDown(self):
+        webapp.ADMIN_IDS.discard(self.ADMIN)
+        essay_ai.enabled, essay_ai.essay_enabled, essay_ai.read_receipt = self._enabled, self._essay_enabled, self._read
+        await super().asyncTearDown()
+
+    def receipt_for(self, amount, card="9860 **** **** 3333", txn="TX1"):
+        self.receipt = {"is_receipt": True, "success": True, "amount": amount, "date": plans.now().strftime("%Y-%m-%d"),
+                        "time": "10:00", "recipient_card": card, "recipient_name": "", "transaction_id": txn,
+                        "looks_edited": False, "note": ""}
+
+    async def mock(self, price):
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        items = structure.build_items("milliy", 45)
+        key = {i["label"]: ("A" if i["kind"] == "choice" else "kitob") for i in items}
+        return await self.post("/api/teacher/tests", {"title": "Mock", "fmt": "milliy", "mode": "online", "keys": {"A": key},
+                                                      "channels": [], "essay_price": price, "card": "8600 1234 5678 9012",
+                                                      "holder": "Nodira Karimova"})
+
+    def test_who_is_routed(self):
+        self.assertTrue(plans.platform_routed(OWNER))  # obuna olgan oddiy o'qituvchi
+        self.assertFalse(plans.platform_routed(self.ADMIN))  # admin / FREE_IDS — pul o'z kartasiga
+        self.assertEqual(plans.teacher_cut(10_000), 2_000)
+        db.set_setting("platform_share", "0")  # o'chiq — avvalgidek
+        self.assertFalse(plans.platform_routed(OWNER))
+
+    async def test_mock_essay_paid_to_platform_teacher_gets_share(self):
+        self.assertEqual((await self.mock(5000))[0], 400)  # kamida 10 000
+        status, r = await self.mock(15000)
+        self.assertEqual(status, 200, r)
+        test = db.get_test(r["id"])
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual(boot["revshare"], {"teacher_percent": 20, "min_price": 10_000})
+
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertEqual((info["essay_pay"]["price"], info["essay_pay"]["card"]), (15000, "9860 1111 2222 3333"))
+        status, res = await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        self.assertEqual(status, 200, res)
+        self.assertIn("9860 1111 2222 3333", self.bot.messages[-1][1])  # ustoz kartasi emas — platformaniki
+        pay = db.open_essay_payment(OTHER)
+        self.assertEqual(pay["payee"], "platform")
+
+        reads = []
+        essay_ai.read_receipt = lambda *a, **k: reads.append(a) or asyncio.sleep(0, dict(self.receipt))
+        self.receipt_for(15000)  # to'g'ri chek ham — AI o'qimaydi (faqat admin / FREE_IDS ustozlarida)
+        self.assertEqual((await webapp.check_essay_receipt(pay["id"], b"chek-0", "image/jpeg"))["status"], "review")
+        self.assertEqual(reads, [])
+        self.assertIn("Ustoz ko'rib chiqadi", self.bot.messages[-1][1])
+        self.assertEqual(db.earnings_balance(OWNER), 0)
+
+        # Ustoz o'zi tasdiqlaydi (ilovada): 20% balansiga, nusxasi adminlarga «Bekor qilish» bilan
+        copies = []
+
+        async def copy(kind, payment_id):
+            copies.append((kind, payment_id))
+        webapp.HOOKS["platform_approved_notice"] = copy
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        listed = (await self.get("/api/teacher/essay-payments"))[1]["payments"]
+        self.assertEqual((listed[0]["payee"], listed[0]["status"]), ("platform", "review"))
+        self.assertEqual((await self.post(f"/api/teacher/essay-payment/{pay['id']}", {"action": "approve"}))[0], 200)
+        self.assertEqual((db.earnings_balance(OWNER), copies), (3000, [("essay", pay["id"])]))  # 15 000 × 20%
+        await webapp.decide_essay_payment(pay["id"], False, self.ADMIN)  # admin bekor qildi — ulush ham olinadi
+        self.assertEqual(db.earnings_balance(OWNER), 0)
+        await webapp.decide_essay_payment(pay["id"], True, self.ADMIN)  # admin tasdiqladi — nusxa yuborilmaydi
+        self.assertEqual(len(copies), 1)
+        await webapp.credit_share("essay", db.get_essay_payment(pay["id"]), OWNER)  # takror chaqiriq
+        self.assertEqual(db.earnings_balance(OWNER), 3000)  # bitta to'lov — bir marta
+
+        # Bot: ustozga chek «bot kartasiga» izohi bilan; adminga tasdiqlangan nusxa «Bekor qilish» bilan
+        self.assertIn("80% — bot hisobiga", bot.platform_check_text(15000))
+        self.assertIn("•••• 3333", bot.platform_check_text(15000))
+        await bot.platform_approved_notice(self.bot, "essay", pay["id"])
+        self.assertIn(self.ADMIN, [chat for chat, _ in self.bot.photos])
+
+    async def test_ai_approved_receipt_shares_and_old_cheap_price_raised(self):
+        status, r = await self.mock(15000)
+        test = db.get_test(r["id"])
+        db.set_test_price(test["id"], 5000)  # oldin qo'yilgan arzon narx — minimalga ko'tariladi
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertEqual(info["essay_pay"]["price"], 10_000)
+        await self.post(f"/api/test/{test['code']}/essay-pay", {})
+        pay = db.open_essay_payment(OTHER)
+        self.assertEqual(pay["amount"], 10_000)
+        self.receipt_for(10_000)
+        self.assertEqual((await webapp.check_essay_receipt(pay["id"], b"chek-1", "image/jpeg"))["status"], "review")
+        await webapp.decide_essay_payment(pay["id"], True, OWNER)  # ustoz tasdiqladi
+        self.assertEqual(db.earnings_balance(OWNER), 2000)
+        credits = db.get_credits(OWNER)
+        self.assertTrue(await webapp.essay_ai_ok(test, OTHER))
+        self.assertEqual(db.get_credits(OWNER), credits)  # AI xarajati platformadan — ustoz krediti yechilmadi
+
+    async def test_credit_packs_min_price_and_share(self):
+        status, r = await self.post("/api/teacher/packs", {"price": 5000, "packs": []})
+        self.assertEqual(status, 400, r)
+        status, r = await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 12000}, {"essays": 5, "price": 40000}]})
+        self.assertEqual(status, 400, r)  # 5 ta — kamida 50 000
+        self.assertIn("50 000", r["error"])
+        status, r = await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 12000}, {"essays": 5, "price": 50000}]})
+        self.assertEqual(status, 200, r)
+        db.set_setting(f"essay_price:{OWNER}", "3000")  # oldingi arzon narx — sotuvda minimalga ko'tariladi
+        self.assertEqual(webapp.essay_packs(OWNER)[0]["price"], 10_000)
+
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        order = await webapp.wallet_order(OWNER, self.user, 5)
+        self.assertEqual((order["card"]["number"], order["payment"]["payee"]), ("9860 1111 2222 3333", "platform"))
+        self.receipt_for(50000)
+        self.assertEqual((await webapp.check_wallet_receipt(order["payment"]["id"], b"chek-2", "image/jpeg"))["status"], "review")
+        self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (0, 0))
+        await webapp.decide_wallet_payment(order["payment"]["id"], True, OWNER)  # ustoz tasdiqladi
+        self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (5, 10_000))
+        await webapp.decide_wallet_payment(order["payment"]["id"], False, self.ADMIN)  # admin: pul tushmagan
+        self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (0, 0))
+
+        # Kredit evaziga ommaviy havola essesi: ustozning AI limiti yechilmaydi (puli platformada)
+        db.wallet_add(OWNER, OTHER, 1)
+        practice_id = db.create_practice(OWNER, OTHER, None, "matn " * 80, "public", None, "awaiting_credit")
+        used = db.get_usage(OWNER, plans.month_key())["essays"]
+        self.assertEqual(await webapp.release_waiting(OWNER, OTHER), (1, False))
+        self.assertEqual(db.get_practice(practice_id)["status"], "pending")
+        self.assertEqual(db.get_usage(OWNER, plans.month_key())["essays"], used)
+
+    async def test_withdraw_flow(self):
+        self.assertEqual((await self.post("/api/teacher/withdraw", {}))[0], 400)  # karta yo'q
+        await self.post("/api/teacher/settings", {"card": "8600 1234 5678 9012", "holder": "Nodira Karimova"})
+        db.add_earning(OWNER, "essay", 1, OTHER, 250_000, 50_000)
+        status, r = await self.post("/api/teacher/withdraw", {})
+        self.assertEqual(status, 409, r)  # 100 000 dan kam
+        self.assertIn("100 000", r["error"])
+        settings = (await self.get("/api/teacher/settings"))[1]
+        self.assertEqual((settings["earnings"]["balance"], settings["earnings"]["can_withdraw"]), (50_000, False))
+
+        db.add_earning(OWNER, "wallet", 7, OTHER, 350_000, 70_000)
+        self.assertFalse(db.add_earning(OWNER, "wallet", 7, OTHER, 350_000, 70_000))  # takror yozilmaydi
+        status, r = await self.post("/api/teacher/withdraw", {})
+        self.assertEqual((status, r["amount"]), (200, 120_000), r)
+        self.assertEqual(r["earnings"]["pending"]["amount"], 120_000)
+        self.assertEqual((r["earnings"]["balance"], r["earnings"]["can_withdraw"]), (0, False))
+        self.assertEqual((await self.post("/api/teacher/withdraw", {}))[0], 409)  # oldingisi kutilmoqda
+        admin_msg = [m for m in self.bot.messages if m[0] == self.ADMIN]
+        self.assertTrue(admin_msg and "120 000" in admin_msg[-1][1] and "8600 1234 5678 9012" in admin_msg[-1][1])
+
+        wid = db.pending_withdrawals()[0]["id"]
+        with self.assertRaises(webapp.ApiError):  # o'qituvchi o'zi «to'landi» deya olmaydi
+            await webapp.decide_withdrawal(wid, True, OWNER)
+        await webapp.decide_withdrawal(wid, False, self.ADMIN)  # rad — summa balansga qaytadi
+        self.assertEqual(db.earnings_balance(OWNER), 120_000)
+        self.assertIn("rad etildi", self.bot.messages[-1][1])
+        status, r = await self.post("/api/teacher/withdraw", {})
+        self.assertEqual(status, 200, r)
+        wid = db.pending_withdrawals()[0]["id"]
+        await webapp.decide_withdrawal(wid, True, self.ADMIN)
+        self.assertEqual(self.bot.messages[-1][0], OWNER)
+        self.assertIn("120 000 so'm kartangizga o'tkazildi", self.bot.messages[-1][1])
+        with self.assertRaises(webapp.ApiError):  # ikkinchi marta — allaqachon ko'rilgan
+            await webapp.decide_withdrawal(wid, True, self.ADMIN)
+        summary = (await self.get("/api/teacher/settings"))[1]["earnings"]
+        self.assertEqual((summary["balance"], summary["total"], [w["status"] for w in summary["history"]]),
+                         (0, 120_000, ["paid", "rejected"]))
+        self.assertEqual(db.platform_income(plans.month_key()), {"count": 2, "amount": 600_000, "share": 120_000, "net": 480_000})
+
+    async def test_admin_panel_in_app(self):
+        """Mini app «💎 Obuna tariflari»: «💰 Begonalar puli» — sozlamalar, shu oy tushum, yechish so'rovlari tugmalari."""
+        self.assertEqual((await self.get("/api/admin/sales"))[0], 403)  # oddiy o'qituvchi
+        db.set_setting(f"teacher_card:{OWNER}", "8600 1234 5678 9012")
+        db.add_earning(OWNER, "essay", 1, OTHER, 600_000, 120_000)
+        self.assertEqual((await self.post("/api/teacher/withdraw", {}))[0], 200)
+
+        self.user = {"id": self.ADMIN, "name": "Admin", "username": None}
+        rs = (await self.get("/api/admin/sales"))[1]["revshare"]
+        self.assertEqual((rs["platform_share"], rs["min_essay_price"], rs["withdraw_min"]), (80, 10_000, 100_000))
+        self.assertEqual((rs["income"]["net"], rs["withdrawals"][0]["amount"]), (480_000, 120_000))
+        status, r = await self.post("/api/admin/sales", {"revshare": {"platform_share": 101, "min_essay_price": 0, "withdraw_min": 5000}})
+        self.assertEqual(status, 400, r)
+        status, r = await self.post("/api/admin/sales", {"revshare": {"platform_share": 70, "min_essay_price": 12000, "withdraw_min": 50000}})
+        self.assertEqual((status, r["revshare"]["platform_share"]), (200, 70), r)
+        self.assertEqual((plans.teacher_cut(10_000), plans.min_essay_price(), plans.withdraw_min()), (3000, 12000, 50000))
+
+        wid = rs["withdrawals"][0]["id"]
+        status, r = await self.post(f"/api/admin/withdrawal/{wid}", {"action": "paid"})
+        self.assertEqual((status, r["revshare"]["withdrawals"]), (200, []), r)
+        self.assertIn("kartangizga o'tkazildi", self.bot.messages[-1][1])
+        self.assertEqual((await self.post(f"/api/admin/withdrawal/{wid}", {"action": "paid"}))[0], 409)
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        self.assertEqual((await self.post(f"/api/admin/withdrawal/{wid}", {"action": "reject"}))[0], 403)

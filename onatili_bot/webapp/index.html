@@ -2915,11 +2915,15 @@ function essayPriceHTML(st) {
   const b = S.boot || {}, card = b.my_card || {};
   if (st.card == null) { st.card = card.number || ""; st.holder = card.holder || ""; }
   const out = b.ai && b.essay_ai_ok === false;  // kredit 0, lekin obunaning oylik limiti bo'lsa — tugamagan
+  const rs = b.revshare;  // begona o'qituvchi: begonalar puli platformaga, ulushi «💰 Daromad»ga
   return `<div class="card"><b>📝 Esse tekshiruvi</b>
-    <span class="muted small">«👥 O'quvchilarim»dagilar essesi kreditingizdan tekshiriladi${b.ai_credits != null ? ` (qoldi: <b>${b.ai_credits}</b> ta)` : ""}. Boshqalar esseni yuklashdan oldin shu narxni kartangizga to'lab, chekni botga yuboradi — AI tekshiradi.</span>
+    <span class="muted small">«👥 O'quvchilarim»dagilar essesi kreditingizdan tekshiriladi${b.ai_credits != null ? ` (qoldi: <b>${b.ai_credits}</b> ta)` : ""}. ${rs
+      ? "Boshqalar esseni yuklashdan oldin shu narxni to'lab, chekni botga yuboradi — chekni siz tasdiqlaysiz, esseni AI tekshiradi."
+      : "Boshqalar esseni yuklashdan oldin shu narxni kartangizga to'lab, chekni botga yuboradi — AI tekshiradi."}</span>
+    ${rs ? revshareWarnHTML(rs.teacher_percent, rs.min_price) : ""}
     ${out ? `<span class="small" style="color:var(--bad)">⚠️ AI esse limitingiz tugagan — o'quvchilaringiz essesini AI tekshirmaydi, o'zingiz baholaysiz.</span>` : ""}
-    <div class="field"><label for="ep-price">Begonalar uchun narx (so'm) <span class="muted">— bo'sh: to'lovsiz</span></label><input class="input" id="ep-price" inputmode="numeric" value="${esc(st.essayPrice || "")}" placeholder="Masalan 15000"></div>
-    <div class="field"><label for="ep-card">Kartangiz</label><input class="input" id="ep-card" inputmode="numeric" value="${esc(st.card || "")}" placeholder="8600 0000 0000 0000"></div>
+    <div class="field"><label for="ep-price">Begonalar uchun narx (so'm) <span class="muted">— ${rs ? `kamida ${sum(rs.min_price)}; ` : ""}bo'sh: to'lovsiz</span></label><input class="input" id="ep-price" inputmode="numeric" value="${esc(st.essayPrice || "")}" placeholder="Masalan ${rs ? sum(Math.max(15000, rs.min_price)) : "15000"}"></div>
+    <div class="field"><label for="ep-card">Kartangiz${rs ? ` <span class="muted">— daromadingiz shunga o'tkaziladi</span>` : ""}</label><input class="input" id="ep-card" inputmode="numeric" value="${esc(st.card || "")}" placeholder="8600 0000 0000 0000"></div>
     <div class="field"><label for="ep-holder">Karta egasi</label><input class="input" id="ep-holder" value="${esc(st.holder || "")}" placeholder="Ism Familiya — AI chekda shuni tekshiradi"></div></div>`;
 }
 
@@ -3036,9 +3040,17 @@ function essayPaymentsHTML(list) {
   return `<div class="section-title"><h2>🧾 Esse to'lovlari</h2><span class="muted small">${review ? `${review} ta tekshirilmagan` : "hammasi ko'rilgan"}</span></div>
     <div class="list">${list.slice(0, 20).map(x => `<div class="card" style="gap:8px">
       <div class="row between"><b>🧾 ${esc(x.full_name || "O'quvchi")} · ${sum(x.amount)} so'm</b>${tag(x.status)}</div>
-      <small class="muted">${esc(x.title)}${x.username ? ` · @${esc(x.username)}` : ""}${x.status === "review" && x.note ? `<br>🤖 AI: ${esc(x.note)}` : ""}</small>
+      <small class="muted">${esc(x.title)}${x.username ? ` · @${esc(x.username)}` : ""}${x.status === "review" && x.note && x.payee !== "platform" ? `<br>🤖 AI: ${esc(x.note)}` : ""}</small>
+      ${platformPayNote(x)}
       <div class="row" style="gap:8px"><button type="button" class="btn ghost sm" data-eprc="${x.id}">🖼 Chek</button>
       ${x.status === "review" ? `<button type="button" class="btn sm" data-epok="${x.id}">✅ Tasdiqlash</button><button type="button" class="btn ghost sm" data-epno="${x.id}">✕ Rad</button>` : ""}</div></div>`).join("")}</div>`;
+}
+// Begona o'qituvchi: pul bot kartasiga tushgan — chekni o'zi tekshiradi, tasdiqlasa ulushi «💰 Daromad»ga
+function platformPayNote(x) {
+  if (x.payee !== "platform") return "";
+  const pct = (S.boot && S.boot.revshare && S.boot.revshare.teacher_percent) || 20, mine = Math.round(x.amount * pct / 100);
+  return `<span class="small">🏦 Pul <b>bot kartasiga</b> tushadi: <b>${100 - pct}%</b> bot hisobiga, <b>${pct}%</b> sizga —
+    ${x.status === "paid" ? `<b>${sum(mine)} so'm</b> «💰 Daromad»ingizda` : `tasdiqlasangiz <b>${sum(mine)} so'm</b>. Chekda karta, summa va sanani tekshiring`}.</span>`;
 }
 function bindEssayPayments() {
   document.querySelectorAll("[data-eprc]").forEach(x => x.onclick = async () => {
@@ -3067,20 +3079,59 @@ function packRowHTML(p) {
     <span class="pk-disc small muted">${p.discount ? `−${p.discount}%` : ""}</span>
     <button type="button" class="pk-del" data-pk-del aria-label="Qatorni o'chirish">${ico("trash")}</button></div>`;
 }
+// Ogohlantirish (narx qo'yiladigan joylarda): begonalar to'lovining 80% — bot hisobiga, 20% — o'qituvchi balansiga
+function revshareWarnHTML(pct, minPrice) {
+  const price = Math.max(minPrice || 0, 10000), mine = Math.round(price * pct / 100);
+  return `<span class="small" style="color:var(--warn)">⚠️ <b>Diqqat:</b> begonalar to'lagan pulning <b>${100 - pct}%</b> — bot hisobiga,
+    <b>${pct}%</b> — sizning balansingizga. Masalan ${sum(price)} so'm → sizga ${sum(mine)} so'm, botga ${sum(price - mine)} so'm.</span>`;
+}
+
+// «💰 Daromad» (begona o'qituvchi): begonalar puli platformaga, ulushi shu balansga → «💸 Yechib olish» → admin o'tkazadi
+function earningsHTML(e) {
+  if (!e) return "";
+  const tag = st => st === "pending" ? `<span class="pill-tag wait">⏳ kutilmoqda</span>`
+    : st === "paid" ? `<span class="pill-tag done">✅ o'tkazildi</span>` : `<span class="pill-tag bad">❌ rad etildi</span>`;
+  const left = Math.max(0, e.withdraw_min - e.balance);
+  const price = Math.max(e.min_price || 0, 10000), mine = Math.round(price * e.teacher_percent / 100);
+  return `<div class="section-title"><h2>💰 Daromad</h2><span class="muted small">ulushingiz ${e.teacher_percent}%</span></div>
+    <div class="card" style="gap:10px">
+      <b>Qanday ishlaydi?</b>
+      <div class="small" style="display:grid;gap:6px;line-height:1.45">
+        <span>1️⃣ Begona o'quvchi essesi uchun bot kartasiga to'laydi — masalan <b>${sum(price)} so'm</b></span>
+        <span>2️⃣ Chekni siz tekshirib tasdiqlaysiz — balansingizga <b>${sum(mine)} so'm</b> (${e.teacher_percent}%) yoziladi</span>
+        <span>3️⃣ Balans <b>${sum(e.withdraw_min)} so'm</b> bo'lganda «💸 Yechib olish»ni bosing — admin kartangizga o'tkazadi</span>
+      </div>
+      ${revshareWarnHTML(e.teacher_percent, e.min_price)}
+      <span class="muted small">Soxta chekni tasdiqlasangiz, admin uni bekor qiladi va ulush balansingizdan olinadi.</span>
+      <span class="muted small">O'z o'quvchilaringiz uchun hech narsa o'zgarmaydi — ular bepul.</span>
+    </div>
+    <div class="card" style="gap:10px">
+      <div class="row between"><span class="muted small">Balans</span><b style="font-size:22px">${sum(Math.max(0, e.balance))} so'm</b></div>
+      <span class="muted small">Bu oy: <b>${e.month_count}</b> ta to'lov → <b>${sum(e.month_share)}</b> so'm · jami: ${sum(e.total)} so'm</span>
+      ${e.pending ? `<span class="small">⏳ ${sum(e.pending.amount)} so'm so'ralgan — admin kartangizga o'tkazgach bot xabar beradi.</span>`
+        : e.can_withdraw ? "" : `<span class="muted small">Yechib olish ${sum(e.withdraw_min)} so'mdan — yana ${sum(left)} so'm kerak.</span>`}
+      <button type="button" class="btn block" id="st-withdraw" ${e.can_withdraw ? "" : "disabled"}>💸 Yechib olish${e.can_withdraw ? ` — ${sum(e.balance)} so'm` : ""}</button>
+      ${(e.history || []).length ? `<div style="display:grid;gap:6px">${e.history.map(w => `<div class="row between small"><span>${esc((w.created_at || "").slice(0, 10))} · ${sum(w.amount)} so'm</span>${tag(w.status)}</div>`).join("")}</div>` : ""}
+    </div>`;
+}
+
 // ---------- ⚙️ Sozlamalar (ustoz): karta, begonalar uchun esse tekshiruvi, kredit narxlari ----------
 VIEWS.settings = async () => {
   loading();
   let s; try { s = await api("/api/teacher/settings"); } catch (e) { return fail(e); }
-  const ready = s.card && s.packs.length;
+  const ready = s.card && s.packs.length, rs = s.earnings && s.earnings.routed;
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
-      <span class="muted small">Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi.</span></div>
+      <span class="muted small">${rs ? `Begonalar (o'quvchingiz bo'lmaganlar) esse tekshiruvi uchun platformaga to'laydi — har to'lovdan sizga ${s.earnings.teacher_percent}%, AI xarajati platformadan.`
+        : "Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi."}</span></div>
+    ${earningsHTML(s.earnings)}
     ${S.boot && S.boot.can_manage ? `<button type="button" class="item results-go" id="st-sales"><span class="ico">💎</span>
-      <span><b>Obuna tariflari</b><small>Ilova narxlari, to'lov kartasi, sotuvni yoqish — faqat admin</small></span>
+      <span><b>Obuna tariflari</b><small>Ilova narxlari, to'lov kartasi, begonalar puli va yechish so'rovlari — faqat admin</small></span>
       <span class="rg-end">${ico("arrow")}</span></button>` : ""}
 
     <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
-    <div class="card"><span class="muted small">O'quvchilar kreditni shu kartaga to'laydi. AI chekdagi karta oxirgi 4 raqamini yoki egasining ismini tekshiradi.</span>
+    <div class="card"><span class="muted small">${rs ? "«💸 Yechib olish»da daromadingiz shu kartaga o'tkaziladi."
+      : "O'quvchilar kreditni shu kartaga to'laydi. AI chekdagi karta oxirgi 4 raqamini yoki egasining ismini tekshiradi."}</span>
       <div class="field"><label for="st-card">Karta raqami</label><input class="input" id="st-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
       <div class="field"><label for="st-holder">Karta egasi</label><input class="input" id="st-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
       <button type="button" class="btn ghost block" id="st-card-save">Kartani saqlash</button></div>
@@ -3091,7 +3142,7 @@ VIEWS.settings = async () => {
       ${!ready && !s.public ? `<span class="small" style="color:var(--warn)">Yoqish uchun avval karta va kamida bitta kredit narxini kiriting.</span>` : ""}
       <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
 
-    ${packsCardHTML({ essay_packs: s.packs })}
+    ${packsCardHTML({ essay_packs: s.packs, min_price: rs ? s.earnings.min_price : 0, warn: rs ? revshareWarnHTML(s.earnings.teacher_percent, s.earnings.min_price) : "" })}
     ${s.can_public ? claudeCardHTML(s.claude, true) : ""}
     ${s.can_public ? announceChannelsHTML(s.announce_channels || []) : ""}
     ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
@@ -3111,6 +3162,15 @@ VIEWS.settings = async () => {
     try { await api("/api/teacher/settings", { card: cardEl.value, holder: document.getElementById("st-holder").value });
       haptic("success"); toast("✅ Karta saqlandi"); rerender(); }
     catch (e) { toast(e.message); haptic("error"); saveCard.disabled = false; }
+  };
+  const wd = document.getElementById("st-withdraw");
+  if (wd) wd.onclick = async () => {
+    if (!s.card) { toast("Avval kartangizni kiriting — pul shunga o'tkaziladi"); haptic("error"); return; }
+    if (!(await confirmBox(`${sum(s.earnings.balance)} so'm yechib olinsinmi?\n\nAdmin shu kartaga o'tkazadi: ${s.card}`))) return;
+    wd.disabled = true;
+    try { const r = await api("/api/teacher/withdraw", {}); haptic("success");
+      toast(`✅ So'rov yuborildi — ${sum(r.amount)} so'm. O'tkazilgach bot xabar beradi`); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); wd.disabled = false; }
   };
   const pub = document.getElementById("st-public");
   pub.onclick = async () => {
@@ -3159,6 +3219,7 @@ VIEWS.sales = async () => {
         : `<button type="button" class="btn ${s.sales_on ? "ghost" : ""} block" id="sl-toggle">${s.sales_on ? "Sotuvni to'xtatish" : "Sotuvni yoqish"}</button>`}
       ${s.pending ? `<span class="muted small">⏳ Ko'rib chiqilmagan cheklar: <b>${s.pending}</b> ta — botda «Tasdiqlash / Rad etish».</span>` : ""}
     </div>
+    ${withdrawalsHTML(s.revshare)}
 
     <div class="section-title"><h2>📅 Tariflar</h2><span class="muted small">${s.tariffs.length ? `${s.tariffs.length} ta` : "kiritilmagan"}</span></div>
     <div class="card"><span class="muted small">Necha oy va narxi. Masalan: 1 oy — 200 000, 3 oy — 600 000. Narxi yozilmagan qator saqlanmaydi.</span>
@@ -3172,6 +3233,7 @@ VIEWS.sales = async () => {
       <div class="field"><label for="sl-card">Karta raqami</label><input class="input" id="sl-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
       <div class="field"><label for="sl-holder">Karta egasi</label><input class="input" id="sl-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
       <button type="button" class="btn ghost block" id="sl-card-save">Kartani saqlash</button></div>
+    ${revshareHTML(s.revshare)}
   </div>`;
   const digits = v => String(v || "").replace(/\D/g, "");
   const box = document.getElementById("pk-rows"), add = document.getElementById("pk-add"), MAX = 12;
@@ -3203,6 +3265,7 @@ VIEWS.sales = async () => {
       haptic("success"); toast(done); rerender();
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; }
   };
+  bindRevshare(s.revshare, send);
   const save = document.getElementById("pk-save");
   save.onclick = () => {
     const tariffs = [...box.querySelectorAll(".pk-row")].map(row => ({ months: +digits(row.querySelector("[data-pk-n]").value) || 0,
@@ -3220,6 +3283,70 @@ VIEWS.sales = async () => {
   };
 };
 
+// ---------- 💰 Begonalar puli (admin): oddiy o'qituvchining begona o'quvchilari platforma kartasiga to'laydi ----------
+// O'qituvchiga ulushi balansga yoziladi → u «Yechib olish»ni bosadi → shu yerda «✅ To'landi» (pulni o'tkazgach)
+function withdrawalsHTML(r) {
+  const list = (r && r.withdrawals) || [];
+  if (!list.length) return "";
+  return `<div class="section-title"><h2>💸 Yechib olish so'rovlari</h2><span class="pill-tag wait">${list.length} ta kutilmoqda</span></div>
+    <div class="list">${list.map(w => `<div class="card" style="gap:8px">
+      <div class="row between"><b>👩‍🏫 ${esc(w.name)}</b><b>${sum(w.amount)} so'm</b></div>
+      <button type="button" class="btn ghost sm" data-wdcopy="${esc(w.card || "")}">💳 ${esc(w.card || "—")} · nusxalash</button>
+      <small class="muted">${w.holder ? `${esc(w.holder)} · ` : ""}${w.username ? `@${esc(w.username)} · ` : ""}${esc((w.created_at || "").slice(0, 16))}</small>
+      <span class="small">Pulni shu kartaga o'tkazing, keyin «✅ To'landi»ni bosing — o'qituvchiga xabar boradi.</span>
+      <div class="row" style="gap:8px"><button type="button" class="btn sm" data-wdpaid="${w.id}" style="flex:1">✅ To'landi</button>
+        <button type="button" class="btn ghost sm" data-wdno="${w.id}">❌ Rad etish</button></div></div>`).join("")}</div>`;
+}
+function revshareHTML(r) {
+  if (!r) return "";
+  const inc = r.income || {};
+  return `<div class="section-title"><h2>💰 Begonalar puli</h2><span class="muted small">shu oy</span></div>
+    <div class="card" style="gap:10px">
+      <span class="muted small">Obuna olgan o'qituvchining begona o'quvchilari esse va kredit uchun <b>yuqoridagi to'lov kartasiga</b> to'laydi. Chekni AI emas, o'qituvchi tasdiqlaydi — har tasdiqlangan chek botda sizga ham keladi: pul tushmagan bo'lsa «❌ Bekor qilish». O'qituvchi ulushi balansiga yoziladi, yechib olishni so'rasa — tepada chiqadi.</span>
+      <div class="row between"><span>🧾 To'lovlar: <b>${inc.count || 0}</b> ta</span><b>${sum(inc.amount || 0)} so'm</b></div>
+      <div class="row between small muted"><span>👩‍🏫 O'qituvchilar ulushi</span><span>${sum(inc.share || 0)} so'm</span></div>
+      <div class="row between"><span>🏦 Sizga qoladi</span><b style="color:var(--good)">${sum(inc.net || 0)} so'm</b></div>
+    </div>
+    <div class="section-title"><h2>⚙️ Ulush va narx</h2></div>
+    <div class="card" style="gap:10px">
+      <div class="field"><label for="rs-share">Platformaga (%) <span class="muted">— 0: o'chiq, pul o'qituvchi kartasiga</span></label><input class="input" id="rs-share" inputmode="numeric" value="${r.platform_share}"></div>
+      <div class="field"><label for="rs-min">1 esse narxi kamida (so'm)</label><input class="input" id="rs-min" inputmode="numeric" value="${sum(r.min_essay_price)}"></div>
+      <div class="field"><label for="rs-wd">Yechib olish — balans kamida (so'm)</label><input class="input" id="rs-wd" inputmode="numeric" value="${sum(r.withdraw_min)}"></div>
+      <span class="small" id="rs-example"></span>
+      <button type="button" class="btn block" id="rs-save">Saqlash</button>
+    </div>`;
+}
+function bindRevshare(r, send) {
+  if (!r) return;
+  const digits = v => +String(v || "").replace(/\D/g, "") || 0;
+  const share = document.getElementById("rs-share"), min = document.getElementById("rs-min"), wd = document.getElementById("rs-wd");
+  const example = document.getElementById("rs-example");
+  const draw = () => {
+    const p = Math.min(100, digits(share.value)), price = Math.max(digits(min.value), 10000), mine = Math.round(price * p / 100);
+    example.innerHTML = p ? `Misol: o'quvchi <b>${sum(price)}</b> so'm to'laydi → sizga <b>${sum(mine)}</b>, o'qituvchiga <b>${sum(price - mine)}</b> so'm`
+      : "O'chiq: begonalar puli to'g'ridan-to'g'ri o'qituvchi kartasiga tushadi";
+  };
+  share.oninput = () => { share.value = String(digits(share.value)).slice(0, 3); draw(); };
+  [min, wd].forEach(x => x.oninput = () => { x.value = sum(digits(x.value)); draw(); });
+  draw();
+  const save = document.getElementById("rs-save");
+  save.onclick = () => send(save, { revshare: { platform_share: digits(share.value), min_essay_price: digits(min.value),
+    withdraw_min: digits(wd.value) } }, "✅ Saqlandi");
+  document.querySelectorAll("[data-wdcopy]").forEach(x => x.onclick = () => navigator.clipboard.writeText(x.dataset.wdcopy)
+    .then(() => { toast("Karta nusxalandi"); haptic("success"); }, () => toast(x.dataset.wdcopy)));
+  const decide = (id, action) => async e => {
+    const btn = e.currentTarget, w = r.withdrawals.find(x => String(x.id) === String(id));
+    const ask = action === "paid" ? `${sum(w.amount)} so'm ${w.card} kartasiga o'tkazdingizmi?` : "So'rov rad etilsinmi? Summa o'qituvchi balansiga qaytadi.";
+    if (!(await confirmBox(ask))) return;
+    btn.disabled = true;
+    try { await api(`/api/admin/withdrawal/${id}`, { action }); haptic("success");
+      toast(action === "paid" ? "✅ To'landi — o'qituvchiga xabar berildi" : "❌ Rad etildi"); rerender(); }
+    catch (err) { toast(err.message); haptic("error"); btn.disabled = false; }
+  };
+  document.querySelectorAll("[data-wdpaid]").forEach(x => x.onclick = decide(x.dataset.wdpaid, "paid"));
+  document.querySelectorAll("[data-wdno]").forEach(x => x.onclick = decide(x.dataset.wdno, "reject"));
+}
+
 function packsCardHTML(r) {
   const saved = r.essay_packs || [];
   // Saqlangan narxlar + qolgan odatiy kredit sonlari (narxi bo'sh) — ustoz faqat narxni yozadi, sonni ham o'zgartira oladi
@@ -3229,7 +3356,8 @@ function packsCardHTML(r) {
     <div class="card" id="packs-card"><span class="muted small">1 kredit = 1 esse. O'quvchi bitta chek bilan bir nechta kredit oladi — keyingi esselari chek so'ramaydi.</span>
       <div class="pk-row pk-head small muted"><b>Kredit</b><b>Narxi (so'm)</b><span class="pk-disc">Cheg.</span><span></span></div>
       <div id="pk-rows" style="display:grid;gap:8px">${rows.map(packRowHTML).join("")}</div>
-      <span class="muted small">Narxi yozilmagan qator sotilmaydi. Chegirma 1 kreditlik narxga nisbatan o'zi hisoblanadi.</span>
+      <span class="muted small">Narxi yozilmagan qator sotilmaydi. Chegirma 1 kreditlik narxga nisbatan o'zi hisoblanadi.${r.min_price ? ` Har bir kredit kamida <b>${sum(r.min_price)}</b> so'm (masalan 5 ta — kamida ${sum(5 * r.min_price)}).` : ""}</span>
+      ${r.warn || ""}
       <button type="button" class="btn ghost block" id="pk-add" ${rows.length >= PACK_ROWS_MAX ? "hidden" : ""}>➕ Qator qo'shish</button>
       <button type="button" class="btn block" id="pk-save">Saqlash</button></div>`;
 }
@@ -3277,7 +3405,8 @@ function walletPaymentsHTML(list) {
   return `<div class="section-title"><h2>💳 Kredit to'lovlari</h2><span class="muted small">${review ? `${review} ta tekshirilmagan` : "hammasi ko'rilgan"}</span></div>
     <div class="list">${list.slice(0, 20).map(x => `<div class="card" style="gap:8px">
       <div class="row between"><b>💳 ${esc(x.full_name || "O'quvchi")} · ${x.essays} ta · ${sum(x.amount)} so'm</b>${tag(x.status)}</div>
-      <small class="muted">${esc(x.created_at || "")}${x.username ? ` · @${esc(x.username)}` : ""}${x.status === "review" && x.note ? `<br>🤖 AI: ${esc(x.note)}` : ""}</small>
+      <small class="muted">${esc(x.created_at || "")}${x.username ? ` · @${esc(x.username)}` : ""}${x.status === "review" && x.note && x.payee !== "platform" ? `<br>🤖 AI: ${esc(x.note)}` : ""}</small>
+      ${platformPayNote(x)}
       <div class="row" style="gap:8px"><button type="button" class="btn ghost sm" data-wprc="${x.id}">🖼 Chek</button>
       ${x.status === "review" ? `<button type="button" class="btn sm" data-wpok="${x.id}">✅ Tasdiqlash</button><button type="button" class="btn ghost sm" data-wpno="${x.id}">✕ Rad</button>`
         : x.status === "paid" ? `<button type="button" class="btn ghost sm" data-wpno="${x.id}">✕ Bekor qilish</button>` : ""}</div></div>`).join("")}</div>`;
