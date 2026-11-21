@@ -957,7 +957,7 @@ def _digits(text) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
 
-RECEIPT_AI_TIMEOUT = 90
+RECEIPT_AI_TIMEOUT = 120  # o'quvchiga «1–2 daqiqa» deyiladi
 
 
 async def verify_receipt(data: bytes, mime: str, amount: int, card: dict) -> tuple[bool, list[str], str | None]:

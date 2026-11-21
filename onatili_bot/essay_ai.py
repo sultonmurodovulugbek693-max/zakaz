@@ -142,7 +142,7 @@ RECEIPT_PROMPT = (
     "qo'shib yozilgan yoki shrift mos emasga o'xshasa true. note — qisqa izoh (o'zbekcha)."
 )
 
-RECEIPT_MODEL_TIMEOUT = 20
+RECEIPT_MODEL_TIMEOUT = 30
 
 RECEIPT_SCHEMA = {
     "type": "object",
@@ -160,7 +160,7 @@ RECEIPT_SCHEMA = {
 
 async def read_receipt(image: bytes, mime: str = "image/jpeg") -> dict:
     """To'lov chekini o'qiydi (AI_PROVIDER'da, arzon): summa, sana, qabul qiluvchi karta/ism, tranzaksiya raqami."""
-    # Har Gemini modeliga 20 soniya: asosiy model osilib qolsa ham zaxiralar umumiy 90 soniyaga (webapp) sig'adi
+    # Har Gemini modeliga 30 soniya: asosiy model osilib qolsa ham zaxiralar umumiy 120 soniyaga (webapp) sig'adi
     out, _usage = await _call(RECEIPT_PROMPT, "Shu chekni o'qing.", [(image, mime)], RECEIPT_SCHEMA, effort="low",
                               kind="receipt", timeout=RECEIPT_MODEL_TIMEOUT)
     try:

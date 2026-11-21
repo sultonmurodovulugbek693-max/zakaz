@@ -608,6 +608,14 @@ async def receipt_received(message: Message) -> None:
     await plan_receipt_received(message, payment)
 
 
+RECEIPT_WAIT = "🔎 Chek qabul qilindi — AI tekshirmoqda.\n⏳ Natijasi 1–2 daqiqada shu yerga keladi."
+
+
+def receipt_wait(pay: dict) -> str:
+    """Chek kelganda o'quvchiga: AI tekshiradi (1–2 daqiqa) yoki — pul bot kartasiga tushgan bo'lsa — ustoz ko'radi."""
+    return "🧾 Chek qabul qilindi — ustozga yuborilmoqda…" if pay.get("payee") == "platform" else RECEIPT_WAIT
+
+
 async def plan_receipt_received(message: Message, payment: dict) -> None:
     """Obuna (yoki esse paketi) cheki: AI o'qiydi — bugungi sana, summa, qabul qiluvchi karta yoki ismi mos bo'lsa
     obuna darhol yoqiladi. Mos kelmasa (yoki AI o'qiy olmasa) — chek sababi bilan adminlarga (ADMIN_IDS, FREE_IDS)."""
@@ -615,7 +623,7 @@ async def plan_receipt_received(message: Message, payment: dict) -> None:
     mime = "image/jpeg" if message.photo else (message.document.mime_type or "")
     good, reasons, txn, digest = False, [], None, None
     if mime.startswith("image/"):
-        wait = await message.answer("🔎 Chek tekshirilmoqda…")
+        wait = await message.answer(RECEIPT_WAIT)
         try:
             data = (await message.bot.download(file_id)).read()
             digest = hashlib.sha256(data).hexdigest()
@@ -713,7 +721,7 @@ async def essay_receipt_received(message: Message, pay: dict) -> None:
         return
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     mime = "image/jpeg" if message.photo else message.document.mime_type
-    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    wait = await message.answer(receipt_wait(pay))
     try:
         data = (await message.bot.download(file_id)).read()
         await webapp.check_essay_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
@@ -737,7 +745,7 @@ async def wallet_receipt_received(message: Message, pay: dict) -> None:
         return
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     mime = "image/jpeg" if message.photo else message.document.mime_type
-    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    wait = await message.answer(receipt_wait(pay))
     try:
         data = (await message.bot.download(file_id)).read()
         await webapp.check_wallet_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
@@ -761,7 +769,7 @@ async def pass_receipt_received(message: Message, pay: dict) -> None:
         return
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     mime = "image/jpeg" if message.photo else message.document.mime_type
-    wait = await message.answer("🔎 Chek tekshirilmoqda…")
+    wait = await message.answer(receipt_wait(pay))
     try:
         data = (await message.bot.download(file_id)).read()
         await webapp.check_pass_receipt(pay["id"], data, mime)  # natijani o'quvchiga o'zi yozadi
