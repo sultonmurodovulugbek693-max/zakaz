@@ -2105,6 +2105,35 @@ class ScheduledMock(ServerBase):
         self.assertEqual((c["usd"], c["per_essay"], c["essays_left"], c["checked"]), (9.9, 0.05, 198, 2))
         self.assertEqual((await self.get("/api/bootstrap"))[1]["default_channel"], "@Til_va_adabiyot_Xalilov")
 
+    async def test_channel_post_falls_back_to_required_channel(self):
+        """E'lon kanali sozlanmagan — e'lon mockning majburiy obuna kanaliga; tugma «Mockda qatnashish»."""
+        _, r = await self.create("online", fmt="milliy", channels=["@Til_va_adabiyot_Xalilov"])
+        test = db.get_test(r["id"])
+        self.assertEqual([c["chat_id"] for c in test["channels"]], [-100])  # ServerBase: soxta kanal -100
+        await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00", "entry": "22:00",
+                                                                     "closes": "23:00", "public": True})
+        buttons = []
+
+        class ChannelBot(FakeBot):
+            async def send_message(self, chat_id, text, reply_markup=None, **_):
+                self.messages.append((chat_id, text))
+                if reply_markup:
+                    buttons.extend(b.text for row in reply_markup.inline_keyboard for b in row)
+
+        channel_bot = ChannelBot()
+
+        async def bot_username(_bot):
+            return "test_bot"
+        saved, bot.bot_username = bot.bot_username, bot_username
+        try:
+            await bot.mock_tick(channel_bot)
+        finally:
+            bot.bot_username = saved
+        posts = [m for c, m in channel_bot.messages if c == -100 and len(m) > 4]
+        self.assertEqual(len(posts), 1)
+        self.assertIn("Bugun 20:00 da", posts[0])
+        self.assertEqual(buttons, ["✍️ Mockda qatnashish"])
+
 class ScanResults(ServerBase):
     """Titul natijalari: surat belgilar bilan, ism, boshqa o'quvchiga ko'chirish, o'chirish, qo'lda kiritish, A/B/C/D tahlili."""
 

@@ -1616,7 +1616,9 @@ async def channel_tick(bot: Bot, now) -> None:
     for test in await asyncio.to_thread(db.channel_mocks, fmt(now - timedelta(days=2))):
         if not plans.ai_unlimited(test["owner_id"]):
             continue
-        channels = await asyncio.to_thread(webapp.announce_channels, test["owner_id"])
+        # «📣 E'lon kanali» (Sozlamalar); qo'yilmagan bo'lsa — mockning majburiy obuna kanallari (bot u yerda admin)
+        channels = (await asyncio.to_thread(webapp.announce_channels, test["owner_id"])
+                    or json.loads(test.get("channels") or "[]"))
         if not channels:
             continue
         posted = set(filter(None, (test.get("channel_posts") or "").split(",")))
@@ -1628,7 +1630,7 @@ async def channel_tick(bot: Bot, now) -> None:
         await asyncio.to_thread(db.set_channel_posts, test["id"], ",".join(sorted(posted)))  # avval — takror ketmasin
         username = await bot_username(bot)
         markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-            text="🏆 Natijalar" if key == "results" else "✍️ Qatnashaman",
+            text="🏆 Natijalar" if key == "results" else "✍️ Mockda qatnashish",
             url=f"https://t.me/{username}?start=m_{test['code']}")]]) if username else None
         for channel in channels:
             try:
@@ -1658,12 +1660,14 @@ async def channel_post_due(test: dict, now, posted: set) -> tuple[str, str, str]
                                  f"👥 Qatnashdi: <b>{len(data['rows'])}</b> · natija Rasch modelida\nSertifikatlar botda 🎓")
     if now >= closes:
         return None
-    if "new" not in posted and now < opens - timedelta(hours=1):
+    if "new" not in posted and now < opens:  # birinchi e'lon — har doim to'liq (kech e'lon qilingan bo'lsa ham)
         today = opens.date() == now.date()  # shu kuni e'lon qilindi — «bugun» e'loni ham shu (ikkinchisi ketmaydi)
+        soon = now >= opens - timedelta(hours=1)  # 1 soatdan kam qoldi — «1 soat qoldi» e'loni ham shu
         head = f"📢 <b>Bugun {opens:%H:%M} da {name}!</b>" if today else "📢 <b>Yangi mock e'lon qilindi!</b>"
-        return "new,day" if today else "new", "📢", (
+        keys = "new" + (",day" if today else "") + (",hour" if soon else "")
+        return keys, "📢", (
             f"{head}\n{line}\n<b>{name}</b> · {esc(test['title'])}\n{when}{people}\n{line}\n"
-            "Natija Rasch modelida — haqiqiy imtihondagidek. «Qatnashaman»ni bosing, ochilganda eslatamiz 👇")
+            "Natija Rasch modelida — haqiqiy imtihondagidek. «Mockda qatnashish»ni bosing, ochilganda eslatamiz 👇")
     if "day" not in posted and opens.date() == now.date() and now.hour >= 9 and now < opens - timedelta(hours=1):
         return "day", "📅", (f"📅 <b>Bugun {opens:%H:%M} da {name}!</b>\n{line}\n{esc(test['title'])}\n{when}{people}\n{line}\n"
                             "Do'stlaringizni ham chaqiring — qancha ko'p qatnashsa, natija shuncha aniq 💪")
