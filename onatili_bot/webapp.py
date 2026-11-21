@@ -214,6 +214,10 @@ async def bootstrap(request: web.Request) -> web.Response:
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
         # «✍️ Esse» (o'quvchi panelida): hohlagan odam kiradi — ustoz kodi bilan (ustoz limitidan) yoki bot orqali
         "practice": essay_ai.essay_enabled(),
+        # «📊 Natijalar»da «✍️ Esselarim»: o'zi tekshirtirgan esselar (shaxsiy — ustozga ro'yxat bo'lib bormaydi)
+        "essays": [{"id": p["id"], "status": p["status"], "topic": p["topic"], "created_at": p["created_at"],
+                    "score_75": essay_to_75(p["ai_score"]), "words": len(p["text"].split())}
+                   for p in await run(db.practice_of_student, uid, 30)],
         "my_card": my_card,
         # Begona o'qituvchi: begonalar puli platformaga, ulushi balansiga; esse narxi kamida min_price
         "revshare": {"teacher_percent": 100 - await run(plans.platform_share), "min_price": await run(plans.min_essay_price)}

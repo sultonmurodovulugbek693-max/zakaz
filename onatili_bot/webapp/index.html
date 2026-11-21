@@ -1524,12 +1524,21 @@ VIEWS.tests = async () => {  // «Testlar» endi bosh sahifada — eski havolala
 VIEWS.myresults = async () => {
   const b = await boot(); if (!b) return;
   const ready = b.attempts.filter(a => a.announced).length;
+  const essays = b.essays || [];
+  // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
+  const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
+      <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
+      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
-      <h1>Mening testlarim</h1><span class="muted small">${b.attempts.length} ta topshirilgan · ${ready} ta natija tayyor</span></div></div>
+      <h1>Mening natijalarim</h1><span class="muted small">${b.attempts.length} ta test · ${ready} ta natija tayyor${essays.length ? ` · ${essays.length} ta esse` : ""}</span></div></div>
+    ${essays.length ? `<div class="section-title"><h2>✍️ Esselarim</h2><span class="muted small">o'zim tekshirtirganlar</span></div>
+    <div class="list">${essayRows}</div>
+    <div class="section-title"><h2>📝 Testlarim</h2></div>` : ""}
     <div class="list">${b.attempts.map(attemptItem).join("") || `<div class="card empty"><div class="big">📭</div><b>Hali test topshirmagansiz</b>
       <span>«Bosh» bo'limida o'qituvchingiz bergan kodni kiriting.</span></div>`}</div>
   </div>`;
+  document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
   bindHomeActions();
 };
 

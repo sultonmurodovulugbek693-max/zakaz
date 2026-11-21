@@ -1930,6 +1930,9 @@ class PracticePublic(ServerBase):
         self.assertEqual(status, 200, res)
         self.assertNotIn("status", res)
         self.assertEqual(db.get_practice(res["id"])["kind"], "student")
+        # «📊 Natijalar»da «✍️ Esselarim»
+        essays = (await self.get("/api/bootstrap"))[1]["essays"]
+        self.assertEqual([(e["id"], e["topic"], e["status"]) for e in essays], [(res["id"], "Kitob", "pending")])
 
 
 class TeacherSettings(ServerBase):
