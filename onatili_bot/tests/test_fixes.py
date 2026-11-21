@@ -2052,6 +2052,59 @@ class ScheduledMock(ServerBase):
         self.assertEqual(status, 403)
 
 
+    async def test_credit_pay_own_link_and_claude_capacity(self):
+        """Mock kredit bilan (narxga teng kredit), o'z o'quvchilari havolasi (bepul), Claude — nechta esse qoldi."""
+        await self.post("/api/teacher/settings", {"card": "8600123456789012", "holder": "Ustoz Aliyev"})
+        await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 5000}]})  # 1 kredit = 5 000
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00", "entry": "22:00",
+                                                                     "closes": "23:00", "public": True, "price_ai": 15000, "price_teacher": 12000})
+        self.at(20, 30)
+        self.give_history(OTHER)
+        db.wallet_add(OWNER, OTHER, 2)
+        self.as_user(OTHER)
+        err = (await self.get(f"/api/test/{test['code']}"))[1]["mock_choice"]
+        self.assertEqual(([(o["key"], o["credits"]) for o in err["options"]], err["balance"]), ([("ai", 3), ("teacher", 3)], 2))
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai", "pay": "credit"})
+        self.assertEqual(status, 409)  # 3 kredit kerak, 2 ta bor — hech narsa yechilmaydi
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 2)
+        db.wallet_add(OWNER, OTHER, 3)
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai", "pay": "credit"})
+        self.assertEqual((status, res["status"], res["credits"], res["balance"]), (200, "paid", 3, 2))
+        self.assertEqual((await self.get(f"/api/test/{test['code']}"))[0], 200)  # mock ochildi
+        self.assertTrue(await webapp.essay_ai_ok(test, OTHER))  # AI tekshiradi
+
+        # O'z o'quvchilari havolasi: kirgan o'quvchi ustozga ulanadi — mock bepul
+        self.as_user(OWNER)
+        webapp.HOOKS["bot_username"] = lambda: asyncio.sleep(0, "test_bot")
+        link = (await self.get(f"/api/teacher/test/{test['id']}"))[1]["own_link"]
+        self.assertIn("start=mt_" + test["code"], link)
+        code = link.split("start=")[1]
+        self.assertEqual(webapp.test_from_own_code(code), test["code"])
+        self.assertIsNone(webapp.test_from_own_code(code[:-1] + ("0" if code[-1] != "0" else "1")))  # soxta imzo
+        answers = []
+
+        async def answer(text, **_):
+            answers.append(text)
+        message = types.SimpleNamespace(text=f"/start {code}", answer=answer,
+                                        from_user=types.SimpleNamespace(id=555, full_name="Yangi O'quvchi", username=None))
+        await bot.cmd_start(message, types.SimpleNamespace(clear=lambda: asyncio.sleep(0)))
+        self.assertTrue(db.is_linked(OWNER, 555))
+        self.assertIn("bepul", answers[-1])
+        self.as_user(555)
+        err = (await self.get(f"/api/test/{test['code']}"))[1]["mock_choice"]
+        self.assertEqual([o["price"] for o in err["options"]], [0, 0])
+
+        # Claude: balans $10, 2 ta esse $0,05 dan — $9,90 qoldi ≈ 198 ta esse
+        self.as_user(OWNER)
+        await self.post("/api/teacher/settings", {"claude_balance": "10"})
+        for _ in range(2):
+            db.record_ai_usage("essay", "claude-sonnet-5-5", {"in": 1000, "out": 500, "cost": 0.05})
+        c = (await self.get("/api/bootstrap"))[1]["claude"]
+        self.assertEqual((c["usd"], c["per_essay"], c["essays_left"], c["checked"]), (9.9, 0.05, 198, 2))
+        self.assertEqual((await self.get("/api/bootstrap"))[1]["default_channel"], "@Til_va_adabiyot_Xalilov")
+
 class ScanResults(ServerBase):
     """Titul natijalari: surat belgilar bilan, ism, boshqa o'quvchiga ko'chirish, o'chirish, qo'lda kiritish, A/B/C/D tahlili."""
 

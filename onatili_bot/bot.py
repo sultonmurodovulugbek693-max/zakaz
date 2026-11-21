@@ -122,6 +122,20 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if len(args) == 2 and args[1].startswith("t_"):  # ustozning taklif havolasi — o'quvchi ulanadi
         await join_teacher(message, args[1])
         return
+    if len(args) == 2 and args[1].startswith("mt_"):  # ustoz o'z o'quvchilariga bergan mock havolasi — bepul
+        code = webapp.test_from_own_code(args[1])
+        test = await asyncio.to_thread(db.get_test_by_code, code) if code else None
+        if not test:
+            await message.answer("⌛️ Havola noto'g'ri. Ustozingizdan yangisini so'rang.")
+            return
+        teacher = await asyncio.to_thread(db.find_user, str(test["owner_id"])) or {}
+        if test["owner_id"] != user.id:
+            await webapp.link_by_teacher({"id": test["owner_id"], "name": teacher.get("full_name")}, user.id)
+        await message.answer(f"✅ <b>{esc(teacher.get('full_name') or 'Ustoz')}</b>ning o'quvchisisiz — mock va esse siz uchun bepul.\n"
+                             f"📢 <b>{esc(mock_name(test))}</b> · {esc(test['title'])}\n"
+                             f"📅 {test['opens_at'][:10]} · {test['opens_at'][11:16]} ochiladi · {test['entry_until'][11:16]} gacha kirish",
+                             reply_markup=app_markup("✨ Mockni ochish", c=test["code"]))
+        return
     if len(args) == 2 and args[1].startswith("m_") and args[1][2:].isdigit():  # kanal e'lonidan: «Bugungi mock»
         test = await asyncio.to_thread(db.get_test_by_code, args[1][2:])
         if test and test.get("opens_at"):

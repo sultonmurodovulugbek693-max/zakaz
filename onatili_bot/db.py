@@ -1575,6 +1575,38 @@ def remember_public(teacher_id: int, student_id: int) -> None:
                      "ON CONFLICT(teacher_id, student_id) DO NOTHING", (teacher_id, student_id, _now()))
 
 
+def wallet_use_n(teacher_id: int, student_id: int, credits: int) -> bool:
+    """N kredit birdan (mock narxi kreditda) — yetmasa hech narsa yechilmaydi."""
+    with connect() as conn:
+        return bool(conn.execute(
+            "UPDATE essay_wallets SET balance = balance - ?, updated_at = ? WHERE teacher_id = ? AND student_id = ? "
+            "AND balance >= ?", (credits, _now(), teacher_id, student_id, credits)).rowcount)
+
+
+def mark_mock_paid(test_id: int, student_id: int, amount: int, choice: str, note: str) -> None:
+    """Mock kredit bilan to'landi: to'lov yozuvi darhol «paid» (chek kerak emas)."""
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO essay_payments (test_id, student_id, amount, status, created_at, decided_at, choice, note) "
+            "VALUES (?, ?, ?, 'paid', ?, ?, ?, ?) ON CONFLICT(test_id, student_id) DO UPDATE SET amount = excluded.amount, "
+            "status = 'paid', decided_at = excluded.decided_at, choice = excluded.choice, note = excluded.note",
+            (test_id, student_id, amount, _now(), _now(), choice, note))
+
+
+def claude_spent_since(day: str) -> dict:
+    """Claude sarfi (shu kundan beri): jami $ va esse tekshiruvlari soni / narxi — «nechta esse qoldi» uchun."""
+    with connect() as conn:
+        rows = conn.execute("SELECT kind, SUM(calls) AS calls, SUM(cost) AS cost FROM ai_usage WHERE day >= ? "
+                            "AND LOWER(model) LIKE '%claude%' GROUP BY kind", (day,)).fetchall()
+    out = {"cost": 0.0, "essay_calls": 0, "essay_cost": 0.0}
+    for row in rows:
+        out["cost"] += float(row["cost"] or 0)
+        if row["kind"] == "essay":
+            out["essay_calls"] += int(row["calls"] or 0)
+            out["essay_cost"] += float(row["cost"] or 0)
+    return out
+
+
 def wallets_of_student(student_id: int) -> list[dict]:
     """Begona o'quvchi tanigan ustozlar (ommaviy havola orqali) va har biridagi krediti."""
     with connect() as conn:

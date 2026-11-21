@@ -616,6 +616,10 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .an-bar.key i { background: var(--good); } .an-bar.top i { background: var(--bad); } .an-bar.blank { opacity: .65; }
 .an-bar b { text-align: right; font-variant-numeric: tabular-nums; }
 .sc-r-wait small, .sc-r-err small { color: var(--warn); } .sc-r-err small { color: var(--bad); } .sc-r-done small { color: var(--good); }
+/* Claude: yana nechta esse */
+.claude-card .cl-big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.claude-card .cl-big b { font: 800 32px var(--font-display, inherit); color: var(--accent); font-variant-numeric: tabular-nums; }
+.claude-card.low .cl-big b { color: var(--warn); }
 /* «💎 Tarif» kartasi: qolgan kunlar halqasi (har mavzuda bir xil — to'q binafsha / zumrad) */
 .pass-card { --ps-a: #5ef2b8; position: relative; overflow: hidden; display: grid; gap: 12px; padding: 18px 16px 16px; border-radius: 26px; color: #f1fffa;
   background: radial-gradient(90% 60% at 100% 0%, rgba(94,242,184,.22), transparent 60%), linear-gradient(155deg, #2a1857, #12133a 70%);
@@ -1375,6 +1379,7 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
+      ${b.can_public ? claudeCardHTML(b.claude, false) : ""}
       <button type="button" class="item results-go" data-go-results><span class="ico">${ico("bars")}</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span>
         <span class="rg-end" aria-hidden="true"><span class="rg-spark">${[30, 46, 38, 62, 52, 78, 100].map((h, k) => `<i style="--h:${h}%;--k:${k}"></i>`).join("")}</span>${ico("arrow")}</span></button>
       ${myTestsHTML(b.tests)}
@@ -1847,6 +1852,15 @@ VIEWS.create = async () => {
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
   bindChannelEditor(st.channels, async () => {});  // yaratishda serverga saqlash «Saqlash» bosilganda
   bindMockSetup(st.mock, () => { collect(); saveDraft(); rerender(); });
+  // Yangi mock: majburiy obunada standart kanal oldindan (bot u yerda admin bo'lsa) — o'chirsa bo'ladi
+  const defChannel = (S.boot || {}).default_channel;
+  if (defChannel && st.mode !== "offline" && !st.channelsInit) {
+    st.channelsInit = true;
+    api("/api/teacher/channel", { ref: defChannel }).then(ch => {
+      if (S.create !== st || st.channels.some(c => c.chat_id === ch.chat_id)) return;
+      st.channels.push(ch); saveDraft(); rerender();
+    }).catch(() => {});  // bot kanalda admin emas — qo'lda qo'shiladi
+  }
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
@@ -1932,7 +1946,7 @@ function bindFlash() { document.querySelectorAll(".flash .x").forEach(x => x.onc
 const pad2 = n => String(n).padStart(2, "0");
 function mockDefaults() {
   const d = new Date();
-  return { on: false, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+  return { on: !!(S.boot || {}).can_public, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
            opens: "20:00", entry: "22:00", closes: "23:00", paid: false, priceAi: "", priceTeacher: "" };
 }
 function mockSetupHTML(m, withFiles = true) {
@@ -2000,6 +2014,28 @@ async function saveMock(testId, m) {
 }
 
 // ---------- «💎 Tarif»: FREE_IDS ustoz narxini qo'yadi (Sozlamalar), begona o'quvchi bosh sahifada sotib oladi ----------
+// Claude hisobi: admin kiritgan balans − sarf → taxminan nechta esse tekshira oladi
+function claudeCardHTML(c, editable) {
+  if (!c && !editable) return "";
+  const low = c && c.essays_left < 100;
+  return `<div class="card claude-card ${low ? "low" : ""}"><div class="row between"><b>🤖 Claude</b>${c ? `<span class="pill-tag ${low ? "wait" : "done"}">$${num(c.usd)} qoldi</span>` : ""}</div>
+    ${c ? `<div class="cl-big"><b>≈ ${sum(c.essays_left)}</b><span>ta esse tekshira oladi</span></div>
+      <span class="muted small">1 esse ≈ $${c.per_essay} · ${c.since} dan beri ${sum(c.checked)} ta tekshirildi (balans $${num(c.set_usd)})${low ? " · ⚠️ balansni to'ldiring" : ""}</span>`
+      : `<span class="muted small">Anthropic (console.anthropic.com) hisobingizdagi balansni kiriting — bot sarfni hisoblab, yana nechta esse tekshira olishini ko'rsatadi.</span>`}
+    ${editable ? `<div class="row" style="gap:8px"><input class="input" id="cl-usd" inputmode="decimal" placeholder="Balans, $ (masalan 20)" style="flex:1" autocomplete="off">
+      <button type="button" class="btn ghost" id="cl-save">Saqlash</button></div>
+      <span class="muted small">Balansni to'ldirganingizda yangi summani kiriting — hisob shu kundan qayta boshlanadi.</span>` : ""}</div>`;
+}
+function bindClaudeCard() {
+  const save = document.getElementById("cl-save"); if (!save) return;
+  save.onclick = async () => {
+    const v = document.getElementById("cl-usd").value.trim(); if (!v) return toast("Balansni yozing");
+    save.disabled = true;
+    try { await api("/api/teacher/settings", { claude_balance: v }); haptic("success"); toast("✅ Saqlandi"); S.boot = null; rerender(); }
+    catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
+  };
+}
+
 // «📣 E'lon kanali»: bot admin qilingan kanalga mocklar haqida o'zi yozib turadi
 function announceChannelsHTML(list) {
   return `<div class="section-title"><h2>📣 E'lon kanali</h2><span class="muted small">${list.length ? `${list.length} ta kanal` : "ulanmagan"}</span></div>
@@ -2022,7 +2058,7 @@ function bindAnnounceChannels(list) {
   box.querySelectorAll("[data-an-del]").forEach(x => x.onclick = () => save(list.filter((_, i) => i !== +x.dataset.anDel).map(c => c.chat_id)));
 }
 const TARIFF_DEFAULTS = [30, 90];
-function tariffRowHTML(t) {
+function studentTariffRowHTML(t) {  // «💎 O'quvchi tariflari» (kun) — obuna tariflarining tariffRowHTML'idan alohida
   return `<div class="row tf-row" style="gap:8px"><input class="input" data-tf-d inputmode="numeric" value="${t.days || ""}" placeholder="Kun" style="flex:1" aria-label="Muddat (kun)">
     <input class="input" data-tf-p inputmode="numeric" value="${t.price ? sum(t.price) : ""}" placeholder="Narxi (so'm)" style="flex:1.6" aria-label="Narxi"></div>`;
 }
@@ -2031,7 +2067,7 @@ function studentTariffsHTML(list) {
   return `<div class="section-title"><h2>💎 O'quvchi tariflari</h2><span class="muted small">${list.length ? `${list.length} ta tarif` : "sotilmayapti"}</span></div>
     <div class="card"><span class="muted small">Begona o'quvchi bosh sahifada tarif sotib oladi: muddat davomida sizning <b>hamma mocklaringiz</b> unga bepul (o'z o'quvchingizdek). Pul kartangizga tushadi, chekni AI tekshiradi.</span>
       <div class="row small muted" style="gap:8px"><b style="flex:1">Muddat (kun)</b><b style="flex:1.6">Narxi (so'm)</b></div>
-      <div id="tf-rows" style="display:grid;gap:8px">${rows.map(tariffRowHTML).join("")}</div>
+      <div id="tf-rows" style="display:grid;gap:8px">${rows.map(studentTariffRowHTML).join("")}</div>
       <span class="muted small">Narxi yozilmagan qator sotilmaydi.</span>
       <button type="button" class="btn ghost block" id="tf-add" ${rows.length >= 6 ? "hidden" : ""}>➕ Tarif qo'shish</button>
       <button type="button" class="btn block" id="tf-save">Tariflarni saqlash</button></div>`;
@@ -2040,7 +2076,7 @@ function bindStudentTariffs() {
   const save = document.getElementById("tf-save"); if (!save) return;
   const box = document.getElementById("tf-rows"), add = document.getElementById("tf-add");
   const digits = v => String(v || "").replace(/\D/g, "");
-  add.onclick = () => { box.insertAdjacentHTML("beforeend", tariffRowHTML({})); box.lastElementChild.querySelector("input").focus(); add.hidden = box.children.length >= 6; haptic("light"); };
+  add.onclick = () => { box.insertAdjacentHTML("beforeend", studentTariffRowHTML({})); box.lastElementChild.querySelector("input").focus(); add.hidden = box.children.length >= 6; haptic("light"); };
   save.onclick = async () => {
     const list = [...box.querySelectorAll(".tf-row")].map(r => ({ days: +digits(r.querySelector("[data-tf-d]").value) || 0,
       price: digits(r.querySelector("[data-tf-p]").value) })).filter(t => t.price);
@@ -2055,7 +2091,7 @@ function passCardHTML(p) {
   const active = !!p.until, left = p.days_left || 0, total = Math.max(p.total_days || left, 1);
   // Halqa: qolgan kun / jami (30 kunlikda 29 qolsa — deyarli to'la); oxirgi 3 kunda — sariq, oxirgisida — qizil
   const R = 46, C = 2 * Math.PI * R, share = Math.max(0.04, Math.min(1, left / total));
-  const tone = left <= 1 ? "end" : left <= 3 ? "low" : "";
+  const tone = !active ? "" : left <= 1 ? "end" : left <= 3 ? "low" : "";
   const options = p.status === "review" ? `<div class="ps-wait">⏳ Chekingiz tekshirilmoqda — tasdiqlansa bot xabar beradi.</div>` : `
     <div class="ps-tariffs">${p.tariffs.map((t, i) => `<button type="button" class="ps-tariff ${i === 0 ? "on" : ""}" data-pass-days="${t.days}">
       <b>${t.days}</b><small>kun</small><span>${sum(t.price)} so'm</span></button>`).join("")}</div>
@@ -2212,7 +2248,8 @@ function mockChoicePage(code, data) {
     <div class="list">${ch.options.map(o => `<button type="button" class="item ${ch.chosen === o.key ? "on" : ""}" data-mc="${o.key}">
       <span class="ico">${o.key === "ai" ? "🤖" : "👩‍🏫"}</span>
       <span><b>${esc(o.title)}</b><small>${o.key === "ai" ? "AI imtihondagidek 75 ballik shkalada tekshiradi — natija tez chiqadi" : "Ustoz o'zi o'qib baholaydi — natija ustoz tekshirgach chiqadi"}</small></span>
-      <span class="pill-tag ${o.price ? "wait" : "done"}">${o.price ? `${sum(o.price)} so'm` : "Bepul"}</span></button>`).join("")}</div>
+      <span class="pill-tag ${o.price ? "wait" : "done"}">${o.price ? `${sum(o.price)} so'm${o.credits ? ` · ${o.credits} kr` : ""}` : "Bepul"}</span></button>`).join("")}</div>
+    ${ch.balance ? `<div class="card small"><span>💳 Sizda <b>${ch.balance} kredit</b> bor — pullik variantni tanlasangiz, kreditdan yechishni so'raymiz.</span></div>` : ""}
     ${ch.status === "rejected" ? `<div class="card small" style="border:1.5px solid var(--bad)">❌ Chek tasdiqlanmadi${ch.note ? `: ${esc(ch.note)}` : ""}. Qayta tanlab, to'g'ri chekni yuboring.</div>` : ""}
     ${waiting ? `<div class="card" style="border:1.5px solid var(--warn)"><b>💳 To'lov: ${sum(ch.amount)} so'm</b>
       <span class="small">Karta: <b>${esc(ch.card)}</b>${ch.holder ? ` · ${esc(ch.holder)}` : ""}</span>
@@ -2222,9 +2259,18 @@ function mockChoicePage(code, data) {
     <div class="card small muted">📅 ${mockDay(card.schedule)} · ${hm(card.schedule.opens_at)} – ${hm(card.schedule.closes_at)} · qabul ${hm(card.schedule.entry_until)} gacha</div>
   </div>`;
   document.querySelectorAll("[data-mc]").forEach(x => x.onclick = async () => {
+    const o = ch.options.find(y => y.key === x.dataset.mc) || {};
+    let pay = "card";
+    if (o.price > 0) {
+      if (o.credits && ch.balance >= o.credits) {
+        if (await confirmBox(`💳 Sizda ${ch.balance} kredit bor.\n\n${o.credits} kredit yechilsinmi? (${sum(o.price)} so'm o'rniga)`)) pay = "credit";
+        else if (!(await confirmBox(`Unda kartaga ${sum(o.price)} so'm to'laysizmi? Chekni botga yuborasiz — AI tekshiradi.`))) return;
+      } else if (!(await confirmBox(`Sizda ${o.credits ? `kredit yetarli emas (${ch.balance || 0} / ${o.credits})` : "kredit yo'q"}.\n\nKartaga ${sum(o.price)} so'm to'laysizmi? Chekni botga yuborasiz — AI tekshiradi.`))) return;
+    }
     x.disabled = true;
     try {
-      const r = await api(`/api/test/${code}/mock-choice`, { choice: x.dataset.mc });
+      const r = await api(`/api/test/${code}/mock-choice`, { choice: x.dataset.mc, pay });
+      if (r.credits) { haptic("success"); toast(`✅ ${r.credits} kredit yechildi (qoldi ${r.balance}) — mock ochilmoqda`); return rerender(); }
       haptic("success");
       if (r.status === "paid") { toast("✅ Tanlandi — mock ochilmoqda"); return rerender(); }
       toast("Botga karta va summa yuborildi — chekni o'sha yerga yuboring"); openBot(); rerender();
@@ -2285,6 +2331,9 @@ function teacherMockHTML(t, d) {
       <span class="row" style="gap:6px"><button type="button" class="btn plain sm" data-mf-open="${esc(f.url)}">Ko'rish</button>
       <button type="button" class="btn plain sm" data-mf-del="${f.id}" aria-label="O'chirish">✕</button></span></div>`).join("");
   return `${mockSetupHTML(m, false)}
+    ${d.own_link ? `<div class="card"><b>👥 O'quvchilarim uchun havola</b>
+      <span class="muted small">Shu havoladan kirgan o'quvchi sizga ulanadi — mock ham, esse ham unga bepul (sizning limitingizdan). Begonalar kanal e'loni orqali kirib to'laydi.</span>
+      <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="tm-own-share" style="flex:1">📨 Havolani ulashish</button><button type="button" class="btn plain" id="tm-own-copy">📋</button></div></div>` : ""}
     <div class="card">${s ? `<span class="small">${s.public && s.mock_no ? `📢 Mock №${s.mock_no} — hamma o'quvchilar bosh sahifasida` : "🔑 Faqat kod bilan kiriladi"} · 👥 <b>${d.signups}</b> kishi qatnashmoqchi</span>` : `<span class="muted small">Jadval hali qo'yilmagan.</span>`}
       <button type="button" class="btn block" id="tm-save">${m.on ? "💾 Jadval va narxlarni saqlash" : s ? "Jadvalni olib tashlash" : "Saqlash"}</button></div>
     <div class="card"><div class="section-title"><h2>📎 Savollar</h2><span class="muted small">${d.files.length} ta fayl</span></div>
@@ -2306,6 +2355,12 @@ function bindTeacherMock(t, d) {
       haptic("success"); toast(m.on ? "✅ Jadval saqlandi" : "Jadval olib tashlandi"); S.mockEdit = null; rerender();
     } catch (e) { toast(e.message); haptic("error"); save.disabled = false; }
   };
+  const ownShare = document.getElementById("tm-own-share"), ownCopy = document.getElementById("tm-own-copy");
+  if (ownShare) ownShare.onclick = () => {
+    const url = `https://t.me/share/url?url=${encodeURIComponent(d.own_link)}&text=${encodeURIComponent("Mockga shu havola orqali kiring — siz uchun bepul:")}`;
+    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  };
+  if (ownCopy) ownCopy.onclick = () => navigator.clipboard.writeText(d.own_link).then(() => { toast("Havola nusxalandi"); haptic("success"); }, () => toast(d.own_link));
   const input = document.getElementById("tm-files");
   if (input) input.onchange = async () => {
     const list = [...input.files]; if (!list.length) return;
@@ -2964,12 +3019,14 @@ VIEWS.settings = async () => {
       <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
 
     ${packsCardHTML({ essay_packs: s.packs })}
+    ${s.can_public ? claudeCardHTML(s.claude, true) : ""}
     ${s.can_public ? announceChannelsHTML(s.announce_channels || []) : ""}
     ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
   </div>`;
   bindPacksCard();
   bindStudentTariffs();
   bindAnnounceChannels(s.announce_channels || []);
+  bindClaudeCard();
   const toSales = document.getElementById("st-sales");
   if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
   const digits = v => String(v || "").replace(/\D/g, "");
