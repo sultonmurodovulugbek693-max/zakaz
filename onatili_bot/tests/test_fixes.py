@@ -2516,6 +2516,10 @@ class RevenueShare(ServerBase):
                                                                            "essay": "Esse matni. " * 40})
         self.assertEqual((status, res["essay"]), (200, False), res)  # test qabul qilindi, esse tashlab yuborildi
         self.assertIsNone(db.open_essay_payment(OTHER))
+        await self.post("/api/teacher/packs", {"packs": [{"essays": 1, "price": 12000}]})
+        with self.assertRaises(webapp.ApiError):  # tarifsiz ustozdan kredit ham sotib olinmaydi
+            await webapp.wallet_order(OWNER, self.user, 1)
+        self.assertFalse(bot.sells_credit(OWNER))
         # Tarif olindi — esse yana ochiq (begona to'laydi)
         plans.grant(OWNER, "month")
         self.user = {"id": STUDENT, "name": "Yangi", "username": "y"}

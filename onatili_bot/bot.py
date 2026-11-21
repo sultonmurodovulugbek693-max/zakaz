@@ -2369,6 +2369,11 @@ def essay_setup(teacher_id: int) -> dict:
             "card": saved.get(f"teacher_card:{teacher_id}", ""), "holder": saved.get(f"teacher_holder:{teacher_id}", "")}
 
 
+def sells_credit(teacher_id: int) -> bool:
+    """Ustozdan kredit olsa bo'ladimi: esse ochiq (tarif bor) va to'lov kartasi bor (oddiy ustozda — bot kartasi)."""
+    return plans.essay_open(teacher_id) and bool(webapp.pay_card(teacher_id, webapp.payee_of(teacher_id))["number"])
+
+
 def word_count(text: str) -> int:
     return len([w for w in re.split(r"\s+", text.strip()) if any(ch.isalpha() for ch in w)]) if text.strip() else 0
 
@@ -2505,8 +2510,7 @@ async def open_public(message: Message, code: str) -> None:
         await message.answer(f"Siz {name} ustozning o'quvchisisiz — esselaringiz bepul tekshiriladi.",
                              reply_markup=inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")]]))
         return
-    cfg = await asyncio.to_thread(essay_setup, teacher_id)
-    if not cfg["public"]:
+    if not await asyncio.to_thread(webapp.public_open, teacher_id):  # ustoz yopgan yoki tarifi yo'q (esse yopiq)
         await message.answer(f"⛔️ {name} hozir ommaviy esse tekshiruvini yopgan.")
         return
     await asyncio.to_thread(db.remember_user, message.from_user.id, message.from_user.full_name, message.from_user.username)
@@ -2543,8 +2547,8 @@ async def wallet_buy_button(callback: CallbackQuery) -> None:
     """«💳 Kredit olish»: ustozning paketlari tugma bo'lib chiqadi."""
     teacher_id = int(callback.data.split(":")[1])
     packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
-    if not packs or not (await asyncio.to_thread(essay_setup, teacher_id))["card"]:
-        await callback.answer("Ustoz hali kredit narxini qo'ymagan", show_alert=True)
+    if not packs or not await asyncio.to_thread(sells_credit, teacher_id):
+        await callback.answer("Ustoz hozir kredit sotmayapti", show_alert=True)
         return
     balance = await asyncio.to_thread(db.wallet_balance, teacher_id, callback.from_user.id)
     await callback.message.answer(f"💳 <b>Esse krediti</b>{f' · hozir {balance} ta' if balance else ''}\n"
@@ -2700,10 +2704,10 @@ async def submit_essay(message: Message, state: FSMContext, user) -> None:
         await message.answer(f"⏳ <b>Esse qabul qilindi</b>{f' ({word_count(text)} so' + chr(39) + 'z)' if text else ''} — "
                              "AI tekshirmoqda, odatda 20–60 soniya. Natija shu yerga keladi.")
         return
-    cfg = await asyncio.to_thread(essay_setup, teacher_id)
     packs = await asyncio.to_thread(webapp.essay_packs, teacher_id)
     has_credit = await asyncio.to_thread(db.wallet_balance, teacher_id, user.id) > 0
-    if not has_credit and (not cfg["public"] or not packs or not cfg["card"]):
+    if not has_credit and (not await asyncio.to_thread(webapp.public_open, teacher_id) or not packs
+                           or not await asyncio.to_thread(sells_credit, teacher_id)):
         await state.clear()
         await message.answer("⛔️ Ustoz hozir pullik tekshiruvni yopgan.")
         return

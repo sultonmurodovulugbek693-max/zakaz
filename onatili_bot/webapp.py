@@ -362,6 +362,12 @@ def pay_card(teacher_id: int, payee: str | None) -> dict:
     return plans.card() if payee == "platform" else teacher_card(teacher_id)
 
 
+def receipt_check_note(payee: str | None, done: str) -> str:
+    """To'lov ko'rsatmasida: pul bot kartasiga (oddiy ustoz) — chekni ustoz tekshiradi; aks holda — AI."""
+    return (f"ustozingiz tekshiradi, tasdiqlasa {done}" if payee == "platform"
+            else f"AI tekshiradi (1–2 daqiqa), to'g'ri bo'lsa {done}")
+
+
 def mock_price(test: dict, choice: str) -> int:
     """«Bugungi mock» narxi (begonaga): AI yoki ustoz tekshiruvi. Begona o'qituvchida (pul bot kartasiga) kamida
     min_essay_price — oldin qo'yilgan arzon narx ham ko'tariladi. 0 — bepul."""
@@ -994,8 +1000,8 @@ async def essay_pay_start(request: web.Request) -> web.Response:
                 user["id"], f"💳 <b>Esse tekshiruvi</b> · {html.escape(test['title'])} (kod {test['code']})\n"
                 f"Summa: <b>{plans.money(price)} so'm</b>\nKarta: <code>{html.escape(card['number'])}</code>"
                 + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
-                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, "
-                  "to'g'ri bo'lsa mock darhol ochiladi.")
+                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — "
+                + receipt_check_note(payee, "esse maydoni ochiladi."))
         except Exception:
             logger.warning("To'lov ko'rsatmasi yuborilmadi", exc_info=True)
     return ok({"ok": True, "status": pay["status"],
@@ -1210,6 +1216,8 @@ async def wallet_order(teacher_id: int, student: dict, essays: int) -> dict:
     """O'quvchi paket tanladi: to'lov ochiladi, bot karta va summani yozadi — chek skrinshotini shu yerga yuboradi."""
     if teacher_id == student["id"]:
         raise ApiError(400, "O'zingizdan kredit sotib ololmaysiz")
+    if not await run(plans.essay_open, teacher_id):  # tarifsiz ustozda esse yopiq — kredit ham sotilmaydi
+        raise ApiError(403, "Bu ustozda esse tekshiruvi hozir yopiq (tarif yo'q)")
     pack = next((p for p in await run(essay_packs, teacher_id) if p["essays"] == essays), None)
     payee = await run(payee_of, teacher_id)
     card = await run(pay_card, teacher_id, payee)
@@ -1226,8 +1234,8 @@ async def wallet_order(teacher_id: int, student: dict, essays: int) -> dict:
                 student["id"], f"💳 <b>Esse krediti · {pack['essays']} ta</b> — {html.escape(teacher.get('full_name') or 'ustoz')}\n"
                 f"Summa: <b>{plans.money(pack['price'])} so'm</b>\nKarta: <code>{html.escape(card['number'])}</code>"
                 + (f"\nQabul qiluvchi: {html.escape(card['holder'])}" if card["holder"] else "")
-                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
-                  "kredit darhol qo'shiladi. Har esse — 1 kredit, muddati yo'q.")
+                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — "
+                + receipt_check_note(payee, "kredit qo'shiladi.") + " Har esse — 1 kredit, muddati yo'q.")
         except Exception:
             logger.warning("Kredit to'lovi ko'rsatmasi yuborilmadi", exc_info=True)
     return {"ok": True, "payment": pay, "card": card,
