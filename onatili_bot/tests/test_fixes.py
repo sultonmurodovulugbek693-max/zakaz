@@ -2429,6 +2429,9 @@ class RevenueShare(ServerBase):
         self.assertEqual((db.earnings_balance(OWNER), copies), (3000, [("essay", pay["id"])]))  # 15 000 × 20%
         await webapp.decide_essay_payment(pay["id"], False, self.ADMIN)  # admin bekor qildi — ulush ham olinadi
         self.assertEqual(db.earnings_balance(OWNER), 0)
+        with self.assertRaises(webapp.ApiError):  # admin bekor qilganini ustoz qayta tasdiqlay olmaydi (20% halqasi)
+            await webapp.decide_essay_payment(pay["id"], True, OWNER)
+        self.assertEqual((db.earnings_balance(OWNER), len(copies)), (0, 1))
         await webapp.decide_essay_payment(pay["id"], True, self.ADMIN)  # admin tasdiqladi — nusxa yuborilmaydi
         self.assertEqual(len(copies), 1)
         await webapp.credit_share("essay", db.get_essay_payment(pay["id"]), OWNER)  # takror chaqiriq
@@ -2478,6 +2481,9 @@ class RevenueShare(ServerBase):
         await webapp.decide_wallet_payment(order["payment"]["id"], True, OWNER)  # ustoz tasdiqladi
         self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (5, 10_000))
         await webapp.decide_wallet_payment(order["payment"]["id"], False, self.ADMIN)  # admin: pul tushmagan
+        self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (0, 0))
+        with self.assertRaises(webapp.ApiError):  # ustoz qayta tasdiqlab kredit va 20% ni qaytara olmaydi
+            await webapp.decide_wallet_payment(order["payment"]["id"], True, OWNER)
         self.assertEqual((db.wallet_balance(OWNER, OTHER), db.earnings_balance(OWNER)), (0, 0))
 
         # Kredit evaziga ommaviy havola essesi: ustozning AI limiti yechilmaydi (puli platformada)

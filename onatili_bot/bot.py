@@ -940,7 +940,9 @@ def withdrawal_text(item: dict) -> str:
     return (f"💸 <b>Yechib olish</b> · <b>{plans.money(item['amount'])} so'm</b>\n{LINE}\n👩‍🏫 {who} · "
             f"<code>{item['teacher_id']}</code>\n💳 <code>{esc(item.get('card') or '—')}</code>"
             + (f"\n👤 {esc(item['holder'])}" if item.get("holder") else "")
-            + "\n\nPulni shu kartaga o'tkazing va «✅ To'landi» ni bosing.")
+            + "\n\n⚠️ Avval shu ustoz tasdiqlagan to'lovlar haqiqatan kartangizga tushganini tekshiring "
+              "(soxta chek bo'lsa — o'sha xabardagi «Bekor qilish», ulush balansdan olinadi va bu so'rovni rad eting)."
+            + "\nHammasi to'g'ri bo'lsa — pulni shu kartaga o'tkazing va «✅ To'landi» ni bosing.")
 
 
 def withdrawal_markup(withdrawal_id: int):

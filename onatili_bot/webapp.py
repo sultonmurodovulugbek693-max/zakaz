@@ -374,6 +374,24 @@ def platform_decider(by_id: int) -> bool:
     return plans.can_manage(by_id)
 
 
+def _voided_key(kind: str, payment_id: int) -> str:
+    return f"voided:{kind}:{payment_id}"
+
+
+async def guard_platform_decision(kind: str, pay: dict, approve: bool, by_id: int) -> None:
+    """Platforma to'lovi: admin bekor qilgan bo'lsa — ustoz uni qayta tasdiqlay olmaydi (soxta chek bilan 20% ni
+    qayta-qayta yozdirmasin); faqat admin. Admin bekor qilsa — belgi qo'yiladi."""
+    if pay.get("payee") != "platform":
+        return
+    key = _voided_key(kind, pay["id"])
+    if platform_decider(by_id):
+        if not approve:
+            await run(db.set_setting, key, "1")
+        return
+    if approve and (await run(db.get_settings)).get(key):
+        raise ApiError(403, "Bu to'lovni admin bekor qilgan — endi faqat admin tasdiqlay oladi")
+
+
 async def read_receipt_for(pay: dict, teacher_id: int, data: bytes, mime: str) -> tuple[bool, list[str], str | None]:
     """Chekni AI o'qiydi faqat admin / FREE_IDS ustozlarida. Begona o'qituvchida (pul platformaga) — AI o'qimaydi,
     chek ustozga boradi va u o'zi tasdiqlaydi (nusxasi adminga — teacher_approved_notice)."""
@@ -1039,6 +1057,7 @@ async def decide_essay_payment(payment_id: int, approve: bool, by_id: int) -> di
     platform = bool(pay) and pay.get("payee") == "platform"
     if not pay or (pay["owner_id"] != by_id and by_id not in ADMIN_IDS and not (platform and platform_decider(by_id))):
         raise ApiError(404, "To'lov topilmadi")
+    await guard_platform_decision("essay", pay, approve, by_id)
     allowed = ("open", "review", "rejected") if approve else ("open", "review", "paid")
     if not await run(db.decide_essay_payment, payment_id, "paid" if approve else "rejected", allowed):
         raise ApiError(409, "Bu to'lov allaqachon ko'rib chiqilgan")
@@ -1241,6 +1260,7 @@ async def decide_wallet_payment(payment_id: int, approve: bool, by_id: int) -> d
     platform = bool(pay) and pay.get("payee") == "platform"
     if not pay or (pay["teacher_id"] != by_id and by_id not in ADMIN_IDS and not (platform and platform_decider(by_id))):
         raise ApiError(404, "To'lov topilmadi")
+    await guard_platform_decision("wallet", pay, approve, by_id)
     if approve:
         balance = await run(db.pay_wallet_payment, payment_id, ("open", "review", "rejected"))
         if balance is None:
