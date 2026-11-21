@@ -172,7 +172,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         run(plans.status, uid), run(db.get_credits, uid), run(plans.can_use_ai, uid, "essays"), run(db.teachers_of, uid),
         run(db.wallets_of_student, uid), run(teacher_card, uid), run(db.join_requests_for, uid), run(plans.offers),
         run(plans.card), run(db.open_payment, uid))
-    sales, credit_mode = await asyncio.gather(run(plans.sales_on), run(plans.credit_mode, uid))
+    sales, credit_mode, essay_open_me = await asyncio.gather(run(plans.sales_on), run(plans.credit_mode, uid),
+                                                             run(plans.essay_open, uid))
     teacher_tests = []
     for test in tests:
         totals = all_totals.get(test["id"], [])
@@ -199,7 +200,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "sales": sales,  # obuna sotilyaptimi (Render PLANS_ENABLED yoki ilovadagi «💎 Obuna tariflari»)
         # Bot hamma uchun bepul: test yaratish obunasiz ham mumkin; tarif (obuna) faqat esse bo'limini ochadi
         "can_create": True,
-        "essay_open": await run(plans.essay_open, uid),  # testlarimda 45-esse ochiqmi (yo'q — «💎 Tarif» taklifi)
+        "essay_open": essay_open_me,  # testlarimda 45-esse ochiqmi (yo'q — «💎 Tarif» taklifi)
+        "can_mock": essay_open_me,  # «📅 E'lon qilish» va «Bugungi mock»ni hammaga ko'rsatish — tarif bilan
         "credit_mode": credit_mode,  # AI esse kreditdan (obuna emas): «🤖 AI» bo'limi ko'rinadi
         "can_manage": plans.can_manage(uid),  # tariflar va to'lov kartasini kiritadi (admin, FREE_IDS)
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
@@ -210,7 +212,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "passes": await pass_offers(user),  # «💎 Tarif»: muddat davomida ustozning hamma mocklari bepul
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
-        "practice": essay_ai.essay_enabled() and (bool(teachers) or bool(wallets)),
+        # «✍️ Esse» (o'quvchi panelida): hohlagan odam kiradi — ustoz kodi bilan (ustoz limitidan) yoki bot orqali
+        "practice": essay_ai.essay_enabled(),
         "my_card": my_card,
         # Begona o'qituvchi: begonalar puli platformaga, ulushi balansiga; esse narxi kamida min_price
         "revshare": {"teacher_percent": 100 - await run(plans.platform_share), "min_price": await run(plans.min_essay_price)}
@@ -357,6 +360,15 @@ def payee_of(teacher_id: int) -> str | None:
 def pay_card(teacher_id: int, payee: str | None) -> dict:
     """To'lov kartasi: platformaga bo'lsa — platforma kartasi (admin /sozlama), aks holda ustoz kartasi."""
     return plans.card() if payee == "platform" else teacher_card(teacher_id)
+
+
+def mock_price(test: dict, choice: str) -> int:
+    """«Bugungi mock» narxi (begonaga): AI yoki ustoz tekshiruvi. Begona o'qituvchida (pul bot kartasiga) kamida
+    min_essay_price — oldin qo'yilgan arzon narx ham ko'tariladi. 0 — bepul."""
+    price = int(test.get("price" if choice == "ai" else "price_teacher") or 0)
+    if price and plans.platform_routed(test["owner_id"]):
+        price = max(price, plans.min_essay_price())
+    return price
 
 
 def essay_price_of(test: dict) -> int:
@@ -555,13 +567,14 @@ async def mock_choice_info(test: dict, user: dict) -> dict | None:
     outsider = await is_outsider(test, user["id"])
     # Bot bepul, faqat esse pullik: begonaga «birinchi mock bepul» endi yo'q — esse har safar narx, kredit yoki tarif bilan
     first_free = False
-    prices = {"ai": int(test.get("price") or 0), "teacher": int(test.get("price_teacher") or 0)} \
+    prices = {"ai": mock_price(test, "ai"), "teacher": mock_price(test, "teacher")} \
         if outsider and not first_free else {"ai": 0, "teacher": 0}
     prices["none"] = 0
     keys = ["ai", "teacher"] if essay_ai.essay_enabled() else ["teacher"]
     if test["fmt"] == "milliy" and any(prices[k] for k in keys):
         keys.append("none")  # to'lamasa ham testni yechadi — faqat esse yo'q
-    card = await run(teacher_card, test["owner_id"])
+    # Tarifli oddiy ustoz: begonalar puli bot kartasiga (80/20); FREE_IDS / admin — o'z kartasiga
+    card = await run(pay_card, test["owner_id"], await run(payee_of, test["owner_id"]))
     unit = await run(credit_unit_price, test["owner_id"])
     balance = await run(db.wallet_balance, test["owner_id"], user["id"]) if outsider else 0
     return {"options": [{"key": k, "title": CHOICES[k], "price": prices[k],
@@ -604,15 +617,18 @@ async def mock_choice(request: web.Request) -> web.Response:
                    "balance": await run(db.wallet_balance, test["owner_id"], user["id"])})
     if option["price"] and not info["card"]:
         raise ApiError(409, "Ustoz hali kartasini kiritmagan — keyinroq urinib ko'ring")
-    pay = await run(db.start_essay_payment, test["id"], user["id"], option["price"], key)
+    payee = await run(payee_of, test["owner_id"]) if option["price"] else None
+    pay = await run(db.start_essay_payment, test["id"], user["id"], option["price"], key, payee)
     if option["price"] and pay["status"] == "open" and "send_text" in HOOKS:
         try:
             await HOOKS["send_text"](
                 user["id"], f"💳 <b>Mock</b> · {html.escape(test['title'])} — {CHOICES[key]}\n"
                 f"Summa: <b>{plans.money(option['price'])} so'm</b>\nKarta: <code>{html.escape(info['card'])}</code>"
                 + (f"\nQabul qiluvchi: {html.escape(info['holder'])}" if info["holder"] else "")
-                + "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
-                  "mock darhol ochiladi.")
+                + ("\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — ustozingiz tekshiradi, "
+                   "tasdiqlasa mock ochiladi." if payee == "platform" else
+                   "\n\nShu summani o'tkazing va <b>chek skrinshotini shu yerga yuboring</b> — AI tekshiradi, to'g'ri bo'lsa "
+                   "mock darhol ochiladi."))
         except Exception:
             logger.warning("Mock to'lovi ko'rsatmasi yuborilmadi", exc_info=True)
     return ok({"ok": True, "status": pay["status"], "amount": pay["amount"], "choice": key, "bot": info["bot"]})
@@ -631,10 +647,10 @@ async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -
             "schedule": schedule_view(test), "signups": len(signups),
             "faces": [_initials(s["name"]) for s in signups[:4]], "signed": any(s["tg_id"] == user["id"] for s in signups),
             "attempt": attempt["id"] if attempt else None, "announced": bool(test.get("closed")),
-            "price": int(test.get("price") or 0) if await is_outsider(test, user["id"]) else 0,
+            "price": mock_price(test, "ai") if await is_outsider(test, user["id"]) else 0,
             # Kartadagi izoh: tarifi bilan bepulmi; ustoz tarif sotadimi (sotsa — «tarif olsangiz, hamma mock bepul»)
             "owner_id": test["owner_id"], "has_pass": await pass_active(test["owner_id"], user["id"]),
-            "first_free": await is_outsider(test, user["id"]) and not await run(db.had_mock, test["owner_id"], user["id"], test["id"]),
+            "first_free": False,  # «birinchi mock bepul» yo'q — bot bepul, faqat esse pullik
             "sells_pass": bool(await run(student_tariffs, test["owner_id"]))}
 
 
@@ -642,7 +658,8 @@ async def mock_cards(user: dict) -> list[dict]:
     """Hamma o'quvchiga ko'rinadigan mocklar (FREE_IDS / admin ustozlarniki): bo'lajak, ochiq va 12 soat ichida yopilgan."""
     now = plans.now()
     since = (now - timedelta(hours=12)).strftime(TIME_FMT)
-    rows = [t for t in await run(db.public_mocks, since, now.strftime(TIME_FMT)) if plans.ai_unlimited(t["owner_id"])]
+    # FREE_IDS / admin va tarifi faol ustozlarniki (tarif tugasa — mocki bosh sahifadan tushadi)
+    rows = [t for t in await run(db.public_mocks, since, now.strftime(TIME_FMT)) if plans.essay_open(t["owner_id"])]
     if not rows:
         return []
     return [await mock_card(row, user, await run(db.mock_signups, row["id"])) for row in rows]
@@ -735,21 +752,26 @@ async def schedule_save(request: web.Request) -> web.Response:
         return ok({"schedule": None})
     if (test.get("mode") or "online") != "online":
         raise ApiError(400, "Jadval faqat onlayn testga qo'yiladi")
-    if not plans.ai_unlimited(user["id"]):
-        raise ApiError(403, "«📅 E'lon qilish» — faqat ruxsat berilgan ustozlar uchun")
+    if not await run(plans.essay_open, user["id"]):  # FREE_IDS / admin / ruxsat berilgan yoki tarifi bor ustoz
+        raise ApiError(403, "«📅 E'lon qilish» — 💎 tarif bilan ochiladi")
     opens, entry, closes = parse_schedule(payload)
     public = bool(payload.get("public"))
-    if public and (not plans.ai_unlimited(user["id"]) or test["fmt"] != "milliy"):
-        raise ApiError(403, "Hammaga ko'rsatish — faqat ruxsat berilgan ustozlarning milliy mocki uchun")
+    if public and test["fmt"] != "milliy":
+        raise ApiError(403, "Hammaga ko'rsatish — faqat milliy mock uchun")
     # Narxlar (begonalar uchun; o'z o'quvchilaringiz — bepul): esseni AI tekshirsa / ustoz tekshirsa. 0 — bepul
+    routed = await run(plans.platform_routed, user["id"])
+    floor = await run(plans.min_essay_price) if routed else 0
     prices = []
     for key, what in (("price_ai", "AI tekshiruvi"), ("price_teacher", "Ustoz tekshiruvi")):
         price = to_int(payload.get(key), 0, f"{what} narxi")
         if price and not 1000 <= price <= 1_000_000:
             raise ApiError(400, f"{what} narxi: 0 (bepul) yoki 1 000 – 1 000 000 so'm")
+        if price and price < floor:
+            raise ApiError(400, f"{what} narxi kamida {plans.money(floor)} so'm (begonalar puli bot kartasiga, sizga ulush)")
         prices.append(price)
-    if any(prices) and not (await run(teacher_card, user["id"]))["number"]:
-        raise ApiError(400, "Pullik mock uchun avval «⚙️ Sozlamalar»da kartangizni kiriting")
+    if any(prices) and not (await run(pay_card, user["id"], "platform" if routed else None))["number"]:
+        raise ApiError(400, "Pullik mock uchun bot kartasi hali kiritilmagan — admin bilan bog'laning" if routed
+                       else "Pullik mock uchun avval «⚙️ Sozlamalar»da kartangizni kiriting")
     await run(db.set_schedule, test["id"], opens, entry, closes, public)
     await run(db.set_mock_prices, test["id"], *prices)
     return ok({"schedule": schedule_view(await run(db.get_test, test["id"]))})
@@ -2380,6 +2402,7 @@ async def teacher_test(request: web.Request) -> web.Response:
         # «Bugungi mock»: jadval, savollar fayllari, qatnashmoqchilar; «Hammaga ko'rsatish» tanlovi kimga mumkin
         "schedule": schedule_view(test), "files": await files_view(test),
         "signups": len(await run(db.mock_signups, test["id"])), "can_public": plans.ai_unlimited(user["id"]),
+        "can_mock": await run(plans.essay_open, user["id"]),  # «📅 E'lon qilish» — tarif bilan
         "own_link": (f"https://t.me/{await HOOKS['bot_username']()}?start={own_mock_code(test)}"
                      if test.get("opens_at") and "bot_username" in HOOKS else None),
         "offline_essays": [offline_essay_view(e) for e in await run(db.list_offline_essays, test["id"])]
@@ -2588,8 +2611,37 @@ async def practice_home(request: web.Request) -> web.Response:
                          "free_left": free_left, "free": PUBLIC_FREE, "balance": w["balance"],
                          "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])),
                          "packs": await run(essay_packs, tid) if card["number"] else []})
+    # Ustozi yo'q odam ham tekshirtira olsin: FREE_IDS / admin ustozlarining ommaviy tekshiruvi (bepullar, keyin kredit)
+    listed = {t["id"] for t in teachers}
+    for tid in sorted(set(plans.FREE_IDS) | set(ADMIN_IDS)):
+        if tid in listed or tid == user["id"] or not await run(public_open, tid):
+            continue
+        card = await run(teacher_card, tid)
+        packs = await run(essay_packs, tid) if card["number"] else []
+        if not packs:
+            continue
+        who = await run(db.find_user, str(tid)) or {}
+        teachers.append({"id": tid, "name": who.get("full_name") or "Idrok", "kind": "public", "open": True, "platform": True,
+                         "free_left": max(0, PUBLIC_FREE - await run(db.public_free_used, tid, user["id"])),
+                         "free": PUBLIC_FREE, "balance": await run(db.wallet_balance, tid, user["id"]),
+                         "waiting": len(await run(db.practice_awaiting_credit, tid, user["id"])), "packs": packs})
     history = [_practice_view(p) for p in await run(db.practice_of_student, user["id"], 20)]
     return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
+
+
+async def practice_code(request: web.Request) -> web.Response:
+    """O'quvchi ilovada ustozning esse kodini (E48213) kiritadi — ustozga ulanadi, esselari ustoz limitidan."""
+    user = await auth(request)
+    raw = str((await body(request)).get("code") or "").strip()
+    teacher_id = await run(db.teacher_of_essay_code, raw) if any(ch.isdigit() for ch in raw) else None
+    if not teacher_id:
+        raise ApiError(404, "Bunday kod yo'q — ustozingizdan qayta so'rang (masalan: E48213)")
+    if teacher_id == user["id"]:
+        raise ApiError(400, "Bu sizning o'z kodingiz — uni o'quvchilaringizga bering")
+    teacher = await run(db.find_user, str(teacher_id)) or {}
+    await run(db.remember_user, user["id"], user["name"], user.get("username"))
+    fresh = await link_by_teacher({"id": teacher_id, "name": teacher.get("full_name") or "Ustoz"}, user["id"])
+    return ok({"ok": True, "fresh": fresh, "teacher": teacher.get("full_name") or "Ustoz"})
 
 
 async def practice_public_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
@@ -4451,6 +4503,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/practice", practice_submit)
     app.router.add_get("/api/practice/{practice_id:\\d+}", practice_get)
     app.router.add_post("/api/practice/wallet-order", practice_wallet_order)
+    app.router.add_post("/api/practice/code", practice_code)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)
     app.router.add_get("/api/teacher/essay/{attempt_id:\\d+}", essay_detail)

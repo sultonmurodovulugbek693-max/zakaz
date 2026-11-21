@@ -1827,9 +1827,9 @@ class PracticePublic(ServerBase):
 
     async def test_stranger_free_then_credit_in_app(self):
         self.user = {"id": OTHER, "name": "Begona", "username": None}
-        self.assertFalse((await self.get("/api/bootstrap"))[1]["practice"])  # hech bir ustozni tanimaydi
+        self.assertTrue((await self.get("/api/bootstrap"))[1]["practice"])  # «✍️ Esse» — hamma uchun panelda
+        self.assertEqual((await self.get("/api/practice"))[1]["teachers"], [])  # hech bir ustozni tanimaydi
         db.remember_public(OWNER, OTHER)  # ommaviy havolani botda ochdi
-        self.assertTrue((await self.get("/api/bootstrap"))[1]["practice"])
         _, home = await self.get("/api/practice")
         t = home["teachers"][0]
         self.assertEqual((t["kind"], t["free_left"], t["balance"], [p["essays"] for p in t["packs"]]), ("public", 2, 0, [1, 5]))
@@ -1856,6 +1856,28 @@ class PracticePublic(ServerBase):
         db.set_setting(f"essay_public:{OWNER}", "0")  # ustoz yopdi
         self.assertEqual((await self.send())[0], 403)
         self.assertEqual((await self.get("/api/practice"))[1]["teachers"][0]["open"], False)  # krediti bor — ko'rinadi
+
+    async def test_code_in_app_and_platform_checker(self):
+        """«✍️ Esse»: ustozi yo'q odamga FREE_IDS tekshiruvchisi (bepullar, keyin kredit); ustoz kodi bilan — ustoz limitidan."""
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:
+            self.user = {"id": OTHER, "name": "Begona", "username": None}
+            t = (await self.get("/api/practice"))[1]["teachers"]
+            self.assertEqual([(x["id"], x["kind"], x.get("platform"), x["free_left"]) for x in t], [(OWNER, "public", True, 2)])
+        finally:
+            plans.FREE_IDS = saved
+        code = db.essay_code_of(OWNER)
+        self.assertEqual((await self.post("/api/practice/code", {"code": "E00000"}))[0], 404)
+        status, r = await self.post("/api/practice/code", {"code": code.lower()})
+        self.assertEqual((status, r["fresh"], r["teacher"]), (200, True, "Ustoz Aliyev"), r)
+        self.assertTrue(db.is_linked(OWNER, OTHER))
+        t = (await self.get("/api/practice"))[1]["teachers"]
+        self.assertEqual(t[0]["kind"], "student")  # endi ustoz limitidan
+        status, res = await self.send()
+        self.assertEqual((status, db.get_practice(res["id"])["kind"]), (200, "student"), res)
+        self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+        self.assertEqual((await self.post("/api/practice/code", {"code": code}))[0], 400)  # o'z kodi
 
     async def test_linked_student_unchanged(self):
         db.link_student(OWNER, STUDENT)
@@ -2119,11 +2141,15 @@ class ScheduledMock(ServerBase):
         self.assertEqual(warned, [OTHER])  # kirgan o'quvchiga yuborilmaydi
         self.assertTrue(any("1 soat 10 daqiqa" in m for c, m in self.bot.messages if c == OTHER))
 
-        # FREE_IDS bo'lmagan ustoz jadval qo'ya olmaydi
+        # FREE_IDS bo'lmagan ustoz: tarifi faol — jadval qo'yadi va hammaga ko'rsatadi; tarifsiz — yo'q
         plans.FREE_IDS = set()
-        status, _ = await self.post(f"/api/teacher/test/{test['id']}/schedule", {"date": "2026-11-20", "opens": "20:00",
-                                                                                 "entry": "22:00", "closes": "23:00"})
+        when = {"date": "2026-11-20", "opens": "20:00", "entry": "22:00", "closes": "23:00", "public": True}
+        status, r = await self.post(f"/api/teacher/test/{test['id']}/schedule", when)
+        self.assertEqual(status, 200, r)  # OWNER'da oylik tarif bor (asyncSetUp)
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        status, _ = await self.post(f"/api/teacher/test/{test['id']}/schedule", when)
         self.assertEqual(status, 403)
+        self.assertEqual(await webapp.mock_cards({"id": OTHER, "name": "B", "username": None}), [])  # bosh sahifadan tushdi
 
 
     async def test_credit_pay_own_link_and_claude_capacity(self):
@@ -2433,6 +2459,49 @@ class RevenueShare(ServerBase):
         self.assertIn("•••• 3333", bot.platform_check_text(15000))
         await bot.platform_approved_notice(self.bot, "essay", pay["id"])
         self.assertIn(self.ADMIN, [chat for chat, _ in self.bot.photos])
+
+    async def test_paid_teacher_public_mock_platform_share(self):
+        """Tarifli oddiy ustoz «Bugungi mock»ni hammaga e'lon qiladi: begona to'lovi bot kartasiga (kamida 10 000),
+        chekni ustoz tasdiqlaydi — 20% balansiga; to'lamagan begona «Essesiz» tanlaydi."""
+        status, r = await self.mock(15000)
+        test = db.get_test(r["id"])
+        start = plans.now().replace(second=0, microsecond=0) - timedelta(minutes=5)
+        fmt = "%Y-%m-%d %H:%M"
+        status, res = await self.post(f"/api/teacher/test/{test['id']}/schedule", {
+            "date": start.strftime("%Y-%m-%d"), "opens": start.strftime("%H:%M"),
+            "entry": (start + timedelta(hours=1)).strftime("%H:%M"), "closes": (start + timedelta(hours=2)).strftime("%H:%M"),
+            "public": True, "price_ai": 5000, "price_teacher": 0})
+        self.assertEqual(status, 400, res)  # kamida 10 000 (pul bot kartasiga)
+        db.set_schedule(test["id"], start.strftime(fmt), (start + timedelta(hours=1)).strftime(fmt),
+                        (start + timedelta(hours=2)).strftime(fmt), True)
+        db.set_mock_prices(test["id"], 5000, 0)  # oldin qo'yilgan arzon narx — minimalga ko'tariladi
+        test = db.get_test(test["id"])
+
+        cards = await webapp.mock_cards({"id": OTHER, "name": "Begona", "username": "b"})
+        self.assertEqual([(c["code"], c["price"]) for c in cards], [(test["code"], 10_000)])  # bosh sahifada
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        info = await webapp.mock_choice_info(test, self.user)
+        self.assertEqual(info["card"], "9860 1111 2222 3333")  # bot kartasi, ustozniki emas
+        self.assertEqual([(o["key"], o["price"]) for o in info["options"]], [("ai", 10_000), ("teacher", 0), ("none", 0)])
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"})
+        self.assertEqual((status, res["status"]), (200, "open"), res)
+        pay = db.essay_payment_of(test["id"], OTHER)
+        self.assertEqual((pay["payee"], pay["amount"]), ("platform", 10_000))
+        self.assertIn("ustozingiz tekshiradi", self.bot.messages[-1][1])
+        self.receipt_for(10_000)
+        self.assertEqual((await webapp.check_essay_receipt(pay["id"], b"chek-m", "image/jpeg"))["status"], "review")
+        await webapp.decide_essay_payment(pay["id"], True, OWNER)  # ustoz tasdiqladi
+        self.assertEqual(db.earnings_balance(OWNER), 2000)
+
+        # To'lamagan begona: «Essesiz» — test ochiladi, esse qabul qilinmaydi
+        self.user = {"id": STUDENT, "name": "Bola", "username": "s"}
+        status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "none"})
+        self.assertEqual((status, res["status"]), (200, "paid"), res)
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertFalse(info["essay_open"])
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Bola Bolayev", "answers": {},
+                                                                           "essay": "Esse matni. " * 40})
+        self.assertEqual((status, res["essay"]), (200, False), res)
 
     async def test_no_plan_no_essay(self):
         """Ustozda tarif yo'q — testni hamma bepul yechadi, 45-esse yopiq: to'lov so'ralmaydi, esse qabul qilinmaydi."""

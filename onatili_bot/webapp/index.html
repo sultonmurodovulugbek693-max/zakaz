@@ -1095,7 +1095,7 @@ const NO_BACK = new Set(["home", "appHome", "appLogin"]);
 const TABS = {
   // «📊 Natijalar» — bosh sahifada (katta tugma); panelda «⚙️ Sozlamalar»
   teacher: [["home", "🏠", "Bosh"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"], ["settings", "⚙️", "Sozlamalar"]],
-  student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["profile", "👤", "Men"]],
+  student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["practice", "✍️", "Esse"], ["profile", "👤", "Men"]],
 };
 // Panel belgilari (chiziqli SVG); ro'yxatda yo'q bo'lim emoji bilan qoladi
 const TAB_ICONS = {
@@ -1127,7 +1127,8 @@ function paintTabs(view) {
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
     // Obuna sotilsa — «💎 Obuna»; AI esse kreditdan bo'lsa (obuna yopiq yoki /ruxsat bilan bepul) — «🤖 AI»
     key === "plan" ? S.boot.sales && !S.boot.credit_mode : key === "ai" ? (S.boot.credit_mode ?? !S.boot.sales) && S.boot.can_create !== false
-      : key === "students" || key === "settings" ? S.boot.can_create !== false : true) : null;
+      : key === "students" || key === "settings" ? S.boot.can_create !== false
+      : key === "practice" ? S.boot.practice !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
   const wrap = bar.firstElementChild;
@@ -1189,7 +1190,7 @@ function applyUiTheme(key) {
 
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
-const RESUMABLE = { student: ["answer", "result", "myresults", "profile"],
+const RESUMABLE = { student: ["answer", "result", "myresults", "practice", "profile"],
                     teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written", "results", "classResults", "testResults", "settings"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
@@ -1880,7 +1881,7 @@ VIEWS.create = async () => {
       }).join("")}
       <span class="muted small">O'quvchi uchta javobdan istalganini yozsa ham to'g'ri hisoblanadi. Katta-kichik harf, o'/oʻ farqi, ortiqcha bo'shliq va kirillcha yozuv xato hisoblanmaydi.</span></div>` : ""}
     ${st.mode === "offline" ? "" : channelEditorHTML(st.channels)}
-    ${st.mode !== "offline" && st.fmt === "milliy" && (S.boot || {}).can_public ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
+    ${st.mode !== "offline" && st.fmt === "milliy" && (S.boot || {}).can_mock ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
   </div>`;
   function collect() {
@@ -1941,7 +1942,7 @@ VIEWS.create = async () => {
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
-    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_public) {
+    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
       const bad = mockProblem(st.mock); if (bad) { toast(bad); haptic("error"); return; }
     }
     const miss = items.filter(i => !st.keys.A[i.label]);
@@ -1950,7 +1951,7 @@ VIEWS.create = async () => {
     try {
       const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
-      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_public) {
+      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
         // Test saqlandi — endi jadval, narxlar va savollar fayli (xato bo'lsa test sahifasida tuzatiladi)
         btn.textContent = "E'lon qilinmoqda…";
         try { await saveMock(res.id, st.mock); }
@@ -2023,7 +2024,7 @@ function bindFlash() { document.querySelectorAll(".flash .x").forEach(x => x.onc
 const pad2 = n => String(n).padStart(2, "0");
 function mockDefaults() {
   const d = new Date();
-  return { on: !!(S.boot || {}).can_public, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+  return { on: !!(S.boot || {}).can_mock, public: true, date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
            opens: "20:00", entry: "22:00", closes: "23:00", paid: false, priceAi: "", priceTeacher: "" };
 }
 function mockSetupHTML(m, withFiles = true) {
@@ -2033,7 +2034,7 @@ function mockSetupHTML(m, withFiles = true) {
     <div class="chips"><button type="button" class="chip ${m.on ? "" : "on"}" data-mock-on="0">Yo'q</button>
       <button type="button" class="chip ${m.on ? "on" : ""}" data-mock-on="1">📢 Ha, e'lon qilish</button></div>
     ${m.on ? `
-      ${b.can_public ? `<label class="row small" style="gap:8px;cursor:pointer"><input type="checkbox" id="mk-public" ${m.public ? "checked" : ""} style="width:20px;height:20px">
+      ${b.can_mock ? `<label class="row small" style="gap:8px;cursor:pointer"><input type="checkbox" id="mk-public" ${m.public ? "checked" : ""} style="width:20px;height:20px">
         Hamma o'quvchilarning bosh sahifasida «Bugungi mock» bo'lib chiqsin</label>` : ""}
       <div class="field"><label for="mk-date">Sana</label><input class="input" id="mk-date" type="date" value="${esc(m.date)}"></div>
       <div class="row" style="gap:8px;align-items:flex-end">
@@ -2043,7 +2044,8 @@ function mockSetupHTML(m, withFiles = true) {
       <div class="field"><label>Mock</label><div class="chips">
         <button type="button" class="chip ${m.paid ? "" : "on"}" data-mock-paid="0">🎁 Bepul</button>
         <button type="button" class="chip ${m.paid ? "on" : ""}" data-mock-paid="1">💳 Pullik</button></div></div>
-      ${m.paid ? `<span class="muted small">Narxni o'zingiz qo'yasiz (begonalar uchun; o'z o'quvchilaringizga va tarif olganlarga bepul). O'quvchi boshlashdan oldin esseni kim tekshirishini tanlaydi — 0 yoki bo'sh qolgani bepul.</span>
+      ${m.paid ? `<span class="muted small">Narxni o'zingiz qo'yasiz (begonalar uchun; o'z o'quvchilaringizga va tarif olganlarga bepul). O'quvchi boshlashdan oldin esseni kim tekshirishini tanlaydi — 0 yoki bo'sh qolgani bepul. To'lamagan o'quvchi testni essesiz yechadi.</span>
+      ${b.revshare ? revshareWarnHTML(b.revshare.teacher_percent, b.revshare.min_price) : ""}
       <div class="row" style="gap:8px">
         <div class="field" style="flex:1"><label for="mk-pai">🤖 AI tekshirsa (so'm)</label><input class="input" id="mk-pai" inputmode="numeric" value="${esc(m.priceAi)}" placeholder="0 — bepul"></div>
         <div class="field" style="flex:1"><label for="mk-pteacher">👩‍🏫 Ustoz tekshirsa (so'm)</label><input class="input" id="mk-pteacher" inputmode="numeric" value="${esc(m.priceTeacher)}" placeholder="0 — bepul"></div></div>`
@@ -2675,7 +2677,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${suggested ? `<button class="btn block" id="confirm-all">🤖 AI baholarini tasdiqlash (${suggested})</button>` : ""}
       ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
-    ${tab === "design" && !offline && milliy && d.can_public ? teacherMockHTML(t, d) : ""}
+    ${tab === "design" && !offline && milliy && d.can_mock ? teacherMockHTML(t, d) : ""}
     ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
   countUp($app); bindFlash(); bindTabStrip();
@@ -2684,7 +2686,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
     countUp(el);
   }
-  if (tab === "design" && !offline && milliy && d.can_public) bindTeacherMock(t, d);
+  if (tab === "design" && !offline && milliy && d.can_mock) bindTeacherMock(t, d);
   document.querySelectorAll("[data-goto-mock]").forEach(x => x.onclick = () => { S.current.params = { id, tab: "design" }; S.useCache = true; haptic("select"); rerender(); });
   if (tab === "design") {
     preview(t.theme);
@@ -2798,7 +2800,7 @@ async function aiView(mode) {
       <span class="muted small">Ulangan o'quvchi test bo'lmasa ham «✍️ Esse tekshirish»da esse yozib tekshirtiradi (kreditingizdan).</span>
       ${r.invite_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="share" style="flex:1">📨 Taklif havolasini yuborish</button><button type="button" class="btn plain" id="copy-invite">📋</button></div>` : ""}
       ${r.essay_code ? `<div class="row between" style="gap:8px"><span>🔑 Esse kodi: <b style="font-size:1.25em;letter-spacing:.06em">${esc(r.essay_code)}</b></span><button type="button" class="btn plain sm" id="copy-code">📋 Nusxa</button></div>
-      <span class="muted small">O'quvchi botga shu kodni yozsa — sizga ulanadi. Doskaga yozish yoki aytib berish oson.</span>` : ""}
+      <span class="muted small">O'quvchi shu kodni ilovadagi «✍️ Esse» bo'limiga (yoki botga) yozsa — sizga ulanadi, esselari sizning limitingizdan tekshiriladi. Doskaga yozish yoki aytib berish oson.</span>` : ""}
       <div class="row" style="gap:8px"><input class="input" id="add-ref" placeholder="@username yoki Telegram ID" autocomplete="off" style="flex:1"><button type="button" class="btn" id="add">Qo'shish</button></div>
       <span class="muted small">@username bilan qo'shish uchun o'quvchi avval botga /start bosgan bo'lishi kerak.</span>
       <div class="row between" style="gap:8px"><span class="small">Har o'quvchiga oyiga</span>
@@ -3470,7 +3472,11 @@ VIEWS.practice = async () => {
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
-    ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Ustozga ulanmagansiz</b><span>Ustozingizdan taklif havolasini (yoki esse tekshiruvi havolasini) so'rang.</span></div>` : `
+    <div class="card"><b>🔑 Ustozingiz kodi bormi?</b>
+      <span class="muted small">Ustozingiz bergan kodni kiriting (masalan E48213) — esselaringiz <b>ustozingiz limitidan</b> tekshiriladi.</span>
+      <div class="row" style="gap:8px"><input class="input" id="pcode" placeholder="E48213" autocomplete="off" autocapitalize="characters" style="flex:1">
+        <button type="button" class="btn" id="pcode-go">Ulanish</button></div></div>
+    ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Hozircha tekshiruvchi yo'q</b><span>Ustozingiz kodini kiriting yoki undan taklif havolasini so'rang.</span></div>` : `
     <div class="card">
       ${t.length > 1 ? `<div class="field"><label>Ustoz</label><div class="chips">${t.map((x, i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-teacher="${x.id}">${esc(x.name)}</button>`).join("")}</div></div>` : `<span class="small">Ustoz: <b>${esc(t[0].name)}</b></span>`}
       <div id="left" style="display:grid;gap:8px"></div>
@@ -3482,6 +3488,18 @@ VIEWS.practice = async () => {
     ${history ? `<div class="section-title"><h2>Oldingi esselarim</h2></div><div class="list">${history}</div>` : ""}
   </div>`;
   document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
+  const codeBtn = document.getElementById("pcode-go"), codeEl = document.getElementById("pcode");
+  codeBtn.onclick = async () => {
+    const code = codeEl.value.trim();
+    if (!/\d{5}/.test(code)) { toast("Kodni to'liq yozing (masalan E48213)"); haptic("error"); return codeEl.focus(); }
+    codeBtn.disabled = true;
+    try {
+      const r2 = await api("/api/practice/code", { code });
+      haptic("success"); toast(r2.fresh ? `✅ ${r2.teacher} ustozga ulandingiz` : `Siz ${r2.teacher} ustozga allaqachon ulangansiz`);
+      return VIEWS.practice();
+    } catch (e) { toast(e.message); haptic("error"); codeBtn.disabled = false; }
+  };
+  codeEl.onkeydown = e => { if (e.key === "Enter") codeBtn.click(); };
   if (!t.length) return;
   let teacher = t[0], packEssays = 1;
   // Ustozning o'quvchisi — oylik chegara; begona — bepullar, kredit va paketlar (bitta chek — bir nechta esse)
@@ -3713,6 +3731,14 @@ VIEWS.plan = async () => {
         <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(pk.price)} so'm</b></span></button>`
       : `<span class="muted small">Paket faol obunaga qo'shiladi — avval obunani yangilang.</span>`}
     </div>` : "";
+  // Tarif nima beradi — ustoz nima uchun to'layotganini aniq bilsin (begona o'quvchi kelishi kafolatlanmaydi)
+  const rs = b.revshare, ess = (p.limits || {}).essays || 150;
+  const gives = `<div class="card"><b>💎 Tarif nima beradi</b>
+      <span class="small">✍️ <b>O'z o'quvchilaringiz</b> essesini AI imtihondagidek tekshiradi — oyiga <b>${ess} ta</b> (tugasa — 📦 paket). Asosiy foyda shu.</span>
+      <span class="small">📅 Mocklaringizni <b>«Bugungi mock»</b> qilib e'lon qilasiz — hamma o'quvchining bosh sahifasida chiqadi.</span>
+      <span class="small">💰 Begona o'quvchilar esse uchun to'laydi${rs ? ` — har to'lovdan sizga <b>${rs.teacher_percent}%</b> (balans 💸 yechib olinadi)` : " — pul kartangizga"}.</span>
+      <span class="muted small">Tarifsiz ham test yaratish va yechish bepul — faqat 45-esse yopiq bo'ladi. Begona o'quvchilar kelishi kafolatlanmaydi:
+        ular sizni mock va havolangiz orqali topadi.</span></div>`;
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Obuna</span>
       <h1>${!p.plan ? "Obuna sotib olish" : p.active ? "Obunangiz faol" : "Obuna tugagan"}</h1>
@@ -3721,6 +3747,7 @@ VIEWS.plan = async () => {
     ${open ? `<div class="card" style="border:1.5px solid var(--accent)">
       <b>⏳ Kutilayotgan to'lov</b><span class="muted small">${esc(planName(open.period))} · ${sum(open.amount)} so'm —
       ${open.status === "sent" ? "chek yuborilgan, admin tekshirmoqda" : "chekni botga yuboring"}</span></div>` : ""}
+    ${gives}
     ${used}
     <div class="section-title" id="periods-title"><h2>Tarifni tanlang</h2></div>
     <div class="list" id="periods">${rows || `<div class="card empty">Narxlar hali kiritilmagan — admin bilan bog'laning.</div>`}</div>
