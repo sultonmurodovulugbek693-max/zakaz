@@ -1830,6 +1830,13 @@ class ScheduledMock(ServerBase):
     def at(self, hour, minute=0):
         self.clock = self.clock.replace(hour=hour, minute=minute)
 
+    def give_history(self, uid):
+        """O'quvchi shu ustozning boshqa vaqtli mockida bepul joy olgan («birinchi mock bepul» ishlatilgan)."""
+        items = structure.build_items("milliy", 45)
+        old = db.create_test(OWNER, "Oldingi mock", "milliy", 45, items, {"A": {i["label"]: "A" for i in items}})
+        db.set_schedule(old["id"], "2026-11-13 20:00", "2026-11-13 22:00", "2026-11-13 23:00", True)
+        db.start_essay_payment(old["id"], uid, 0, "ai")
+
     def as_user(self, uid):
         self.user = {"id": uid, "name": f"O'quvchi {uid}", "username": None}
 
@@ -1867,9 +1874,16 @@ class ScheduledMock(ServerBase):
         self.assertIn("boshlandi", reminders[1])
         self.assertIn("1 kishi qatnashmoqchi", reminders[1])
 
+        # Birinchi mock — bepul (kartada va tanlovda «🎁 Birinchi mockingiz bepul»)
+        status, err = await self.get(f"/api/test/{test['code']}")
+        self.assertEqual((status, err["mock_choice"]["first_free"]), (402, True))
+        self.assertEqual([o["price"] for o in err["mock_choice"]["options"]], [0, 0])
+        self.assertTrue((await self.get("/api/bootstrap"))[1]["mocks"][0]["first_free"])
+        self.give_history(OTHER)  # avval boshqa mockda qatnashgan — endi pullik
+
         # Ochiq: avval tanlov (AI — 15 000, ustoz — 10 000), to'lanmaguncha savollar yo'q
         status, err = await self.get(f"/api/test/{test['code']}")
-        self.assertEqual(status, 402)
+        self.assertEqual((status, err["mock_choice"]["first_free"]), (402, False))
         self.assertEqual([(o["key"], o["price"]) for o in err["mock_choice"]["options"]], [("ai", 15000), ("teacher", 10000)])
         status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"})
         self.assertEqual((status, res["status"], res["amount"]), (200, "open", 15000))
@@ -1963,6 +1977,7 @@ class ScheduledMock(ServerBase):
         # Ustoz AI tasdiqlaganini bekor qiladi — kunlar qaytib olinadi, narx yana chiqadi
         await webapp.decide_pass_payment(order["payment"]["id"], False, OWNER)
         self.assertEqual(db.pass_until(OWNER, OTHER), "2026-11-20 19:00")
+        self.give_history(OTHER)  # birinchi mocki allaqachon bo'lgan — narx chiqadi
         err = (await self.get(f"/api/test/{test['code']}"))[1]
         self.assertEqual(err["mock_choice"]["options"][0]["price"], 15000)
 

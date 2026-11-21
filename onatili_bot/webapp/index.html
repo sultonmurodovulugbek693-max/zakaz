@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Ona tili · Test</title>
+<title>Idrok · Test</title>
+<link rel="icon" type="image/png" href="/static/idrok-logo.png">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/static/omr.js?v=4"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -655,6 +656,11 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .mock-timer.warn { background: linear-gradient(160deg, #5a1a1a, #3a0f0f); animation: mk-blink 1s ease-in-out infinite; }
 .mock-imgs { display: grid; gap: 10px; }
 .mock-imgs img { width: 100%; border-radius: 12px; border: 1px solid var(--line); cursor: zoom-in; }
+/* Idrok logotipi: harfli belgilar o'rniga rasm (markupdagi harf ko'rinmaydi, faqat ekran o'quvchisi uchun) */
+.brand i, .hero-logo i, .ih-logo { background: #0d0b2a url("/static/idrok-logo.png") center / cover no-repeat !important; color: transparent !important;
+  font-size: 0 !important; border-radius: 50% !important; box-shadow: 0 0 0 1.5px rgba(160,120,255,.55), 0 6px 18px -6px #6d4cff !important; }
+.hero-logo i { width: 38px; height: 38px; }
+.ih-logo { width: 112px !important; height: 112px !important; }
 .pk-row { display: grid; grid-template-columns: minmax(104px, 1.15fr) minmax(0, 1.4fr) 34px 38px; gap: 6px; align-items: center; animation: m-rise .3s cubic-bezier(.2,.8,.2,1) backwards; }
 .pk-row.pk-head { animation: none; }
 .pk-row.out { animation: m-out .26s ease-in forwards; }
@@ -763,7 +769,7 @@ svg.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke
 <div id="app"></div>
 <!-- Ochilish ekrani: birinchi sahifa chizilguncha (Flutter ilovada o'zining ochilish ekrani bor — u yerda chiqmaydi) -->
 <div class="intro" id="intro" aria-hidden="true"><span class="ih-aur"><i></i><i></i><i></i></span>
-  <div class="intro-c"><span class="ih-logo">O</span><b class="ih-shine">Ona tili</b><small>test · esse · skaner</small></div>
+  <div class="intro-c"><span class="ih-logo">I</span><b class="ih-shine">Idrok</b><small>test · esse · skaner</small></div>
   <span class="intro-orb"><i></i><i></i></span></div>
 <nav class="tabbar" id="tabbar" aria-label="Bo'limlar"><div></div></nav>
 <div class="toast" id="toast" role="status"></div>
@@ -1154,7 +1160,7 @@ function resultCard(theme, d) {
   const bars = d.parts.map(([label, got, all], j) => `<li><span>${esc(label)}</span><b>${got == null ? "—" : num(got)} / ${all}</b><i style="--w:${got == null ? 0 : (got / all * 100).toFixed(1)}%;--d:${.35 + j * .15}s"></i></li>`).join("");
   return `<div class="rcard t-${theme}" style="${vars};--off:${(276.46 * (1 - share)).toFixed(1)}">
     <div class="pattern"></div>
-    <div class="c-head"><span class="brand-c">Ona tili · ${esc(d.kind)}</span><span class="no">${esc(d.code)}</span></div>
+    <div class="c-head"><span class="brand-c">Idrok · ${esc(d.kind)}</span><span class="no">${esc(d.code)}</span></div>
     <div class="who"><small>O'quvchi</small><b>${esc(d.name)}</b><small>${esc(d.sub)}</small></div>
     <div class="score">
       <div class="ring"><svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="pr" cx="50" cy="50" r="44"/></svg>
@@ -1235,8 +1241,8 @@ function rolePicker() {
 
 // Kirish ekranlari tepasi: to'q fon, suzuvchi rang dog'lari, sakrovchi logotip, yaltiroq «Ona tili»
 function introHero(sub) {
-  return `<section class="intro-hero" aria-label="Ona tili"><span class="ih-aur" aria-hidden="true"><i></i><i></i><i></i></span>
-    <span class="ih-logo" aria-hidden="true">O</span><b class="ih-shine">Ona tili</b><small>${sub}</small></section>`;
+  return `<section class="intro-hero" aria-label="Idrok"><span class="ih-aur" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="ih-logo" aria-hidden="true">I</span><b class="ih-shine">Idrok</b><small>${sub}</small></section>`;
 }
 
 // Ro'yxat qatorlari — bosh sahifada ham, «Testlar»/«Natijalar» bo'limlarida ham shu ko'rinish
@@ -1342,7 +1348,7 @@ VIEWS.home = async () => {
     ? [[b.attempts.length, "test"], [b.attempts.filter(a => a.announced).length, "natija tayyor", true], [b.attempts.filter(a => !a.announced).length, "kutilmoqda"]]
     : [[b.tests.length, "test"], [results, "natija", true], [openTests, "ochiq"]];
   const top = `<section class="hero-card">
-      <div class="hero-row"><span class="hero-logo"><i>O</i>Ona tili · Mock</span>
+      <div class="hero-row"><span class="hero-logo"><i>I</i>Idrok · Mock</span>
         <button type="button" class="role-chip" data-switch-role title="Rolni almashtirish">
           <span>${role === "student" ? "🎓" : "👩‍🏫"}</span><b>${role === "student" ? "O'quvchi" : "O'qituvchi"}</b><i>⇄</i></button></div>
       <div class="hero-hello">Salom, ${esc(first)} 👋<small>${role === "student" ? "Test kodini kiriting va javoblaringizni belgilang" : "Bugun qanday test o'tkazamiz?"}</small></div>
@@ -1438,7 +1444,7 @@ VIEWS.myresults = async () => {
   const b = await boot(); if (!b) return;
   const ready = b.attempts.filter(a => a.announced).length;
   $app.innerHTML = `<div class="view">
-    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Natijalar</span>
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
       <h1>Mening testlarim</h1><span class="muted small">${b.attempts.length} ta topshirilgan · ${ready} ta natija tayyor</span></div></div>
     <div class="list">${b.attempts.map(attemptItem).join("") || `<div class="card empty"><div class="big">📭</div><b>Hali test topshirmagansiz</b>
       <span>«Bosh» bo'limida o'qituvchingiz bergan kodni kiriting.</span></div>`}</div>
@@ -1450,7 +1456,7 @@ VIEWS.profile = async () => {
   const b = await boot(); if (!b) return;
   const me = (b.user && b.user.id) || "";
   $app.innerHTML = `<div class="view">
-    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Profil</span>
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Profil</span>
       <h1>${esc(b.user.name || "Men")}</h1><span class="muted small">${b.user.username ? "@" + esc(b.user.username) : "Telegram akkaunt"}</span></div></div>
     <button type="button" class="item" data-switch-role><span class="ico">⇄</span>
       <span><b>${S.role === "student" ? "O'qituvchi" : "O'quvchi"} rejimiga o'tish</b>
@@ -1471,7 +1477,7 @@ VIEWS.profile = async () => {
 function subscribeGate(channels) {
   showBack(false);
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Mock</span><h1>Avval kanallarga obuna bo'ling</h1>
+    <div class="hero"><span class="brand"><i>I</i>Idrok · Mock</span><h1>Avval kanallarga obuna bo'ling</h1>
       <span class="muted">Ilovadan foydalanish uchun quyidagi kanallarga obuna bo'lish shart.</span></div>
     <div class="list">${channels.map((c, i) => `<button class="item" data-ch="${i}"><span class="ico">📢</span><span><b>${esc(c.title)}</b><small>Obuna bo'lish uchun bosing</small></span><span class="pill-tag wait">Obuna</span></button>`).join("")}</div>
     <div class="sticky-bottom"><div><button class="btn block" id="checksub">✅ Obuna bo'ldim</button></div></div>
@@ -1491,7 +1497,7 @@ function subscribeGate(channels) {
 // Testning o'z majburiy kanallari (o'qituvchi qo'shgan): obuna bo'lmaguncha test ochilmaydi
 function testGate(code, channels) {
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${code}</span><h1>Testni yechish uchun obuna bo'ling</h1>
+    <div class="hero"><span class="brand"><i>I</i>Kod ${code}</span><h1>Testni yechish uchun obuna bo'ling</h1>
       <span class="muted">O'qituvchingiz bu testga quyidagi ${channels.length > 1 ? "kanallarga" : "kanalga"} obuna bo'lishni shart qilgan.</span></div>
     <div class="list">${channels.map((c, i) => `<button class="item" data-ch="${i}"><span class="ico">📢</span><span><b>${esc(c.title)}</b><small>Obuna bo'lish uchun bosing</small></span><span class="pill-tag wait">Obuna</span></button>`).join("")}</div>
     <div class="sticky-bottom"><div><button class="btn block" id="checksub">✅ Obuna bo'ldim — testni boshlash</button></div></div>
@@ -1528,7 +1534,7 @@ VIEWS.answer = async ({ code }) => {
   const answers = draft.answers || {}, written = draft.written || {};
   let variant = draft.variant || (t.variants.length === 1 ? t.variants[0] : null);
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1><span class="muted small">${esc(t.format)}</span></div>
+    <div class="hero"><span class="brand"><i>I</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1><span class="muted small">${esc(t.format)}</span></div>
     ${t.schedule ? mockRunHTML(t) : ""}
     <div class="card">
       <div class="field"><label for="name">Ism va familiya</label><input class="input" id="name" autocomplete="name" value="${esc(draft.name || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
@@ -1615,7 +1621,7 @@ function offlineEssay(t) {
   const draftKey = "essay-draft-" + t.code, sent = t.essay_sent;
   let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1>
+    <div class="hero"><span class="brand"><i>I</i>Kod ${t.code}</span><h1>${esc(t.title)}</h1>
       <span class="muted small">Test qog'ozda (titulda) yechiladi. Bu yerda 45-esseni yozasiz.</span></div>
     ${sent ? `<div class="card" style="border:1.5px solid var(--good)">✅ Essengiz qabul qilingan: ID <b>${pad3(sent.number)}</b> · ${sent.words} so'z.
       <span class="muted small">O'zgartirmoqchi bo'lsangiz — tuzatib qayta yuboring (natija e'lon qilinguncha).</span></div>` : ""}
@@ -1762,7 +1768,7 @@ VIEWS.create = async () => {
   st.variants = ["A"]; st.cur = "A";  // bitta kalit (variantlar olib tashlangan)
   const key = st.keys.A || (st.keys.A = {});
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Yangi test</span><h1>Test yaratish</h1></div>
+    <div class="hero"><span class="brand"><i>I</i>Yangi test</span><h1>Test yaratish</h1></div>
     ${restored ? `<div class="flash" role="status"><span><b>📝 Oldingi qoralama tiklandi</b><br>${Object.keys(st.keys.A || {}).length} ta kalit kiritilgan edi — davom eting.</span>
       <button type="button" class="btn plain sm" id="draft-clear" style="margin-left:auto">Tozalash</button></div>` : ""}
     <div class="card">
@@ -2141,6 +2147,7 @@ function mockCardHTML(c) {
     ${c.signups ? `<div class="mk-people"><span class="faces">${faces}</span><b>${c.signups} kishi qatnashmoqchi</b></div>` : ""}
     ${action}
     <small class="mk-note2">${c.has_pass ? "💎 Tarifingiz bilan — bu mock siz uchun bepul"
+      : price && c.first_free ? `🎁 Birinchi mockingiz bepul. Keyingilari — ${sum(price)} so'mdan${c.sells_pass ? " yoki 💎 tarif bilan" : ""}.`
       : price ? `💳 ${sum(price)} so'mdan${c.sells_pass ? " · 💎 tarif olsangiz — hamma mock bepul" : " · esseni kim tekshirishini boshlashda tanlaysiz"}`
       : "🎁 Bepul mock — qatnashing"}</small>
     <div class="mk-info"><span>⚖️</span><span><b>Natija Rasch modelida hisoblanadi:</b> qancha ko'p odam qatnashsa, natijangiz haqiqiy imtihondagidek chiqadi. Do'stlaringizni ham chaqiring.</span></div>
@@ -2196,8 +2203,9 @@ function mockChoicePage(code, data) {
   const waiting = ch.status === "open" && ch.amount > 0;
   const openBot = () => { if (ch.bot) { try { tg.openTelegramLink(`https://t.me/${ch.bot}`); } catch (e) { window.open(`https://t.me/${ch.bot}`, "_blank"); } } };
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${esc(code)}</span><h1>${esc(card.title)}</h1>
+    <div class="hero"><span class="brand"><i>I</i>Kod ${esc(code)}</span><h1>${esc(card.title)}</h1>
       <span class="muted small">Boshlashdan oldin tanlang: essengizni kim tekshiradi?</span></div>
+    ${ch.first_free ? `<div class="card" style="border:1.5px solid var(--good)"><b>🎁 Birinchi mockingiz bepul!</b><span class="muted small">Keyingi mocklar pullik yoki 💎 tarif bilan bepul.</span></div>` : ""}
     ${review ? `<div class="card" style="border:1.5px solid var(--warn)"><b>⏳ Chekingiz tekshirilmoqda</b>
       <span class="muted small">AI chekni tekshiradi — to'g'ri bo'lsa mock darhol ochiladi va bot xabar beradi.</span>
       <button type="button" class="btn ghost block" id="mc-check">🔄 Tekshirish</button></div>` : `
@@ -2374,7 +2382,7 @@ VIEWS.keys = async ({ id }) => {
   const draw = () => {
     const key = keys[cur];
     $app.innerHTML = `<div class="view">
-      <div class="hero"><span class="brand"><i>O</i>Kalit</span><h1>Kalitni tuzatish</h1>
+      <div class="hero"><span class="brand"><i>I</i>Kalit</span><h1>Kalitni tuzatish</h1>
         <span class="muted small">${esc(d.test.title)} · kod ${d.test.code}</span></div>
       <div class="flash" role="status"><span>Saqlasangiz, <b>${d.attempts} ta natija</b> yangi kalit bilan qayta tekshiriladi — ball, xatolar va Rasch darajasi o'zgaradi. Botga xabar keladi.</span></div>
       ${variants.length > 1 ? `<div class="chips">${variants.map(v => `<button type="button" class="chip ${v === cur ? "on" : ""}" data-var="${v}">${v} variant</button>`).join("")}</div>` : ""}
@@ -2634,9 +2642,9 @@ async function aiView(mode) {
       <span><b>${esc(s.name)}</b><small>${s.username ? `@${esc(s.username)} · ` : ""}bu oy ${s.used} / ${r.limit} ta esse</small></span>
       <button type="button" class="btn plain sm" data-unlink="${s.id}" aria-label="Uzish">✕</button></div>`).join("");
   $app.innerHTML = `<div class="view">
-    ${isAi ? `<div class="hero"><span class="brand"><i>O</i>AI esse</span><h1>Kredit</h1>
+    ${isAi ? `<div class="hero"><span class="brand"><i>I</i>AI esse</span><h1>Kredit</h1>
       <span class="muted small">O'quvchilaringiz essesini AI imtihondagidek 75 ballik shkalada tekshiradi — har esse 1 kredit.</span></div>`
-      : `<div class="hero"><span class="brand"><i>O</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
+      : `<div class="hero"><span class="brand"><i>I</i>O'quvchilarim</span><h1>👥 O'quvchilarim</h1>
       <span class="muted small">Ro'yxatdagilar onlayn mocklaringizni bepul topshiradi va «✍️ Esse tekshirish»dan foydalanadi (kreditingizdan). Boshqalar test bepul, esse tekshiruvini o'zi to'laydi.</span></div>
       ${walletPaymentsHTML(wp.payments)}${essayPaymentsHTML(ep.payments)}${joinsHTML(j)}`}
     ${!isAi ? "" : `<div class="card credit-card ${n != null && n <= 10 ? "low" : ""}">
@@ -2852,7 +2860,7 @@ VIEWS.courses = async ({ first } = {}) => {
   const teachers = found ? found.teachers : [];
   const chip = st => st === "approved" ? `<span class="pill-tag done">✅ O'quvchisiz</span>` : st === "pending" ? `<span class="pill-tag wait">⏳ Ariza yuborilgan</span>` : st === "rejected" ? `<span class="pill-tag bad">❌ Rad etilgan</span>` : "";
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kurslar</span><h1>🏫 Kursingizni toping</h1>
+    <div class="hero"><span class="brand"><i>I</i>Kurslar</span><h1>🏫 Kursingizni toping</h1>
       <span class="muted small">Yashaydigan yoki o'qiydigan joyingizni tanlang — u yerda kurs ochgan ustozlar chiqadi. Ustozingizning o'quvchisi bo'lsangiz, uning mocklarini bepul topshirasiz.</span></div>
     <button type="button" class="item" id="pick-place"><span class="ico">📍</span><span><b>${saved.district ? esc(saved.district) : "Viloyat va tumanni tanlang"}</b><small>${saved.region ? esc(saved.region) : "bosing"}</small></span><span class="muted">›</span></button>
     ${found ? (teachers.length ? `<div class="section-title"><h2>Shu yerdagi kurslar</h2><span class="muted small">${teachers.length} ta ustoz</span></div>
@@ -2937,7 +2945,7 @@ VIEWS.settings = async () => {
   let s; try { s = await api("/api/teacher/settings"); } catch (e) { return fail(e); }
   const ready = s.card && s.packs.length;
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
+    <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
       <span class="muted small">Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi.</span></div>
     ${S.boot && S.boot.can_manage ? `<button type="button" class="item results-go" id="st-sales"><span class="ico">💎</span>
       <span><b>Obuna tariflari</b><small>Ilova narxlari, to'lov kartasi, sotuvni yoqish — faqat admin</small></span>
@@ -3009,7 +3017,7 @@ VIEWS.sales = async () => {
   let s; try { s = await api("/api/admin/sales"); } catch (e) { return fail(e); }
   const rows = s.tariffs.length ? s.tariffs : [{ months: 1 }, { months: 3 }];
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Admin</span><h1>💎 Obuna tariflari</h1>
+    <div class="hero"><span class="brand"><i>I</i>Admin</span><h1>💎 Obuna tariflari</h1>
       <span class="muted small">Ilovadan foydalanish (test yaratish) uchun obuna narxlari. Admin va FREE_IDS'dagilar o'zgartira oladi.</span></div>
 
     <div class="card" style="gap:10px">
@@ -3194,7 +3202,7 @@ VIEWS.practice = async () => {
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
       <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
+    <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
     ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Ustozga ulanmagansiz</b><span>Ustozingizdan taklif havolasini (yoki esse tekshiruvi havolasini) so'rang.</span></div>` : `
     <div class="card">
@@ -3416,7 +3424,7 @@ VIEWS.plan = async () => {
   const contact = b.admin_contact ? `<a class="btn ghost block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish (@${esc(b.admin_contact)})</a>` : "";
   if (p.unlimited) {
     $app.innerHTML = `<div class="view">
-      <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Obuna</span><h1>♾ Bepul</h1></div></div>
+      <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Obuna</span><h1>♾ Bepul</h1></div></div>
       <div class="card"><b>Sizga hamma narsa bepul va cheksiz</b>
         <span class="muted small">Obuna sotib olish shart emas: testlar, titullar va AI tekshiruvi cheklanmagan.</span></div>
       ${contact}</div>`;
@@ -3440,7 +3448,7 @@ VIEWS.plan = async () => {
       : `<span class="muted small">Paket faol obunaga qo'shiladi — avval obunani yangilang.</span>`}
     </div>` : "";
   $app.innerHTML = `<div class="view">
-    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Obuna</span>
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Obuna</span>
       <h1>${!p.plan ? "Obuna sotib olish" : p.active ? "Obunangiz faol" : "Obuna tugagan"}</h1>
       <span class="muted small">${p.plan ? (p.active ? `${esc(p.name)} · ${esc(p.expires || "")} gacha · ${p.days_left} kun qoldi`
         : "Uzaytirish uchun muddatni tanlang") : "Test yaratish uchun obuna kerak"}</span></div></div>
@@ -3510,7 +3518,7 @@ VIEWS.classes = async () => {
   const list = r.classes.map(c => `<button type="button" class="item" data-class="${c.id}"><span class="ico">👥</span>
       <span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi</small></span><span class="muted">›</span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Sinflar</span><h1>Sinflarim</h1>
+    <div class="hero"><span class="brand"><i>I</i>Sinflar</span><h1>Sinflarim</h1>
       <span class="muted small">Har o'quvchiga doimiy 4 xonali ID beriladi — u har titulda shu ID'ni yozadi. Oflayn testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan sinfni testga qo'shasiz.</span></div>
     <div class="card"><div class="field"><label for="cname">Yangi sinf</label>
       <div class="row"><input class="input" id="cname" maxlength="40" placeholder="Masalan: 11-A" autocomplete="off"><button class="btn" id="cadd" style="flex-shrink:0">＋ Qo'shish</button></div></div></div>
@@ -3533,7 +3541,7 @@ VIEWS.klass = async ({ id }) => {
   const rows = c.list.map(s => `<div class="item" style="cursor:default"><span class="rank" title="Doimiy ID"><small style="display:block;font-size:9px;font-family:var(--font-body)">ID</small>${pad3(s.number)}</span>
       <span><b>${esc(s.name)}</b></span><button class="btn plain sm" data-del-cs="${s.id}" aria-label="O'chirish">✕</button></div>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Sinf</span><h1>${esc(c.name)}</h1><span class="muted small">${c.list.length} ta o'quvchi</span></div>
+    <div class="hero"><span class="brand"><i>I</i>Sinf</span><h1>${esc(c.name)}</h1><span class="muted small">${c.list.length} ta o'quvchi</span></div>
     ${c.list.length ? `<button class="btn block" id="send-ids">📨 ID ro'yxatini chatga yuborish</button>` : ""}
     <div class="card"><h2>O'quvchilarni qo'shish</h2>
       <textarea class="input" id="cnames" rows="5" placeholder="Har bir o'quvchi yangi qatorda:\nAli Valiyev\nMadina Yusupova\n…"></textarea>
@@ -3630,7 +3638,7 @@ VIEWS.results = async ({ seg } = {}) => {
       <span><b>${esc(t.title)}</b><small>${dmy(t.date)} · ${t.n} ta qatnashchi</small></span>
       <span class="score-col"><b>${num(t.avg)}${t.suffix}</b><small class="muted">o'rtacha</small></span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Natijalar</span><h1>Natijalar</h1>
+    <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span><h1>Natijalar</h1>
       <span class="muted small">Sinf yoki testni tanlang — ballar, PDF jadval va mock sertifikatlar.</span></div></div>
     <div class="tabs bar"><button class="${seg === "classes" ? "on" : ""}" data-seg="classes">👥 Sinflar · ${r.classes.length}</button><button class="${seg === "tests" ? "on" : ""}" data-seg="tests">📝 Testlar · ${r.tests.length}</button></div>
     <div data-pane="classes" ${seg === "classes" ? "" : "hidden"}><div class="list">${classes || `<div class="card empty"><div class="big">👥</div><b>Hali sinf yo'q</b><span>«Sinflar» bo'limida sinf yarating va titulli testning «🗂 Ro'yxat» bo'limida qo'shing — natijalar shu yerda yig'iladi.</span></div>`}</div>
@@ -3663,7 +3671,7 @@ VIEWS.classResults = async ({ id }) => {
       <span><b>${esc(p.name)}</b><small>ID ${pad3(p.number)} · ${p.count ? `${p.count} ta test` : "hali qatnashmagan"}</small></span>
       <span class="score-col">${p.avg == null ? `<span class="muted">—</span>` : `<span class="row" style="gap:8px"><b>${num(p.avg)}${p.suffix}</b>${gradeChip(p.grade)}</span><small class="muted">o'rtacha</small>`}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Natijalar</span><h1>${esc(c.name)}</h1><span class="muted small">${c.students} ta o'quvchi · ${tests.length} ta titulli test</span></div>
+    <div class="hero"><span class="brand"><i>I</i>Natijalar</span><h1>${esc(c.name)}</h1><span class="muted small">${c.students} ta o'quvchi · ${tests.length} ta titulli test</span></div>
     ${strip}
     ${tests.length ? `<button class="btn block" id="class-pdf">📄 Sinf jadvalini PDF qilish</button>`
       : `<div class="card empty"><div class="big">📄</div><b>Hali natija yo'q</b><span>Titulli testning «🗂 Ro'yxat» bo'limida «Sinfdan qo'shish» bilan shu sinfni qo'shing va titullarni skanerlang — natijalar shu yerga o'zi tushadi.</span></div>`}
@@ -3751,7 +3759,7 @@ VIEWS.testResults = async ({ id, cls }) => {
       <span><b>${esc(a.name)}</b><small>${a.number != null ? `ID ${pad3(a.number)} · ` : ""}${milliy ? `test ${num(a.test)} · esse ${a.essay == null ? "—" : num(a.essay)}` : `${a.test_correct + a.written_correct} / ${a.auto_total} to'g'ri`}${!r.class && a.class_name ? ` · ${esc(a.class_name)}` : ""}</small></span>
       <span class="score-col">${milliy ? `<span class="row" style="gap:8px"><b>${num(a.score)}</b>${gradeChip(a.grade)}</span><small class="muted">/ 75</small>` : `<b>${num(a.score)}%</b>`}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Natijalar</span><h1>${esc(t.title)}</h1>
+    <div class="hero"><span class="brand"><i>I</i>Natijalar</span><h1>${esc(t.title)}</h1>
       <span class="muted small">${r.class ? `${esc(r.class.name)} sinfi · ` : ""}${dmy(t.date)} · ${esc(t.format)}</span></div>
     ${resultStrip(rows, milliy)}
     ${milliy ? gradeBarHTML(rows) : ""}
@@ -3847,7 +3855,7 @@ VIEWS.register = async () => {
   function paint() {
     const teacher = form.role === "teacher";
     $app.innerHTML = `<div class="view">
-      <div class="hero"><span class="brand"><i>O</i>Ona tili · Kurs</span>
+      <div class="hero"><span class="brand"><i>I</i>Idrok · Kurs</span>
         <h1>${saved ? "Ma'lumotlaringiz" : "Ro'yxatdan o'tish"}</h1>
         <span class="muted small">${saved ? "Arizangiz qabul qilingan. O'zgartirsangiz — qayta yuboring."
           : "Avval kim ekanligingizni tanlang."}</span></div>
@@ -4250,7 +4258,7 @@ VIEWS.scan = async ({ id }) => {
   const local = layout && typeof analyzeFrame === "function";
   const testKey = String(t.id);
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span>
+    <div class="hero"><span class="brand"><i>I</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span>
       ${fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internetsiz — titullar telefonga saqlanadi, keyin yuborasiz</span>` : ""}</div>
     <div class="cam" id="cam">
       <video id="video" playsinline muted autoplay></video>
@@ -5080,7 +5088,7 @@ VIEWS.written = async ({ id, label }) => {
   loading();
   let d; try { d = await api(`/api/teacher/test/${id}/written`); } catch (e) { return fail(e); }
   if (!d.students.length) {
-    $app.innerHTML = `<div class="view"><div class="hero"><span class="brand"><i>O</i>Yozma javoblar</span><h1>${esc(d.test.title)}</h1></div>
+    $app.innerHTML = `<div class="view"><div class="hero"><span class="brand"><i>I</i>Yozma javoblar</span><h1>${esc(d.test.title)}</h1></div>
       <div class="card empty"><div class="big">📷</div><b>Hali rasm yo'q</b>
       <span>Titullarni skanerlang — har titulning yozma kataklari rasmi shu yerda savol bo'yicha chiqadi.</span></div></div>`;
     return;
@@ -5099,7 +5107,7 @@ VIEWS.written = async ({ id, label }) => {
     const shown = given && given !== d.wrong_mark && !(key.length && given === key[0] && verdict === true);
     const inLabel = d.students.length, idx = i + 1, total = queue.length, all = queue.filter(([ql, qi]) => d.students[qi].verdict[ql] != null).length;
     $app.innerHTML = `<div class="view">
-      <div class="home-top"><div class="home-hello"><span class="brand"><i>O</i>Yozma javoblar · ${esc(d.test.title)}</span>
+      <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Yozma javoblar · ${esc(d.test.title)}</span>
         <h1>${esc(l)}-savol</h1><span class="muted small">${idx} / ${inLabel} o'quvchi · jami ${all} / ${total} belgilangan</span></div></div>
       <div class="track" style="height:6px"><i style="width:${all / total * 100}%"></i></div>
       <div class="chips" style="flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">${d.labels.map(q => {
@@ -5329,7 +5337,7 @@ VIEWS.appHome = async () => {
       <span><b>${esc(t.title)}</b><small>Kod ${t.code} · ${esc(t.format)} · 👥 ${t.students} ta tekshirilgan</small></span>
       <span class="pill-tag wait">📷 Skaner</span></button>`).join("");
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>O</i>Ona tili · Skaner</span><span class="hi">Salom, ${esc(first)} 👋</span>
+    <div class="hero"><span class="brand"><i>I</i>Idrok · Skaner</span><span class="hi">Salom, ${esc(first)} 👋</span>
       <h1>Ochiq testlar</h1><span class="muted small">Testni tanlang va titullarni kamerada tekshiring. Har natija botdagi chatingizga ham yuboriladi.</span>
       ${S.fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internet yo'q — oxirgi saqlangan ro'yxat</span>` : ""}</div>
     <div class="list">${list || `<div class="card empty"><div class="big">📭</div><b>Ochiq oflayn test yo'q</b><span>Botda test yarating («Oflayn» rejimi) — u shu yerda chiqadi.</span></div>`}</div>

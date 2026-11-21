@@ -1377,6 +1377,17 @@ def mocks_to_finish(before: str) -> list[dict]:
     return [get_test(row["id"]) for row in rows]
 
 
+def had_mock(owner_id: int, student_id: int, except_test: int) -> bool:
+    """O'quvchi shu ustozning boshqa vaqtli mockida qatnashganmi yoki joy olganmi («birinchi mock bepul» uchun)."""
+    with connect() as conn:
+        attempt = conn.execute("SELECT 1 FROM attempts a JOIN tests t ON t.id = a.test_id WHERE t.owner_id = ? AND t.opens_at IS NOT NULL "
+                               "AND a.tg_id = ? AND t.id <> ? LIMIT 1", (owner_id, student_id, except_test)).fetchone()
+        paid = conn.execute("SELECT 1 FROM essay_payments p JOIN tests t ON t.id = p.test_id WHERE t.owner_id = ? "
+                            "AND t.opens_at IS NOT NULL AND p.student_id = ? AND p.status = 'paid' AND t.id <> ? LIMIT 1",
+                            (owner_id, student_id, except_test)).fetchone()
+    return bool(attempt or paid)
+
+
 def mocks_to_warn_entry(now_at: str, warn_at: str) -> list[dict]:
     """Kirish yopilishiga 15 daqiqa qolgan ochiq mocklar (hali kirmaganlarga eslatma)."""
     with connect() as conn:

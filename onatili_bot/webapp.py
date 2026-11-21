@@ -446,14 +446,17 @@ async def mock_choice_info(test: dict, user: dict) -> dict | None:
     if pay and pay["status"] == "paid":
         return None
     outsider = await is_outsider(test, user["id"])
-    prices = {"ai": int(test.get("price") or 0), "teacher": int(test.get("price_teacher") or 0)} if outsider \
-        else {"ai": 0, "teacher": 0}
+    # Begonaga ustozning birinchi vaqtli mocki — bepul («Birinchi mockingiz bepul»), keyingilari — narx yoki tarif
+    first_free = outsider and not await run(db.had_mock, test["owner_id"], user["id"], test["id"])
+    prices = {"ai": int(test.get("price") or 0), "teacher": int(test.get("price_teacher") or 0)} \
+        if outsider and not first_free else {"ai": 0, "teacher": 0}
     keys = ["ai", "teacher"] if essay_ai.essay_enabled() else ["teacher"]
     card = await run(teacher_card, test["owner_id"])
     return {"options": [{"key": k, "title": CHOICES[k], "price": prices[k]} for k in keys],
             "chosen": pay["choice"] if pay else None, "status": pay["status"] if pay else None,
             "amount": pay["amount"] if pay else 0, "note": pay["note"] if pay and pay["status"] == "rejected" else None,
             "card": card["number"], "holder": card["holder"],
+            "first_free": bool(first_free and (test.get("price") or test.get("price_teacher"))),  # pullik mock — birinchisi bepul
             "bot": await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""}
 
 
@@ -507,6 +510,7 @@ async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -
             "price": int(test.get("price") or 0) if await is_outsider(test, user["id"]) else 0,
             # Kartadagi izoh: tarifi bilan bepulmi; ustoz tarif sotadimi (sotsa — «tarif olsangiz, hamma mock bepul»)
             "owner_id": test["owner_id"], "has_pass": await pass_active(test["owner_id"], user["id"]),
+            "first_free": await is_outsider(test, user["id"]) and not await run(db.had_mock, test["owner_id"], user["id"], test["id"]),
             "sells_pass": bool(await run(student_tariffs, test["owner_id"]))}
 
 

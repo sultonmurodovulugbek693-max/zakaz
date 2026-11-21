@@ -265,7 +265,7 @@ async def send_welcome(message: Message, user) -> None:
     # Salomlashish xabarining o'zi eski versiyadagi pastki tugmalarni (klaviatura) olib tashlaydi.
     # Alohida xabar bilan olib tashlab, uni o'chirib bo'lmaydi — Telegram eski tugmalarni qaytarib ko'rsatadi
     await message.answer(
-        "📚 <b>Ona tili · Test</b>\n"
+        "🧠 <b>Idrok · Test</b>\n"
         f"{LINE}\n"
         f"Assalomu alaykum, {esc(user.first_name)}! 👋\n\n"
         "Milliy sertifikat uslubidagi mock testlar ilovasi:\n"
