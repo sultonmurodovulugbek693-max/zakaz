@@ -654,6 +654,37 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
 .ps-btn { width: 100%; padding: 15px 18px; border: 0; border-radius: 99px; font-weight: 800; font-size: 16px; cursor: pointer; color: #10132a;
   background: linear-gradient(90deg, var(--ps-a), #a98bff); transition: transform .12s; }
 .ps-btn:active { transform: scale(.97); }
+/* Idrok mock kartasi (mk2): binafsha / neon ko'k / pushti — logotip ranglari */
+.mock-card.mk2 { --n1: #36e2ff; --n2: #ff4fd8; --n3: #8b6cff; gap: 12px; color: #eef0ff;
+  background: radial-gradient(70% 55% at 100% 0%, rgba(255,79,216,.20), transparent 70%), radial-gradient(60% 60% at 0% 100%, rgba(54,226,255,.16), transparent 70%),
+    linear-gradient(155deg, #1b1145, #0d1033 60%, #071f33); border: 1px solid rgba(139,108,255,.35); box-shadow: 0 20px 44px -26px #8b6cff; }
+.mk2-head { display: grid; grid-template-columns: 46px 1fr auto; gap: 12px; align-items: center; }
+.mk2-logo { width: 46px; height: 46px; border-radius: 50%; background: #0d0b2a url("/static/idrok-logo.png") center / cover; box-shadow: 0 0 0 2px rgba(54,226,255,.45), 0 0 18px -4px var(--n1); }
+.mk2-titles { display: grid; gap: 1px; min-width: 0; }
+.mk2-kicker { font: 700 11.5px var(--font-body, inherit); letter-spacing: .1em; text-transform: uppercase; color: var(--n1); }
+.mock-card.mk2 h2 { font-size: 22px; margin: 0; color: #fff; }
+.mk2-titles small { color: #b7b4e6; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk2-hours { align-self: start; font-size: 12px; font-weight: 700; color: #fff; padding: 5px 10px; border-radius: 10px; background: rgba(139,108,255,.25); border: 1px solid rgba(139,108,255,.45); }
+.mk2-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mk2-steps li { display: grid; justify-items: center; gap: 1px; padding: 10px 4px 9px; border-radius: 14px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); text-align: center; }
+.mk2-steps li.on { background: rgba(54,226,255,.12); border-color: rgba(54,226,255,.55); }
+.mk2-steps i { font-style: normal; font-size: 15px; } .mk2-steps b { font-size: 19px; color: #fff; font-variant-numeric: tabular-nums; }
+.mk2-steps span { font-size: 11.5px; color: #b7b4e6; }
+.mk2-line { height: 4px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+.mk2-line > i { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--n1), var(--n3), var(--n2)); transition: width 1s linear; }
+.mk2-count { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: 16px;
+  background: rgba(7,10,30,.55); border: 1px solid rgba(54,226,255,.25); }
+.mk2-count .lbl { color: #b7b4e6; font-size: 13px; font-weight: 600; }
+.mk2-count .val { display: flex; align-items: baseline; gap: 3px; font-variant-numeric: tabular-nums; }
+.mk2-count .val b { font-size: 28px; font-weight: 800; color: #fff; text-shadow: 0 0 14px rgba(54,226,255,.55); }
+.mk2-count .val small { font-size: 12px; color: var(--n1); margin: 0 8px 0 3px; }
+.mk2-count .val i { font-style: normal; font-size: 22px; color: var(--n3); }
+.mock-card.mk2 .mk-note { color: #d6d4f5; font-size: 13.5px; }
+.mock-card.mk2 .mk-people .faces i { border-color: #1b1145; }
+.mock-card.mk2 .mk-btn { border: 0; color: #fff; background: linear-gradient(90deg, #1fb6e8, var(--n3) 55%, var(--n2)); box-shadow: 0 12px 26px -14px var(--n2); }
+.mock-card.mk2 .mk-btn.on { background: rgba(54,226,255,.08); color: var(--n1); box-shadow: inset 0 0 0 2px rgba(54,226,255,.6); }
+.mock-card.mk2 .mk-note2 { color: #ffd3f6; }
+.mock-card.mk2 .mk-info { border-color: rgba(139,108,255,.35); }
 .mock-timer { position: sticky; top: 8px; z-index: 5; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 18px;
   background: linear-gradient(160deg, #17204a, #10183a); color: #f3f5ff; box-shadow: 0 10px 24px -16px #0b1233; font-weight: 700; }
 .mock-timer > b { font-size: 20px; font-variant-numeric: tabular-nums; color: #ffd84d; }
@@ -2171,15 +2202,18 @@ function mockCardHTML(c) {
   else if (phase === "late") action = `<button type="button" class="mk-btn" data-mk-open="${c.code}">Davom ettirish →</button><small class="mk-sub">Qabul yopilgan — faqat oldin kirganlar davom etadi</small>`;
   else action = `<div class="mk-done">🔒 Mock yopildi — natijalar tekshirilgach e'lon qilinadi</div>`;
   const price = mockFromPrice(c);
-  return `<section class="mock-card" data-mk="${s.opens}:${s.entry}:${s.closes}:${phase}">
-    <div class="mk-top"><span class="mk-badge">${mockBadge(s)}</span><span class="mk-open"><i></i>${num(hours)} soat ochiq</span></div>
-    <h2>${mockDay(s)}</h2><small class="mk-title">${esc(c.title)}${c.owner ? ` · ${esc(c.owner)}` : ""}</small>
-    <div class="mk-times"><b>${hm(s.opens_at)}</b><b class="mid" style="left:${entryPct}%">${hm(s.entry_until)}</b><b class="end">${hm(s.closes_at)}</b></div>
-    <div class="mk-track"><i data-tl="${s.opens}:${s.closes}"></i><span class="d1"></span><span class="d2" style="left:${entryPct}%"></span><span class="d3"></span></div>
-    <div class="mk-labels"><span>Ochiladi</span><span class="mid" style="left:${entryPct}%">Kirish to'xtaydi</span><span class="end">Yopiladi</span></div>
-    <p class="mk-note">${hm(s.entry_until)} gacha istalgan payt kirasiz. ${hm(s.closes_at)} da test hammaga birdan yopiladi: kech kirsangiz, vaqtingiz kamroq.</p>
-    ${target ? `<div class="mk-cd ${target - serverNow() >= 86400000 ? "four" : ""}" data-cd="${target}">${target - serverNow() >= 86400000 ? `<div><b data-d>--</b><small>kun</small></div>` : ""}<div><b data-h>--</b><small>soat</small></div><div><b data-m>--</b><small>daqiqa</small></div><div class="sec"><b data-s>--</b><small>soniya</small></div></div>
-      <small class="mk-sub">${phase === "soon" ? "Boshlanishiga" : "Yopilishiga"}</small>` : ""}
+  const step = (cls, icon, at, label, active) => `<li class="${cls} ${active ? "on" : ""}"><i>${icon}</i><b>${hm(at)}</b><span>${label}</span></li>`;
+  const longWait = target && target - serverNow() >= 86400000;
+  return `<section class="mock-card mk2" data-mk="${s.opens}:${s.entry}:${s.closes}:${phase}">
+    <div class="mk2-head"><span class="mk2-logo" aria-hidden="true"></span>
+      <div class="mk2-titles"><span class="mk2-kicker">${mockBadge(s)}</span><h2>${mockDay(s)}</h2>
+        <small>${esc(c.title)}${c.owner ? ` · ${esc(c.owner)}` : ""}</small></div>
+      <span class="mk2-hours">${num(hours)} soat</span></div>
+    <ol class="mk2-steps">${step("st1", "🟢", s.opens_at, "ochiladi", phase === "soon")}${step("st2", "⏳", s.entry_until, "kirish to'xtaydi", phase === "open")}${step("st3", "🔒", s.closes_at, "yopiladi", phase === "late")}</ol>
+    <div class="mk2-line"><i data-tl="${s.opens}:${s.closes}"></i></div>
+    ${target ? `<div class="mk2-count" data-cd="${target}"><span class="lbl">${phase === "soon" ? "Boshlanishiga" : "Yopilishiga"}</span>
+      <span class="val">${longWait ? `<b data-d>-</b><small>kun</small>` : ""}<b data-h>--</b><i>:</i><b data-m>--</b><i>:</i><b data-s>--</b></span></div>` : ""}
+    <p class="mk-note">${hm(s.entry_until)} gacha istalgan payt kirasiz, ${hm(s.closes_at)} da hammaga birdan yopiladi — kech kirsangiz, vaqtingiz kamroq.</p>
     ${c.signups ? `<div class="mk-people"><span class="faces">${faces}</span><b>${c.signups} kishi qatnashmoqchi</b></div>` : ""}
     ${action}
     <small class="mk-note2">${c.has_pass ? "💎 Tarifingiz bilan — bu mock siz uchun bepul"
