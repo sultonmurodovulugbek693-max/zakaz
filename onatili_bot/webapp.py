@@ -197,8 +197,9 @@ async def bootstrap(request: web.Request) -> web.Response:
         "registered": bool(registration),
         "plan": plan,
         "sales": sales,  # obuna sotilyaptimi (Render PLANS_ENABLED yoki ilovadagi «💎 Obuna tariflari»)
-        # test yarata oladimi: sotuv yoqiq (obunasizga — sotib olish taklif qilinadi), bepul yoki to'langan obuna bor
-        "can_create": sales or plans.is_free(uid) or bool(plan.get("active")),
+        # Bot hamma uchun bepul: test yaratish obunasiz ham mumkin; tarif (obuna) faqat esse bo'limini ochadi
+        "can_create": True,
+        "essay_open": await run(plans.essay_open, uid),  # testlarimda 45-esse ochiqmi (yo'q — «💎 Tarif» taklifi)
         "credit_mode": credit_mode,  # AI esse kreditdan (obuna emas): «🤖 AI» bo'limi ko'rinadi
         "can_manage": plans.can_manage(uid),  # tariflar va to'lov kartasini kiritadi (admin, FREE_IDS)
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
@@ -291,7 +292,11 @@ async def test_info(request: web.Request) -> web.Response:
     test = await run(db.get_test_by_code, request.match_info["code"])
     if not test:
         raise ApiError(404, "Bunday kodli test topilmadi")
+    essay_on = await run(plans.essay_open, test["owner_id"])
     if (test.get("mode") or "online") == "offline":
+        if not essay_on and test["fmt"] == "milliy" and not essay_on_paper(test):
+            raise ApiError(409, "Bu testda esse bo'limi yopiq (ustozda tarif yo'q) — testni qog'ozda (titulda) yechib, "
+                                "o'qituvchingizga topshiring")
         if test["fmt"] != "milliy" or essay_on_paper(test):
             raise ApiError(409, "Bu test qog'ozda (titulda) o'tkaziladi — javoblarni ham, esseni ham varaqqa yozib "
                                 "o'qituvchingizga topshiring")
@@ -308,6 +313,7 @@ async def test_info(request: web.Request) -> web.Response:
     if not previous:
         await test_gate(test, user, recheck=request.query.get("recheck") == "1")
         await mock_gate(test, user)  # «Bugungi mock»: vaqt oralig'i va (pullik bo'lsa) to'lov
+    essay_on = await essay_allowed(test, user["id"])  # tarif yo'q yoki «Essesiz» tanlangan — esse maydoni yo'q
     keys = await run(db.get_keys, test["id"])
     return ok({
         "schedule": schedule_view(test), "files": await files_view(test),
@@ -316,10 +322,11 @@ async def test_info(request: web.Request) -> web.Response:
         "variants": list(keys), "closed": bool(test["closed"]), "theme": test.get("theme") or "classic",
         "essay_topic": test.get("essay_topic"), "submitted": previous["id"] if previous else None,
         "last_name": await run(db.last_name_used, user["id"]), "ai": essay_ai.essay_enabled(),
-        "essay_pay": None if previous else await essay_pay_info(test, user),
-        "essay_warning": None if previous else await essay_warning(test, user),
-        "wallet": None if previous else await wallet_view(test, user),
-        "readers": essay_ai.readers() if test["fmt"] == "milliy" else [],  # esse rasmini o'qiydigan AI'lar
+        "essay_open": essay_on,  # yo'q — ustozda tarif yo'q: test essesiz yechiladi
+        "essay_pay": None if previous or not essay_on else await essay_pay_info(test, user),
+        "essay_warning": None if previous or not essay_on else await essay_warning(test, user),
+        "wallet": None if previous or not essay_on else await wallet_view(test, user),
+        "readers": essay_ai.readers() if test["fmt"] == "milliy" and essay_on else [],  # esse rasmini o'qiydigan AI'lar
     })
 
 
@@ -431,6 +438,8 @@ async def essay_pay_info(test: dict, user: dict) -> dict | None:
     Chekni botga yuboradi, AI tekshiradi. None — to'lov kerak emas (o'quvchisi, to'langan yoki narx qo'yilmagan)."""
     if test["fmt"] != "milliy" or not await is_outsider(test, user["id"]):
         return None
+    if not await run(plans.essay_open, test["owner_id"]):  # esse yopiq — to'lanadigan narsa yo'q
+        return None
     price = await run(essay_price_of, test)
     card = await run(pay_card, test["owner_id"], await run(payee_of, test["owner_id"]))
     if not price or not card["number"]:
@@ -510,7 +519,18 @@ async def mock_gate(test: dict, user: dict) -> None:
         await run(db.live_ping, test["id"], user["id"], user["name"] or "Ismsiz", 0, len(test["items"]))
 
 
-CHOICES = {"ai": "🤖 AI tekshiradi", "teacher": "👩‍🏫 Ustoz tekshiradi"}
+CHOICES = {"ai": "🤖 AI tekshiradi", "teacher": "👩‍🏫 Ustoz tekshiradi", "none": "📝 Essesiz — faqat test (bepul)"}
+
+
+async def essay_allowed(test: dict, student_id: int) -> bool:
+    """Shu o'quvchi shu testda esse yoza oladimi: milliy, ustozda tarif bor va «Bugungi mock»da «Essesiz» tanlanmagan."""
+    if test["fmt"] != "milliy" or not await run(plans.essay_open, test["owner_id"]):
+        return False
+    if test.get("opens_at"):
+        pay = await run(db.essay_payment_of, test["id"], student_id)
+        if pay and pay.get("choice") == "none":
+            return False
+    return True
 DEFAULT_MOCK_CHANNEL = "@Til_va_adabiyot_Xalilov"  # yangi mockning majburiy obunasida oldindan turadi (o'chirsa bo'ladi)
 
 
@@ -527,15 +547,20 @@ async def mock_choice_info(test: dict, user: dict) -> dict | None:
     None — tanlangan va (pullik bo'lsa) to'langan. Pul — ustoz kartasiga, chekni botda AI tekshiradi."""
     if not test.get("opens_at") or test["owner_id"] == user["id"]:
         return None
+    if test["fmt"] == "milliy" and not await run(plans.essay_open, test["owner_id"]):
+        return None  # esse bo'limi yopiq (ustozda tarif yo'q) — mock essesiz, tanlov va to'lov yo'q
     pay = await run(db.essay_payment_of, test["id"], user["id"])
     if pay and pay["status"] == "paid":
         return None
     outsider = await is_outsider(test, user["id"])
-    # Begonaga ustozning birinchi vaqtli mocki — bepul («Birinchi mockingiz bepul»), keyingilari — narx yoki tarif
-    first_free = outsider and not await run(db.had_mock, test["owner_id"], user["id"], test["id"])
+    # Bot bepul, faqat esse pullik: begonaga «birinchi mock bepul» endi yo'q — esse har safar narx, kredit yoki tarif bilan
+    first_free = False
     prices = {"ai": int(test.get("price") or 0), "teacher": int(test.get("price_teacher") or 0)} \
         if outsider and not first_free else {"ai": 0, "teacher": 0}
+    prices["none"] = 0
     keys = ["ai", "teacher"] if essay_ai.essay_enabled() else ["teacher"]
+    if test["fmt"] == "milliy" and any(prices[k] for k in keys):
+        keys.append("none")  # to'lamasa ham testni yechadi — faqat esse yo'q
     card = await run(teacher_card, test["owner_id"])
     unit = await run(credit_unit_price, test["owner_id"])
     balance = await run(db.wallet_balance, test["owner_id"], user["id"]) if outsider else 0
@@ -790,6 +815,8 @@ async def _scan_test(request: web.Request, user: dict) -> dict:
         raise ApiError(409, "Natijalar e'lon qilingan — javob qabul qilinmaydi")
     if await run(db.find_attempt, test["id"], user["id"]):
         raise ApiError(409, "Siz bu testga javob yuborgansiz")
+    if not await essay_allowed(test, user["id"]):
+        raise ApiError(403, "Bu testda esse bo'limi yopiq")
     pay = await essay_pay_info(test, user)
     if pay:
         raise ApiError(402, "Esseni yuklashdan oldin esse tekshiruvini to'lang", essay_pay=pay)
@@ -895,7 +922,7 @@ async def essay_ai_charge(test: dict, student_id: int) -> str | None:
     o'zi to'lagan bo'lsa. None — AI tekshirmaydi; "free" — kredit yechilmadi (o'quvchi pul to'lagan / AI cheksiz);
     "wallet" — o'quvchining shu ustozdagi 1 krediti; "teacher" — ustozning 1 krediti. AI esseni tekshira olmasa,
     yechilgan kredit qaytariladi (bot.grade_one)."""
-    if not essay_ai.essay_enabled():
+    if not essay_ai.essay_enabled() or not await run(plans.essay_open, test["owner_id"]):
         return None
     if test.get("opens_at"):  # «Bugungi mock»: o'quvchi tanlovi — «🤖 AI tekshirsin» (to'langan) yoki «👩‍🏫 Ustoz»
         pay = await run(db.essay_payment_of, test["id"], student_id)
@@ -1781,8 +1808,8 @@ async def submit(request: web.Request) -> web.Response:
         raise ApiError(400, "Ism va familiyani to'liq yozing")
     answers = clean_answers(test, payload.get("answers") or {})
     essay = str(payload.get("essay") or "").strip()
-    if test["fmt"] != "milliy":
-        essay = ""
+    if not await essay_allowed(test, user["id"]):
+        essay = ""  # esse bo'limi yopiq (ustozda tarif yo'q yoki «Essesiz» tanlangan) — test essesiz qabul qilinadi
     if essay and len(essay) < ESSAY_MIN_CHARS:
         raise ApiError(400, f"Esse juda qisqa ({len(essay)} belgi) — to'liq yozing yoki bo'sh qoldiring")
     if essay:
@@ -2005,7 +2032,10 @@ async def keys_save(request: web.Request) -> web.Response:
 
 
 async def require_plan(user: dict) -> None:
-    """Yangi test faqat faol obuna (yoki bepul sinov) bilan. Birinchi marta — sinov o'zi boshlanadi."""
+    """Bot hamma uchun bepul — test yaratish obunasiz ham mumkin (tarif faqat esse bo'limini ochadi: plans.essay_open).
+    Eski tekshiruv FREE_TEST_CREATION=0 bo'lsa (setting) qaytadi."""
+    if (await run(db.get_settings)).get("free_test_creation", "1") != "0":
+        return
     status = await run(plans.ensure_active, user["id"])
     if status.get("closed"):
         raise ApiError(403, "Test yaratish hozircha faqat ruxsat berilgan o'qituvchilarga"
@@ -2419,7 +2449,8 @@ PUBLIC_FREE = 2  # ommaviy havola: begona o'quvchiga shuncha bepul esse, keyin k
 
 
 def public_open(teacher_id: int) -> bool:
-    return db.get_settings().get(f"essay_public:{teacher_id}") == "1"
+    """Ommaviy esse havolasi ishlaydimi: ustoz yoqgan va esse bo'limi ochiq (tarifi bor)."""
+    return db.get_settings().get(f"essay_public:{teacher_id}") == "1" and plans.essay_open(teacher_id)
 
 
 def invite_code(teacher_id: int) -> str:
@@ -3879,6 +3910,8 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
         raise ApiError(404, "Bunday kodli titulli test topilmadi")
     if essay_on_paper(test):
         raise ApiError(409, "Bu testda esse qog'ozga (javoblar varaqasining 3–4-varag'iga) yoziladi")
+    if not await run(plans.essay_open, test["owner_id"]):
+        raise ApiError(403, "Bu testda esse bo'limi yopiq — ustozda tarif yo'q")
     if test["closed"]:
         raise ApiError(409, "Natijalar e'lon qilingan — esse qabul qilinmaydi")
     await test_gate(test, user)

@@ -168,6 +168,16 @@ def is_free(tg_id: int) -> bool:
     return tg_id in ADMIN_IDS or tg_id in FREE_IDS or tg_id in granted_ids()
 
 
+def essay_open(teacher_id: int) -> bool:
+    """Bot hamma uchun bepul (test yaratish va yechish), faqat ESSE pullik: ustozning testlarida 45-esse bo'limi
+    ochiqmi — admin / FREE_IDS / ruxsat berilgan yoki faol tarifi (obunasi) bor ustoz. Aks holda o'quvchilar
+    testni essesiz yechadi. Ochiq bo'lsa begona o'quvchi esse uchun to'laydi yoki kredit ishlatadi."""
+    if is_free(teacher_id):
+        return True
+    sub = db.get_subscription(teacher_id)
+    return bool(sub) and _expires(sub) > now()
+
+
 # ---------- Sozlamalar (admin botda o'zgartiradi) ----------
 
 def setting(key: str, default=0) -> int:

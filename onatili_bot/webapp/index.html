@@ -1449,6 +1449,10 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="online"><i>📱</i><b>Onlayn test</b><small>Telefonda yechiladi, natija darhol</small></button>
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
+      ${b.essay_open === false ? `<div class="card" style="border:1.5px solid var(--warn)"><b>🔒 Esse bo'limi yopiq</b>
+        <span class="muted small">Bot bepul: testlaringizni hamma yechadi. 45-esse (yozish va tekshirish) faqat 💎 tarif bilan ochiladi —
+        shunda o'quvchilaringiz essesi tekshiriladi, begonalar esse uchun to'laydi yoki kredit oladi.</span>
+        ${b.sales ? `<button type="button" class="btn block" id="essay-plan">💎 Tarif olish</button>` : `<span class="muted small">Tarif hozircha sotilmayapti — admin bilan bog'laning.</span>`}</div>` : ""}
       ${b.can_public ? claudeCardHTML(b.claude, false) : ""}
       <button type="button" class="item results-go" data-go-results><span class="ico">${ico("bars")}</span><span><b>Natijalar</b><small>Sinf va test bo'yicha · jadval PDF · sertifikatlar</small></span>
         <span class="rg-end" aria-hidden="true"><span class="rg-spark">${[30, 46, 38, 62, 52, 78, 100].map((h, k) => `<i style="--h:${h}%;--k:${k}"></i>`).join("")}</span>${ico("arrow")}</span></button>
@@ -1467,6 +1471,7 @@ VIEWS.home = async () => {
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => { haptic("select"); setRole(role === "student" ? "teacher" : "student"); S.stack = []; rerender(); });
   document.querySelectorAll("[data-new]").forEach(x => x.onclick = () => { haptic("light"); S.createMode = x.dataset.new; go("create"); });
   const pc = document.getElementById("plan-open"); if (pc) pc.onclick = () => go("plan");
+  const ep = document.getElementById("essay-plan"); if (ep) ep.onclick = () => go("plan");
   document.querySelectorAll("[data-role]").forEach(x => x.onclick = () => { setRole(x.dataset.role); rerender(); });
 };
 
@@ -1620,9 +1625,11 @@ VIEWS.answer = async ({ code }) => {
     ${bubbleSheet(t.items, answers)}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2><span class="muted small">${texts[0].label}–${texts[texts.length - 1].label}</span></div>
       <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" value="${esc(written[i.label] || "")}" placeholder="Javob" autocomplete="off"></div>`).join("")}</div>` : ""}
-    ${t.fmt === "milliy" && t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">to'lovdan keyin</span></div>
+    ${t.fmt === "milliy" && t.essay_open === false ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">yopiq</span></div>
+      <div class="card"><span class="small">🔒 Bu testda esse bo'limi yopiq — ustozingizda tarif yo'q. Test savollarini yechib, javoblarni yuboravering.</span></div>` : ""}
+    ${t.fmt === "milliy" && t.essay_open !== false && t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">to'lovdan keyin</span></div>
       ${t.essay_topic ? `<div class="card"><div class="topic">${esc(t.essay_topic)}</div></div>` : ""}${essayPayHTML(t.essay_pay)}` : ""}
-    ${t.fmt === "milliy" && !t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai && !t.essay_warning ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+    ${t.fmt === "milliy" && t.essay_open !== false && !t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai && !t.essay_warning ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
       ${t.essay_warning ? `<div class="card" style="border:1.5px solid var(--warn)"><span class="small">⚠️ ${esc(t.essay_warning)}</span></div>` : ""}
       ${t.wallet ? `<div class="card"><span class="small">💳 Kreditingiz: <b>${t.wallet.balance} ta</b> — esse bilan yuborsangiz 1 kredit yechiladi (chek kerak emas).</span></div>` : ""}
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
@@ -1670,7 +1677,7 @@ VIEWS.answer = async ({ code }) => {
     const missing = choices.length - Object.keys(answers).length;
     const essay = essayEl ? essayEl.value.trim() : "";
     if (essay && essay.length < 200 && !auto) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
-    const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && !essay ? (t.essay_pay ? "esse to'lanmagan — essesiz yuboriladi" : "esse yozilmagan") : ""].filter(Boolean).join(", ");
+    const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && t.essay_open !== false && !essay ? (t.essay_pay ? "esse to'lanmagan — essesiz yuboriladi" : "esse yozilmagan") : ""].filter(Boolean).join(", ");
     if (auto) toast("⏰ Vaqt tugadi — javoblaringiz yuborilmoqda");
     if (!auto && !(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
@@ -2319,8 +2326,8 @@ function mockChoicePage(code, data) {
       <span class="muted small">AI chekni tekshiradi — to'g'ri bo'lsa mock darhol ochiladi va bot xabar beradi.</span>
       <button type="button" class="btn ghost block" id="mc-check">🔄 Tekshirish</button></div>` : `
     <div class="list">${ch.options.map(o => `<button type="button" class="item ${ch.chosen === o.key ? "on" : ""}" data-mc="${o.key}">
-      <span class="ico">${o.key === "ai" ? "🤖" : "👩‍🏫"}</span>
-      <span><b>${esc(o.title)}</b><small>${o.key === "ai" ? "AI imtihondagidek 75 ballik shkalada tekshiradi — natija tez chiqadi" : "Ustoz o'zi o'qib baholaydi — natija ustoz tekshirgach chiqadi"}</small></span>
+      <span class="ico">${o.key === "ai" ? "🤖" : o.key === "none" ? "📝" : "👩‍🏫"}</span>
+      <span><b>${esc(o.title)}</b><small>${o.key === "ai" ? "AI imtihondagidek 75 ballik shkalada tekshiradi — natija tez chiqadi" : o.key === "none" ? "Test savollarini bepul yechasiz, 45-esse bo'lmaydi (keyin qo'shib bo'lmaydi)" : "Ustoz o'zi o'qib baholaydi — natija ustoz tekshirgach chiqadi"}</small></span>
       <span class="pill-tag ${o.price ? "wait" : "done"}">${o.price ? `${sum(o.price)} so'm${o.credits ? ` · ${o.credits} kr` : ""}` : "Bepul"}</span></button>`).join("")}</div>
     ${ch.balance ? `<div class="card small"><span>💳 Sizda <b>${ch.balance} kredit</b> bor — pullik variantni tanlasangiz, kreditdan yechishni so'raymiz.</span></div>` : ""}
     ${ch.status === "rejected" ? `<div class="card small" style="border:1.5px solid var(--bad)">❌ Chek tasdiqlanmadi${ch.note ? `: ${esc(ch.note)}` : ""}. Qayta tanlab, to'g'ri chekni yuboring.</div>` : ""}
@@ -3667,7 +3674,7 @@ function planCard(p) {
   if (!p.plan) return `<button type="button" class="item" id="plan-open"><span class="ico">💎</span>
       <span><b>${p.trial_available ? "Bepul sinov" : "Obuna kerak"}</b><small>${p.trial_available
         ? `Birinchi testingizni yarating — ${p.trial_days} kunlik sinov o'zi boshlanadi`
-        : "Test yaratish uchun obuna sotib oling — bosing"}</small></span><span class="muted">›</span></button>`;
+        : "Esse bo'limini ochish uchun tarif oling — bosing"}</small></span><span class="muted">›</span></button>`;
   const bar = (used, limit) => `<div class="track" style="height:6px"><i style="width:${Math.min(100, used / Math.max(1, limit) * 100)}%"></i></div>`;
   return `<div class="card plan-card ${p.active ? "" : "plan-off"}">
       <div class="row between"><b>💎 ${esc(p.name)}</b><span class="pill-tag ${p.active && p.days_left > 3 ? "done" : "wait"}">${p.active ? `${p.days_left} kun qoldi` : "Muddati tugagan"}</span></div>
@@ -3710,7 +3717,7 @@ VIEWS.plan = async () => {
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Obuna</span>
       <h1>${!p.plan ? "Obuna sotib olish" : p.active ? "Obunangiz faol" : "Obuna tugagan"}</h1>
       <span class="muted small">${p.plan ? (p.active ? `${esc(p.name)} · ${esc(p.expires || "")} gacha · ${p.days_left} kun qoldi`
-        : "Uzaytirish uchun muddatni tanlang") : "Test yaratish uchun obuna kerak"}</span></div></div>
+        : "Uzaytirish uchun muddatni tanlang") : "Esse bo'limi uchun tarif kerak (test yaratish bepul)"}</span></div></div>
     ${open ? `<div class="card" style="border:1.5px solid var(--accent)">
       <b>⏳ Kutilayotgan to'lov</b><span class="muted small">${esc(planName(open.period))} · ${sum(open.amount)} so'm —
       ${open.status === "sent" ? "chek yuborilgan, admin tekshirmoqda" : "chekni botga yuboring"}</span></div>` : ""}

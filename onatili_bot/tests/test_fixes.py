@@ -511,28 +511,24 @@ class SalesClosed(ServerBase):
         plans.SALES_ENABLED, webapp.SALES_ENABLED = self._sales
         await super().asyncTearDown()
 
-    async def test_only_allowed_teachers_create(self):
-        # Sotish yopiq: to'langan obuna muddati tugaguncha ishlaydi, obunasiz o'qituvchi esa yarata olmaydi
+    async def test_anyone_creates_essay_needs_plan(self):
+        """Bot hamma uchun bepul: obunasiz o'qituvchi ham test yaratadi; 45-esse faqat tarif (obuna) bilan ochiladi."""
         status, _ = await self.create()
         self.assertEqual(status, 200)  # OWNER'da to'langan oylik obuna bor (asyncSetUp)
         db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
         status, r = await self.create()
-        self.assertEqual(status, 403)
-        self.assertTrue(r["closed"])
+        self.assertEqual(status, 200, r)  # tarif tugagan — test baribir yaratiladi
         boot = await (await self.client.get("/api/bootstrap")).json()
-        self.assertEqual((boot["sales"], boot["can_create"]), (False, False))
+        self.assertEqual((boot["sales"], boot["can_create"], boot["essay_open"]), (False, True, False))
         status, _ = await self.post("/api/plan/order", {"period": "month"})
-        self.assertEqual(status, 403)
-        # Admin botda ruxsat beradi — endi yarata oladi
+        self.assertEqual(status, 403)  # sotuv yopiq
+        # Admin botda ruxsat beradi — esse ochiladi
         self.assertTrue(plans.set_access(OWNER, True))
         self.assertFalse(plans.set_access(OWNER, True))  # ikkinchi marta — o'zgarmaydi
-        status, _ = await self.create()
-        self.assertEqual(status, 200)
         boot = await (await self.client.get("/api/bootstrap")).json()
-        self.assertTrue(boot["can_create"])
-        # Ruxsat olinadi — yana yopiq
+        self.assertTrue(boot["essay_open"])
         plans.set_access(OWNER, False)
-        self.assertEqual((await self.create())[0], 403)
+        self.assertFalse(plans.essay_open(OWNER))
 
     async def test_admin_command(self):
         replies, sent = [], []
@@ -1957,17 +1953,12 @@ class ScheduledMock(ServerBase):
         self.assertIn("boshlandi", reminders[1])
         self.assertIn("1 kishi qatnashmoqchi", reminders[1])
 
-        # Birinchi mock — bepul (kartada va tanlovda «🎁 Birinchi mockingiz bepul»)
-        status, err = await self.get(f"/api/test/{test['code']}")
-        self.assertEqual((status, err["mock_choice"]["first_free"]), (402, True))
-        self.assertEqual([o["price"] for o in err["mock_choice"]["options"]], [0, 0])
-        self.assertTrue((await self.get("/api/bootstrap"))[1]["mocks"][0]["first_free"])
-        self.give_history(OTHER)  # avval boshqa mockda qatnashgan — endi pullik
-
-        # Ochiq: avval tanlov (AI — 15 000, ustoz — 10 000), to'lanmaguncha savollar yo'q
+        # Bot bepul, faqat esse pullik: «birinchi mock bepul» yo'q. Ochiq: tanlov (AI — 15 000, ustoz — 10 000)
+        # yoki «📝 Essesiz» (bepul, test savollari bor, esse yo'q)
         status, err = await self.get(f"/api/test/{test['code']}")
         self.assertEqual((status, err["mock_choice"]["first_free"]), (402, False))
-        self.assertEqual([(o["key"], o["price"]) for o in err["mock_choice"]["options"]], [("ai", 15000), ("teacher", 10000)])
+        self.assertEqual([(o["key"], o["price"]) for o in err["mock_choice"]["options"]],
+                         [("ai", 15000), ("teacher", 10000), ("none", 0)])
         status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai"})
         self.assertEqual((status, res["status"], res["amount"]), (200, "open", 15000))
         self.assertTrue(any(c == OTHER and "15 000 so'm" in m for c, m in self.bot.messages))
@@ -2148,7 +2139,7 @@ class ScheduledMock(ServerBase):
         db.wallet_add(OWNER, OTHER, 2)
         self.as_user(OTHER)
         err = (await self.get(f"/api/test/{test['code']}"))[1]["mock_choice"]
-        self.assertEqual(([(o["key"], o["credits"]) for o in err["options"]], err["balance"]), ([("ai", 3), ("teacher", 3)], 2))
+        self.assertEqual(([(o["key"], o["credits"]) for o in err["options"]], err["balance"]), ([("ai", 3), ("teacher", 3), ("none", 0)], 2))
         status, res = await self.post(f"/api/test/{test['code']}/mock-choice", {"choice": "ai", "pay": "credit"})
         self.assertEqual(status, 409)  # 3 kredit kerak, 2 ta bor — hech narsa yechilmaydi
         self.assertEqual(db.wallet_balance(OWNER, OTHER), 2)
@@ -2442,6 +2433,26 @@ class RevenueShare(ServerBase):
         self.assertIn("•••• 3333", bot.platform_check_text(15000))
         await bot.platform_approved_notice(self.bot, "essay", pay["id"])
         self.assertIn(self.ADMIN, [chat for chat, _ in self.bot.photos])
+
+    async def test_no_plan_no_essay(self):
+        """Ustozda tarif yo'q — testni hamma bepul yechadi, 45-esse yopiq: to'lov so'ralmaydi, esse qabul qilinmaydi."""
+        status, r = await self.mock(15000)
+        self.assertEqual(status, 200, r)
+        test = db.get_test(r["id"])
+        db.set_subscription(OWNER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.user = {"id": OTHER, "name": "Begona", "username": "b"}
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertEqual((info["essay_open"], info["essay_pay"], info["readers"]), (False, None, []))
+        status, res = await self.post(f"/api/test/{test['code']}/submit", {"name": "Begona Bola", "answers": {},
+                                                                           "essay": "Esse matni. " * 40})
+        self.assertEqual((status, res["essay"]), (200, False), res)  # test qabul qilindi, esse tashlab yuborildi
+        self.assertIsNone(db.open_essay_payment(OTHER))
+        # Tarif olindi — esse yana ochiq (begona to'laydi)
+        plans.grant(OWNER, "month")
+        self.user = {"id": STUDENT, "name": "Yangi", "username": "y"}
+        info = await (await self.client.get(f"/api/test/{test['code']}")).json()
+        self.assertTrue(info["essay_open"])
+        self.assertEqual(info["essay_pay"]["price"], 15000)
 
     async def test_ai_approved_receipt_shares_and_old_cheap_price_raised(self):
         status, r = await self.mock(15000)

@@ -191,15 +191,17 @@ class PlanGates(unittest.IsolatedAsyncioTestCase):
         db.set_mode(test["id"], "offline")
         return test
 
-    async def test_expired_teacher_cannot_create_test(self):
+    async def test_expired_teacher_still_creates_tests(self):
+        """Bot hamma uchun bepul: obunasi tugagan o'qituvchi ham test yaratadi — tarif faqat esse bo'limini ochadi."""
         payload = {"title": "Sinov", "fmt": "oddiy", "count": 5, "keys": {"A": {str(n): "A" for n in range(1, 6)}}}
-        first = await self.client.post("/api/teacher/tests", json=payload)
-        self.assertEqual(first.status, 200)  # birinchi test — sinov o'zi boshlandi
-        self.assertEqual(db.get_subscription(TEACHER)["plan"], "trial")
-        db.set_subscription(TEACHER, "trial", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        plans.grant(TEACHER, "month")
+        self.assertTrue(plans.essay_open(TEACHER))
+        db.set_subscription(TEACHER, "month", (plans.now() - timedelta(days=1)).isoformat(timespec="seconds"))
+        self.assertFalse(plans.essay_open(TEACHER))
         second = await self.client.post("/api/teacher/tests", json=payload)
-        self.assertEqual(second.status, 402)
-        self.assertFalse((await second.json())["plan"]["active"])
+        self.assertEqual(second.status, 200)
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertEqual((boot["can_create"], boot["essay_open"]), (True, False))
 
     async def test_paid_teacher_written_goes_to_manual_review(self):
         """Yozma javoblarni AI faqat FREE_IDS ga o'qiydi: obunachida rasm qo'lda tekshirish uchun saqlanadi."""

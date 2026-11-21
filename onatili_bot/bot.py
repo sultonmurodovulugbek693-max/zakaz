@@ -352,8 +352,8 @@ async def cmd_access(message: Message, command: CommandObject) -> None:
     try:
         await message.bot.send_message(
             user["tg_id"],
-            "✅ <b>Sizga test yaratishga ruxsat berildi</b>\nIlovani oching — «Onlayn test» yoki «Oflayn test»ni bosing."
-            if allow else "🔒 Test yaratish ruxsatingiz olib qo'yildi. Eski testlaringiz va natijalar saqlanib qoladi.",
+            "✅ <b>Sizga ruxsat berildi</b> — testlaringizda 45-esse bo'limi ochiq.\nIlovani oching — «Onlayn test» yoki «Oflayn test»ni bosing."
+            if allow else "🔒 Ruxsatingiz olib qo'yildi — test yaratish bepul qoladi, 45-esse bo'limi esa tarif bilan ochiladi.",
             reply_markup=app_markup() if allow else None)
     except Exception:
         logger.warning("Ruxsat haqida xabar yuborilmadi: %s", user["tg_id"])
@@ -535,7 +535,8 @@ async def cmd_prices(message: Message) -> None:
         await message.answer("♾ <b>Sizga hammasi bepul</b> — obuna sotib olish shart emas.")
         return
     if not plans.sales_on():
-        await message.answer("🔒 Obuna hozircha yopiq. Test yaratish faqat ruxsat berilgan o'qituvchilarga.\n"
+        await message.answer("🔒 Tarif hozircha sotilmayapti. Test yaratish hamma uchun bepul — 45-esse bo'limi esa "
+                             "tarif (yoki admin ruxsati) bilan ochiladi.\n"
                              f"Telegram ID'ingiz: <code>{message.from_user.id}</code>"
                              + (f" — ruxsat uchun @{esc(config.ADMIN_CONTACT)} ga yuboring." if config.ADMIN_CONTACT else ""))
         return
