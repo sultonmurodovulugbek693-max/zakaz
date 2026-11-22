@@ -201,6 +201,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         # Bot hamma uchun bepul: test yaratish obunasiz ham mumkin; tarif (obuna) faqat esse bo'limini ochadi
         "can_create": True,
         "essay_open": essay_open_me,  # testlarimda 45-esse ochiqmi (yo'q — «💎 Tarif» taklifi)
+        "can_link": await run(can_link, uid),  # «👥 O'quvchilarim» va «🤖 AI» yorliqlari (yopiq bo'lsa — ko'rinmaydi)
         "can_mock": essay_open_me,  # «📅 E'lon qilish» va «Bugungi mock»ni hammaga ko'rsatish — tarif bilan
         "credit_mode": credit_mode,  # AI esse kreditdan (obuna emas): «🤖 AI» bo'limi ko'rinadi
         "is_admin": plans.is_admin(uid),  # AI modellarini tanlash (mini app «🤖 AI») — faqat admin
@@ -2788,10 +2789,16 @@ async def link_by_teacher(teacher: dict, student_id: int) -> bool:
     return fresh
 
 
+def can_link(teacher_id: int) -> bool:
+    """«👥 O'quvchilarim» va «🤖 AI» ochiqmi: admin / FREE_IDS / ruxsat berilgan, tarifi bor yoki obuna sotilyapti.
+    Panel ham shu bilan yorliqlarni ko'rsatadi (bootstrap «can_link») — ochib bo'lmaydigan bo'lim ko'rinmaydi."""
+    return plans.is_free(teacher_id) or plans.sales_on() or plans.essay_open(teacher_id)
+
+
 async def link_view(request: web.Request) -> web.Response:
     user = await auth(request)
-    if not await run(plans.is_free, user["id"]) and not await run(plans.sales_on):
-        raise ApiError(403, "Bu bo'lim test yaratishga ruxsati bor o'qituvchilar uchun")
+    if not await run(can_link, user["id"]):
+        raise ApiError(403, "Bu bo'lim tarifi bor o'qituvchilar uchun")
     username = await HOOKS["bot_username"]() if "bot_username" in HOOKS else ""
     students = await run(db.linked_students, user["id"], plans.month_key())
     offer = await run(plans.pack)
@@ -2815,7 +2822,7 @@ async def link_view(request: web.Request) -> web.Response:
 
 async def link_add(request: web.Request) -> web.Response:
     user = await auth(request)
-    if not await run(plans.is_free, user["id"]) and not await run(plans.sales_on):
+    if not await run(can_link, user["id"]):
         raise ApiError(403, "Ruxsat yo'q")
     ref = str((await body(request)).get("ref") or "").strip()
     if not ref:

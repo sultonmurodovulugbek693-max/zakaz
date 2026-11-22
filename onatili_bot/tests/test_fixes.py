@@ -60,6 +60,39 @@ class PostgresPlaceholders(unittest.TestCase):
         self.assertEqual(sent, [("SELECT ? LIKE '%a%'", (1,))])  # SQLite — o'zgarmaydi
 
 
+class LinkAccess(unittest.IsolatedAsyncioTestCase):
+    """«👥 O'quvchilarim» / «🤖 AI»: obuna sotuvi o'chiq bo'lsa ham tarifi bor o'qituvchiga ochiq; tarifsizga yopiq va
+    panel yorliqni ko'rsatmaydi (bootstrap can_link) — oldin yorliq chiqib, bosganda «ruxsat yo'q» chiqardi."""
+
+    async def asyncSetUp(self):
+        _env.fresh_db()
+        self._sales = plans.SALES_ENABLED
+        plans.SALES_ENABLED = False
+        self.user = {"id": 7001, "name": "Ustoz", "username": None}
+
+        async def fake_auth(_request):
+            return self.user
+        self._auth, self._current = webapp.auth, webapp.current_user
+        webapp.auth = webapp.current_user = fake_auth
+        self.client = TestClient(TestServer(webapp.create_app()))
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        webapp.auth, webapp.current_user = self._auth, self._current
+        plans.SALES_ENABLED = self._sales
+        await self.client.close()
+
+    async def test_tariff_teacher_opens_tariffless_hidden(self):
+        db.remember_user(7001, "Ustoz", None)
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertFalse(boot["can_link"])  # tarifsiz — yorliq ko'rinmaydi
+        self.assertEqual((await self.client.get("/api/teacher/link")).status, 403)
+        plans.grant(7001, "month")  # tarif oldi
+        boot = await (await self.client.get("/api/bootstrap")).json()
+        self.assertTrue(boot["can_link"])
+        self.assertEqual((await self.client.get("/api/teacher/link")).status, 200)
+
+
 class AppLogin(unittest.TestCase):
     def setUp(self):
         _env.fresh_db()

@@ -1160,8 +1160,10 @@ function paintTabs(view) {
   const ready = tg && tg.initData && S.boot && !S.boot.subscribe && S.boot.user && store("role");
   const tabs = ready ? (TABS[S.role] || TABS.student).filter(([key]) =>
     // Obuna sotilsa — «💎 Obuna»; AI esse kreditdan bo'lsa (obuna yopiq yoki /ruxsat bilan bepul) — «🤖 AI»
-    key === "plan" ? S.boot.sales && !S.boot.credit_mode : key === "ai" ? (S.boot.credit_mode ?? !S.boot.sales) && S.boot.can_create !== false
-      : key === "students" || key === "settings" ? S.boot.can_create !== false
+    key === "plan" ? S.boot.sales && !S.boot.credit_mode
+      : key === "ai" ? (S.boot.credit_mode ?? !S.boot.sales) && S.boot.can_create !== false && S.boot.can_link !== false
+      : key === "students" ? S.boot.can_create !== false && S.boot.can_link !== false
+      : key === "settings" ? S.boot.can_create !== false
       : key === "practice" ? S.boot.practice !== false : true) : null;
   if (!tabs || !tabs.some(([key]) => key === view)) { bar.removeAttribute("data-on"); return false; }
   bar.setAttribute("data-on", "1");
@@ -1292,7 +1294,9 @@ function bubbleSheet(items, answers, opts = {}) {
   return `<div class="card" id="sheet">${rows}</div>`;
 }
 function bindBubbles(answers, onChange) {
-  document.getElementById("sheet").addEventListener("click", e => {
+  const sheet = document.getElementById("sheet");
+  if (!sheet) return;  // esse mockida test varag'i yo'q
+  sheet.addEventListener("click", e => {
     const b = e.target.closest(".bubble"); if (!b) return;
     const q = b.dataset.q, l = b.dataset.l;
     answers[q] = answers[q] === l ? undefined : l;
@@ -1943,6 +1947,7 @@ function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
 document.addEventListener("visibilitychange", () => { if (document.hidden && S.saveDraft) S.saveDraft(); });
 
 VIEWS.create = async () => {
+  if (!S.boot && !(await boot())) return;  // «📅 E'lon qilish» (can_mock) va narxlar bootstrap'dan
   let restored = false;
   if (!S.create) { const d = loadDraft(); if (d) { S.create = d; restored = true; } }
   const st = S.create || (S.create = { title: "", fmt: "milliy", count: 30, topic: "", theme: "classic", mode: "online", variants: ["A"], cur: "A", keys: { A: {} }, channels: [] });
@@ -2119,6 +2124,8 @@ document.addEventListener("click", e => {
 
 // «Saqlash va PDF olish»dan keyin: test bot chatiga yuborildimi — sahifa tepasida banner (bir marta)
 function createdFlash(res) {
+  if (!(res.sent || []).length && !res.pdf_error)  // esse mocki: titul ham, kalit ham yo'q — faqat kod
+    return { text: `<b>✅ Saqlandi · kod ${res.code}</b><br>O'quvchilar botga shu kodni yozib qatnashadi.` };
   const files = (res.sent || []).map(k => k === "key" ? "🔑 kalit" : "📄 titul").join(" va ");
   const dl = `<span class="flash-dl"><button type="button" class="btn ghost sm" data-dl="${res.id}:key">📥 Kalit</button><button type="button" class="btn ghost sm" data-dl="${res.id}:sheets">📥 Titul</button></span>`;
   if (res.pdf_error) return { warn: true, text: `<b>✅ Test saqlandi · kod ${res.code}</b><br>${files ? `${files} PDF'i bot chatiga yuborildi. ` : ""}⚠️ ${esc(res.pdf_error)}<br>Hozir shu yerdan yuklab oling:${dl}` };
@@ -2703,6 +2710,7 @@ function synRow(value) {
 }
 
 function itemsFor(fmt, count) {
+  if (fmt === "esse") return [];  // esse mocki: savol ham, kalit ham yo'q
   if (fmt !== "milliy") return Array.from({ length: count }, (_, i) => ({ label: String(i + 1), kind: "choice", options: 4 }));
   const out = [];
   for (let n = 1; n <= 35; n++) out.push({ label: String(n), kind: "choice", options: n >= 33 ? 6 : 4 });
