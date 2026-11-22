@@ -1807,7 +1807,7 @@ async def pass_order(request: web.Request) -> web.Response:
 async def pass_granted(pay: dict, until: str, by_ai: bool) -> None:
     if "send_text" in HOOKS:
         try:
-            await HOOKS["send_text"](pay["student_id"], f"✅ <b>Tarif yoqildi</b>" + (" (chek AI'da tasdiqlandi)" if by_ai else "")
+            await HOOKS["send_text"](pay["student_id"], "✅ <b>Tarif yoqildi</b>" + (" (chek AI'da tasdiqlandi)" if by_ai else "")
                                      + f"\n💎 {until[:10]} gacha ustozning hamma mocklari siz uchun bepul.")
         except Exception:
             logger.warning("Tarif xabari o'quvchiga yuborilmadi", exc_info=True)

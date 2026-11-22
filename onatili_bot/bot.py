@@ -59,8 +59,8 @@ import subscription
 import webapp
 import config
 from config import ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
-from scoring import essay_on_paper, essay_pending, rasch_results, total_points
-from structure import ESSAY_MAX, ESSAY_SCALE, choice_items, essay_to_75, fmt_num, grade, max_points, percent, text_items
+from scoring import essay_on_paper, rasch_results, total_points
+from structure import ESSAY_SCALE, choice_items, essay_to_75, fmt_num, grade, max_points, percent, text_items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("onatili_bot")
