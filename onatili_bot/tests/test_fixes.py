@@ -46,6 +46,20 @@ class FakeBot:
         self.photos.extend((chat_id, getattr(m.media, "filename", "")) for m in media)
 
 
+class PostgresPlaceholders(unittest.TestCase):
+    """PostgreSQL (psycopg): so'rovdagi «%» ham o'zgaruvchi joyi deb o'qiladi — LIKE '%claude%' bootstrap'ni yiqitgan
+    («only '%s', '%b', '%t' are allowed as placeholders, got '%c'»). Ulanish qatlami % ni %% ga aylantiradi."""
+
+    def test_percent_escaped_and_question_marks_become_s(self):
+        sent = []
+        raw = types.SimpleNamespace(execute=lambda sql, params: sent.append((sql, params)))
+        db._Connection(raw, postgres=True).execute("SELECT 1 FROM t WHERE day >= ? AND m LIKE '%claude%'", ("2026",))
+        self.assertEqual(sent, [("SELECT 1 FROM t WHERE day >= %s AND m LIKE '%%claude%%'", ("2026",))])
+        sent.clear()
+        db._Connection(raw, postgres=False).execute("SELECT ? LIKE '%a%'", (1,))
+        self.assertEqual(sent, [("SELECT ? LIKE '%a%'", (1,))])  # SQLite — o'zgarmaydi
+
+
 class AppLogin(unittest.TestCase):
     def setUp(self):
         _env.fresh_db()
