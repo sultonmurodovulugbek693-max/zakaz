@@ -1402,7 +1402,6 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
                      (f"🔥 −{offer['discount']}%", f"set:discount_{offer['key']}")])
     rows.append([("💳 Karta", "set:card_number"), ("👤 Karta egasi", "set:card_holder")])
     rows.append([("⏳ Sinov kunlari", "set:trial_days")])
-    rows.append([("🤖 Oylik esse limiti", "set:ai_essays")])
     rows.append([("📦 Paket narxi", "set:price_pack"), ("📦 Paket hajmi", "set:pack_essays")])
     rows.append([("🏦 Platforma %", "set:platform_share"), ("💵 Min. esse narxi", "set:min_essay_price")])
     rows.append([("💸 Yechish chegarasi", "set:withdraw_min")])
@@ -1709,6 +1708,16 @@ async def store_file(bot: Bot, chat_id: int, data: bytes, name: str, caption: st
 
 async def download_bytes(bot: Bot, file_id: str) -> bytes:
     return (await bot.download(file_id)).read()
+
+
+async def expert_worker() -> None:
+    """«🎓 Ekspert»: muddatida (48 soat) baholanmagan esse — kredit o'quvchiga qaytadi. Har 30 daqiqada."""
+    while True:
+        try:
+            await webapp.expire_expert_essays()
+        except Exception:
+            logger.exception("Ekspert muddati tekshirilmadi")
+        await asyncio.sleep(1800)
 
 
 async def mock_worker(bot: Bot) -> None:
@@ -2307,6 +2316,8 @@ async def self_check_notice(bot: Bot, attempt: dict, score: float) -> None:
     test = await asyncio.to_thread(db.get_test, attempt["test_id"])
     if not test:
         return
+    if test.get("opens_at") and not test["closed"]:
+        return  # «Bugungi mock»: har esse uchun xabar yo'q — yopilgach bitta umumiy natija (finish_mock → announce_test)
     try:
         await bot.send_message(
             test["owner_id"],
@@ -2593,8 +2604,12 @@ async def open_public(message: Message, code: str) -> None:
 
 def public_markup(teacher_id: int) -> InlineKeyboardMarkup:
     """Ommaviy havola tugmalari; ilova ochiladigan bo'lsa — «✨ Ilovada ochish» (u yerda doim «✍️ Esse tekshirish»)."""
-    markup = inline([[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("💳 Kredit olish", f"wb:{teacher_id}")],
-                     [("📚 Esse namunalari", "esp:0")]])
+    rows = [[("✍️ Esse yuborish", f"ecw:new:{teacher_id}")], [("💳 Kredit olish", f"wb:{teacher_id}")],
+            [("📚 Esse namunalari", "esp:0")]]
+    need = webapp.expert_credits(teacher_id)
+    if need:  # FREE_IDS ekspert: Claude o'rniga qo'lda baholaydi
+        rows.insert(1, [(f"🎓 Ekspertga yuborish · {need} kredit", f"ecw:exp:{teacher_id}")])
+    markup = inline(rows)
     url = app_url(v="practice")
     if url:
         markup.inline_keyboard.append([InlineKeyboardButton(text="✨ Ilovada ochish", web_app=WebAppInfo(url=url))])
@@ -2648,7 +2663,8 @@ async def essay_flow_button(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("AI esse tekshiruvi hozir o'chiq", show_alert=True)
             return
         kind = await essay_kind(teacher_id, student_id)
-        if kind == "public" and not (await asyncio.to_thread(essay_setup, teacher_id))["public"]:
+        if (kind == "public" and not await asyncio.to_thread(webapp.public_open, teacher_id)
+                and await asyncio.to_thread(db.wallet_balance, teacher_id, student_id) <= 0):
             await callback.answer("Ustoz ommaviy tekshiruvni yopgan", show_alert=True)
             return
         if kind == "student":
@@ -2656,7 +2672,7 @@ async def essay_flow_button(callback: CallbackQuery, state: FSMContext) -> None:
             if await asyncio.to_thread(db.practice_used, teacher_id, student_id, plans.month_key()) >= limit:
                 await callback.answer(f"Bu oy uchun chegara tugadi ({limit} ta esse)", show_alert=True)
                 return
-        if not await asyncio.to_thread(plans.can_use_ai, teacher_id):
+        if kind == "student" and not await asyncio.to_thread(plans.can_use_ai, teacher_id):
             await callback.answer("Ustozning AI krediti tugagan — ustozga ayting", show_alert=True)
             return
         await asyncio.to_thread(db.remember_user, student_id, callback.from_user.full_name, callback.from_user.username)
@@ -2664,6 +2680,24 @@ async def essay_flow_button(callback: CallbackQuery, state: FSMContext) -> None:
         await state.set_data({"teacher_id": teacher_id, "kind": kind, "parts": [], "photos": []})
         await callback.message.answer("1️⃣ <b>Mavzu</b> — vaziyat matnini yuboring (AI shu mavzuga mosligini ham tekshiradi).",
                                       reply_markup=inline([[("⏭ Mavzusiz", "ecw:skip")]]))
+        await callback.answer()
+        return
+    if action == "exp":  # «🎓 Ekspertga»: FREE_IDS qo'lda baholaydi — narx kreditda (oldindan yetarli bo'lsin)
+        teacher_id, student_id = int(parts[2]), callback.from_user.id
+        need = await asyncio.to_thread(webapp.expert_credits, teacher_id)
+        if not need:
+            await callback.answer("Ekspert hozir qo'lda tekshiruv qabul qilmayapti", show_alert=True)
+            return
+        balance = await asyncio.to_thread(db.wallet_balance, teacher_id, student_id)
+        if balance < need:
+            await callback.answer(f"Ekspert tekshiruvi — {need} kredit, sizda {balance} ta. Avval «💳 Kredit olish»",
+                                  show_alert=True)
+            return
+        await asyncio.to_thread(db.remember_user, student_id, callback.from_user.full_name, callback.from_user.username)
+        await state.set_state(EssayCheck.topic)
+        await state.set_data({"teacher_id": teacher_id, "kind": "expert", "parts": [], "photos": []})
+        await callback.message.answer(f"🎓 <b>Ekspert tekshiruvi</b> — {need} kredit yechiladi.\n"
+                                      "1️⃣ <b>Mavzu</b> — vaziyat matnini yuboring.", reply_markup=inline([[("⏭ Mavzusiz", "ecw:skip")]]))
         await callback.answer()
         return
     if action == "skip" and await state.get_state() == EssayCheck.topic.state:
@@ -2755,6 +2789,25 @@ async def submit_essay(message: Message, state: FSMContext, user) -> None:
         return
     if text and word_count(text) < ESSAY_MIN_WORDS:
         await message.answer(f"Esse juda qisqa — {word_count(text)} so'z, kamida {ESSAY_MIN_WORDS} ta kerak.")
+        return
+    if kind == "expert":
+        await state.clear()
+        try:
+            res = await webapp.practice_expert_submit({"id": user.id, "name": user.full_name, "username": user.username},
+                                                      teacher_id, data.get("topic"), text, photos)
+        except webapp.ApiError as error:
+            await message.answer("⚠️ " + esc(json.loads(error.text).get("error", "Yuborilmadi")))
+            return
+        for file_id, mime in photos:  # rasmli esse — ekspertga Telegram'da (ilovada faqat matn ko'rinadi)
+            try:
+                if mime == "application/pdf":
+                    await message.bot.send_document(teacher_id, file_id, caption=f"🎓 Esse #{res['id']}")
+                else:
+                    await message.bot.send_photo(teacher_id, file_id, caption=f"🎓 Esse #{res['id']}")
+            except Exception:
+                logger.warning("Esse rasmi ekspertga yuborilmadi", exc_info=True)
+        await message.answer(f"🎓 <b>Essengiz ekspertga yuborildi</b> — {res['credits']} kredit yechildi, qoldi {res['balance']} ta.\n"
+                             f"Ekspert baholagach natija shu yerga keladi. {webapp.EXPERT_HOURS} soatda baholanmasa — kredit qaytadi.")
         return
     is_open = await asyncio.to_thread(webapp.public_open, teacher_id)
     if kind == "student" and not await asyncio.to_thread(plans.essay_open, teacher_id):
@@ -3076,6 +3129,7 @@ async def main() -> None:
         asyncio.create_task(essay_worker(bot)),   # AI navbati: yozma javoblar va esselar
         asyncio.create_task(resume_announcements(bot)),  # tugamay qolgan e'lonlar
         asyncio.create_task(mock_worker(bot)),  # «Bugungi mock»: eslatmalar, yopilgach natija va sertifikatlar
+        asyncio.create_task(expert_worker()),  # «🎓 Ekspert»: 48 soatda baholanmasa — kredit qaytadi
         asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
         asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
         asyncio.create_task(ops.plan_reminders(bot)),  # obuna tugashiga 3 va 1 kun qolganda — o'qituvchiga

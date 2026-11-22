@@ -53,13 +53,19 @@ class Plans(unittest.TestCase):
         self.assertTrue(all(plans.use_ai(FREE, "essays") for _ in range(50)))
         self.assertTrue(plans.status(ADMIN)["unlimited"])
 
-    def test_monthly_ai_limit(self):
-        plans.ensure_active(TEACHER)
-        limit = plans.trial_limits()["essays"]
-        self.assertTrue(all(plans.use_ai(TEACHER, "essays") for _ in range(limit)))
-        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # limit tugadi
+    def test_tariff_has_no_essays(self):
+        """Obuna faqat esse bo'limini ochadi — esse tekshiruvi alohida 📦 paketdan (kredit)."""
+        plans.grant(TEACHER, "month")
+        db.set_setting("ai_essays", 150)  # eski sozlama — endi e'tiborga olinmaydi
+        self.assertEqual(plans.limits()["essays"], 0)
+        self.assertFalse(plans.can_use_ai(TEACHER, "essays"))
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # kredit yo'q
         self.assertTrue(plans.use_ai(TEACHER, "written"))  # titul limiti alohida
-        self.assertEqual(plans.status(TEACHER)["used"]["essays"], limit)
+        plans.add_pack(TEACHER, 2)
+        self.assertTrue(plans.can_use_ai(TEACHER, "essays"))
+        self.assertTrue(plans.use_ai(TEACHER, "essays") and plans.use_ai(TEACHER, "essays"))
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))
+        self.assertEqual(plans.status(TEACHER)["used"]["essays"], 2)
 
     def test_grant_extends_and_rejects_unknown_period(self):
         st = plans.grant(TEACHER, "month", 1)
@@ -84,17 +90,15 @@ class Plans(unittest.TestCase):
         offer = next(o for o in plans.offers() if o["key"] == "month")
         self.assertEqual((offer["price"], offer["final"], offer["discount"]), (100_000, 80_000, 20))
 
-    def test_pack_used_after_monthly_limit(self):
-        db.set_setting("ai_essays", 2)
+    def test_pack_spent_essay_by_essay(self):
         plans.grant(TEACHER, "month")
         plans.add_pack(TEACHER, 5)
         self.assertTrue(plans.use_ai(TEACHER, "essays"))
-        self.assertEqual(plans.status(TEACHER)["credits"], 5)  # avval oylik limitdan — paketga tegilmaydi
-        self.assertTrue(plans.use_ai(TEACHER, "essays"))
-        self.assertTrue(all(plans.use_ai(TEACHER, "essays") for _ in range(5)))  # oylik tugadi → paketdan
-        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # paket ham tugadi — esse qo'lda
+        self.assertEqual(plans.status(TEACHER)["credits"], 4)  # har esse — 1 kredit (oylik bepul esse yo'q)
+        self.assertTrue(all(plans.use_ai(TEACHER, "essays") for _ in range(4)))
+        self.assertFalse(plans.use_ai(TEACHER, "essays"))  # paket tugadi — esse qo'lda
         st = plans.status(TEACHER)
-        self.assertEqual((st["credits"], st["used"]["essays"]), (0, 7))
+        self.assertEqual((st["credits"], st["used"]["essays"]), (0, 5))
 
     def test_pack_needs_active_plan_and_survives_expiry(self):
         db.set_setting("ai_essays", 0)
@@ -263,7 +267,7 @@ class PlanGates(unittest.IsolatedAsyncioTestCase):
         plans.grant(TEACHER, "month")
         self.assertFalse(await webapp.ai_allowed(TEACHER, "essays"))
         self.assertFalse(await webapp.ai_allowed(TEACHER, "essays"))
-        notices = [t for _, t in self.sent if "limiti tugadi" in t]
+        notices = [t for _, t in self.sent if "krediti tugadi" in t]
         self.assertEqual(len(notices), 1)  # oyiga bir marta
         self.assertIn("📦 +100 esse", notices[0])
 

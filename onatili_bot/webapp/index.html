@@ -1095,7 +1095,7 @@ const NO_BACK = new Set(["home", "appHome", "appLogin"]);
 const TABS = {
   // «📊 Natijalar» — bosh sahifada (katta tugma); panelda «⚙️ Sozlamalar»
   teacher: [["home", "🏠", "Bosh"], ["classes", "🏫", "Sinflar"], ["students", "👥", "O'quvchilarim"], ["plan", "💎", "Obuna"], ["ai", "🤖", "AI"], ["settings", "⚙️", "Sozlamalar"]],
-  student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["practice", "✍️", "Esse"], ["profile", "👤", "Men"]],
+  student: [["home", "🏠", "Bosh"], ["myresults", "📊", "Natijalar"], ["practice", "✍️", "Esse"], ["courses", "🏫", "Kurslar"], ["profile", "👤", "Men"]],
 };
 // Panel belgilari (chiziqli SVG); ro'yxatda yo'q bo'lim emoji bilan qoladi
 const TAB_ICONS = {
@@ -1190,7 +1190,7 @@ function applyUiTheme(key) {
 
 // Oxirgi ochilgan sahifa — ilova qayta ochilganda shu yerdan davom etadi (rol bo'yicha).
 // Kamera (skaner) va test yaratish qayta ochilmaydi — ular kutilmaganda ochilsa noqulay
-const RESUMABLE = { student: ["answer", "result", "myresults", "practice", "profile"],
+const RESUMABLE = { student: ["answer", "result", "myresults", "practice", "courses", "profile"],
                     teacher: ["teacher", "tests", "classes", "klass", "plan", "result", "written", "results", "classResults", "testResults", "settings"] };
 function rememberView(view, params) {
   if (!(tg && tg.initData)) return;
@@ -1247,20 +1247,6 @@ function resultCard(theme, d) {
   </div>`;
 }
 function schoolGrade(p) { return p >= 86 ? "5" : p >= 71 ? "4" : p >= 56 ? "3" : "2"; }
-
-function themePicker(selected, onPick) {
-  const html = Object.entries(THEMES).map(([id, [name, v]]) =>
-    `<button class="swatch ${id === selected ? "on" : ""}" data-theme="${id}" type="button" aria-label="${esc(name)}">
-      <div class="sw" style="background:${v["bg-c"]};color:${v.a};font-family:${v.dfont}">B+</div><span>${esc(name)}</span></button>`).join("");
-  setTimeout(() => {
-    document.querySelectorAll(".swatch").forEach(b => b.onclick = () => {
-      document.querySelectorAll(".swatch").forEach(x => x.classList.toggle("on", x === b));
-      haptic("select"); onPick(b.dataset.theme);
-    });
-    const on = document.querySelector(".swatch.on"); if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
-  });
-  return `<div class="themes">${html}</div>`;
-}
 
 // ---------- Doirachali varaq ----------
 function bubbleSheet(items, answers, opts = {}) {
@@ -1451,8 +1437,8 @@ VIEWS.home = async () => {
         <button type="button" class="big-act" data-new="offline"><i>📄</i><b>Oflayn test</b><small>Titul chiqarib, skanerda tekshirasiz</small></button>
       </div>`}
       ${b.essay_open === false ? `<div class="card" style="border:1.5px solid var(--warn)"><b>🔒 Esse bo'limi yopiq</b>
-        <span class="muted small">Bot bepul: testlaringizni hamma yechadi. 45-esse (yozish va tekshirish) faqat 💎 tarif bilan ochiladi —
-        shunda o'quvchilaringiz essesi tekshiriladi, begonalar esse uchun to'laydi yoki kredit oladi.</span>
+        <span class="muted small">Bot bepul: testlaringizni hamma yechadi. 45-esse bo'limi faqat 💎 tarif bilan ochiladi.
+        O'z o'quvchilaringiz essesini AI tekshirishi uchun 📦 esse paketi alohida olinadi; begonalar esse uchun o'zi to'laydi.</span>
         ${b.sales ? `<button type="button" class="btn block" id="essay-plan">💎 Tarif olish</button>` : `<span class="muted small">Tarif hozircha sotilmayapti — admin bilan bog'laning.</span>`}</div>` : ""}
       ${b.expert_waiting ? `<button type="button" class="item" data-go-expert style="border:1.5px solid var(--warn)"><span class="ico">🎓</span><span><b>Ekspert: ${b.expert_waiting} ta esse kutmoqda</b><small>O'quvchilar to'lagan — baholang</small></span><span class="muted">›</span></button>` : ""}
       ${b.can_public ? claudeCardHTML(b.claude, false) : ""}
@@ -1530,7 +1516,7 @@ VIEWS.myresults = async () => {
   // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
   const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
-      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : "⏳"}</span></button>`).join("");
+      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
       <h1>Mening natijalarim</h1><span class="muted small">${b.attempts.length} ta test · ${ready} ta natija tayyor${essays.length ? ` · ${essays.length} ta esse` : ""}</span></div></div>
@@ -1553,14 +1539,15 @@ VIEWS.profile = async () => {
     <button type="button" class="item" data-switch-role><span class="ico">⇄</span>
       <span><b>${S.role === "student" ? "O'qituvchi" : "O'quvchi"} rejimiga o'tish</b>
         <small>Hozir: ${S.role === "student" ? "o'quvchi" : "o'qituvchi"}</small></span><span class="muted">›</span></button>
-    <div class="item" style="cursor:default"><span class="ico">${b.registered ? "✅" : "📝"}</span>
-      <span><b>Oflayn kurs</b><small>${b.registered ? "Ro'yxatdan o'tgansiz" : "Botdagi /royxat orqali yozilasiz"}</small></span></div>
+    <button type="button" class="item" data-go-register><span class="ico">${b.registered ? "✅" : "📝"}</span>
+      <span><b>Oflayn kursga ro'yxat</b><small>${b.registered ? "Ro'yxatdan o'tgansiz — o'zgartirish yoki o'chirish" : "Kursga yozilish (o'quvchi) yoki kurs ochish (ustoz)"}</small></span><span class="muted">›</span></button>
     <div class="row between card" style="padding:12px 14px;display:flex"><span>Sizning ID: <b>${esc(String(me))}</b></span>
       <button type="button" class="btn ghost sm" id="copy-me">Nusxalash</button></div>
     ${b.admin_contact ? `<a class="btn ghost block" href="https://t.me/${esc(b.admin_contact)}" target="_blank" rel="noopener">✉️ Admin bilan bog'lanish</a>` : ""}
   </div>`;
   document.getElementById("copy-me").onclick = () => navigator.clipboard
     ? navigator.clipboard.writeText(String(me)).then(() => toast("ID nusxalandi"), () => toast(String(me))) : toast(String(me));
+  document.querySelectorAll("[data-go-register]").forEach(x => x.onclick = () => { haptic("light"); go("register"); });
   document.querySelectorAll("[data-switch-role]").forEach(x => x.onclick = () => {
     haptic("select"); setRole(S.role === "student" ? "teacher" : "student"); S.stack = []; go("home", {}, true);
   });
@@ -2048,10 +2035,10 @@ function mockSetupHTML(m, withFiles = true) {
       ${b.can_mock ? `<label class="row small" style="gap:8px;cursor:pointer"><input type="checkbox" id="mk-public" ${m.public ? "checked" : ""} style="width:20px;height:20px">
         Hamma o'quvchilarning bosh sahifasida «Bugungi mock» bo'lib chiqsin</label>` : ""}
       <div class="field"><label for="mk-date">Sana</label><input class="input" id="mk-date" type="date" value="${esc(m.date)}"></div>
-      <div class="row" style="gap:8px;align-items:flex-end">
-        <div class="field" style="flex:1"><label for="mk-opens">Ochiladi</label><input class="input" id="mk-opens" type="time" value="${esc(m.opens)}"></div>
-        <div class="field" style="flex:1"><label for="mk-entry">Qabul yopiladi</label><input class="input" id="mk-entry" type="time" value="${esc(m.entry)}"></div>
-        <div class="field" style="flex:1"><label for="mk-closes">Tugaydi</label><input class="input" id="mk-closes" type="time" value="${esc(m.closes)}"></div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end">
+        <div class="field" style="min-width:0"><label for="mk-opens">Ochiladi</label><input class="input" id="mk-opens" type="time" value="${esc(m.opens)}" style="width:100%;min-width:0"></div>
+        <div class="field" style="min-width:0"><label for="mk-entry">Qabul yopiladi</label><input class="input" id="mk-entry" type="time" value="${esc(m.entry)}" style="width:100%;min-width:0"></div>
+        <div class="field" style="min-width:0"><label for="mk-closes">Tugaydi</label><input class="input" id="mk-closes" type="time" value="${esc(m.closes)}" style="width:100%;min-width:0"></div></div>
       <div class="field"><label>Mock</label><div class="chips">
         <button type="button" class="chip ${m.paid ? "" : "on"}" data-mock-paid="0">🎁 Bepul</button>
         <button type="button" class="chip ${m.paid ? "on" : ""}" data-mock-paid="1">💳 Pullik</button></div></div>
@@ -2628,7 +2615,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const t = d.test, milliy = t.fmt === "milliy", n = d.attempts.length;
   t.channels = t.channels || []; d.students = d.students || [];
   const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
-  tab = tab || "home";
+  tab = tab && !(offline && tab === "design") ? tab : "home";  // oflaynda «Sozlama» yo'q
   // O'rtacha, darajalar, PDF jadval va sertifikatlar — alohida «📊 Natijalar» bo'limida (pastki panel)
   const toResults = n ? `<button type="button" class="item" id="to-results"><span class="ico">📊</span>
       <span><b>Natijalar va sertifikatlar</b><small>O'rtacha ball, darajalar, PDF va mock sertifikatlar</small></span><span class="muted">›</span></button>` : "";
@@ -2686,7 +2673,7 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${n ? `<button class="item" id="ranking"><span class="ico">🏆</span><span><b>Reyting matni</b><small>TOP natijalar — guruhga tashlash uchun</small></span></button>` : ""}
       <button class="item" id="copy-test"><span class="ico">📋</span><span><b>Boshqa guruh uchun nusxa</b><small>Yangi kod, kalitlar o'sha — qayta kiritish shart emas</small></span></button></div></div>`;
   const liveOn = !offline && !t.closed;
-  const tabsList = [["home", "🏠 Umumiy"], ...(liveOn ? [["live", "📡 Jonli"]] : []), ["people", `👥 Javoblar${n ? ` · ${n}` : ""}`], ...(offline ? [["students", `🗂 Ro'yxat · ${d.students.length}`]] : []), ["questions", "🧩 Tahlil"], ...(milliy ? [["essays", `📝 Esselar${suggested ? `<span class="badge">${suggested}</span>` : ""}`]] : []), ["design", `⚙️ Sozlama${t.channels.length && !offline ? ` · 📢${t.channels.length}` : ""}`]];
+  const tabsList = [["home", "🏠 Umumiy"], ...(liveOn ? [["live", "📡 Jonli"]] : []), ["people", `👥 Javoblar${n ? ` · ${n}` : ""}`], ...(offline ? [["students", `🗂 Ro'yxat · ${d.students.length}`]] : []), ["questions", "🧩 Tahlil"], ...(milliy ? [["essays", `📝 Esselar${suggested ? `<span class="badge">${suggested}</span>` : ""}`]] : []), ...(offline ? [] : [["design", `⚙️ Sozlama${t.channels.length ? ` · 📢${t.channels.length}` : ""}`]])];  // oflaynda sozlama yo'q
   $app.innerHTML = `<div class="view">
     <div class="thead"><h1>${esc(t.title)}</h1>
       <div class="meta"><button class="codechip" id="code-chip" title="Nusxalash">KOD ${t.code}</button><span class="pill-tag ${t.closed ? "done" : "wait"}">${t.closed ? "📢 E'lon qilingan" : "⏳ Javob yig'ilmoqda"}</span><span>${esc(t.format)}${t.variants.length > 1 ? ` · ${t.variants.join(", ")}` : ""}</span></div></div>
@@ -2708,18 +2695,11 @@ VIEWS.teacher = async ({ id, tab }) => {
       ${n ? `<button class="btn ${suggested ? "ghost " : ""}block" id="bulk-essays">✏️ Ballarni ketma-ket kiritish (75 ballik)</button>` : ""}</div>${offlineEssaysHTML(d.offline_essays)}<div class="list">${essays || `<div class="card empty">Esselar yo'q</div>`}</div>` : ""}
     ${tab === "design" && !offline ? channelEditorHTML(t.channels) : ""}
     ${tab === "design" && !offline && milliy && d.can_mock ? teacherMockHTML(t, d) : ""}
-    ${tab === "design" ? `<div class="card"><h2>Natija kartasi dizayni</h2><span class="muted small">O'quvchilar natijasini shu dizaynda ko'radi</span>${themePicker(t.theme, async th => { try { await api(`/api/teacher/test/${t.id}/theme`, { theme: th }); toast("Dizayn saqlandi"); preview(th); } catch (e) { toast(e.message); } })}</div><div id="preview"></div>` : ""}
   </div>`;
   countUp($app); bindFlash(); bindTabStrip();
-  function preview(th) {
-    const el = document.getElementById("preview"); if (!el) return;
-    el.innerHTML = resultCard(th, { kind: milliy ? "Mock" : "Test", code: t.code, name: "Ali Valiyev", sub: t.title, value: milliy ? 72.4 : 84, max: milliy ? 100 : 100, suffix: milliy ? "" : "%", of: milliy ? "/ 100 ball" : "21 / 25 to'g'ri", gradeLabel: milliy ? "Daraja" : "Baho", grade: milliy ? "B+" : "4", gradeSub: milliy ? "Rasch bali 62,3" : "5 ballik tizim", parts: milliy ? [["Test (1–35)", 30, 35], ["Yozma (36–44)", 11, 14], ["Esse", 64, 75]] : [["To'g'ri javoblar", 21, 25]], footLeft: `Kod ${t.code}`, footRight: "namuna" });
-    countUp(el);
-  }
   if (tab === "design" && !offline && milliy && d.can_mock) bindTeacherMock(t, d);
   document.querySelectorAll("[data-goto-mock]").forEach(x => x.onclick = () => { S.current.params = { id, tab: "design" }; S.useCache = true; haptic("select"); rerender(); });
   if (tab === "design") {
-    preview(t.theme);
     bindChannelEditor(t.channels, async list => {
       const r = await api(`/api/teacher/test/${t.id}/channels`, { channels: list.map(c => c.chat_id) });
       t.channels.splice(0, t.channels.length, ...r.channels);
@@ -3029,24 +3009,49 @@ VIEWS.courses = async ({ first } = {}) => {
   let found = null;
   if (saved.region && saved.district) { try { found = await api(`/api/courses?region=${encodeURIComponent(saved.region)}&district=${encodeURIComponent(saved.district)}`); } catch (e) {} }
   const teachers = found ? found.teachers : [];
-  const chip = st => st === "approved" ? `<span class="pill-tag done">✅ O'quvchisiz</span>` : st === "pending" ? `<span class="pill-tag wait">⏳ Ariza yuborilgan</span>` : st === "rejected" ? `<span class="pill-tag bad">❌ Rad etilgan</span>` : "";
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Kurslar</span><h1>🏫 Kursingizni toping</h1>
-      <span class="muted small">Yashaydigan yoki o'qiydigan joyingizni tanlang — u yerda kurs ochgan ustozlar chiqadi. Ustozingizning o'quvchisi bo'lsangiz, uning mocklarini bepul topshirasiz.</span></div>
+      <span class="muted small">Ustoz ismi yoki tumanni yozing — yoki pastda joyingizni tanlang. Ustozingizning o'quvchisi bo'lsangiz, uning mocklarini bepul topshirasiz.</span></div>
+    <input class="input" id="c-q" type="search" autocomplete="off" placeholder="🔍 Ustoz ismi, @username yoki tuman">
+    <div id="c-found"></div>
     <button type="button" class="item" id="pick-place"><span class="ico">📍</span><span><b>${saved.district ? esc(saved.district) : "Viloyat va tumanni tanlang"}</b><small>${saved.region ? esc(saved.region) : "bosing"}</small></span><span class="muted">›</span></button>
     ${found ? (teachers.length ? `<div class="section-title"><h2>Shu yerdagi kurslar</h2><span class="muted small">${teachers.length} ta ustoz</span></div>
-      <div class="list">${teachers.map(t => `<div class="card course-card"><div class="row between"><span><b>👩‍🏫 ${esc(t.name)}</b><br><small class="muted">${t.username ? `@${esc(t.username)}` : ""}${t.phone ? ` · ${esc(t.phone)}` : ""}</small></span>${chip(t.status)}</div>
-        ${t.status === "approved" ? "" : `<button type="button" class="btn ${t.status === "pending" ? "ghost " : ""}block" data-join="${t.id}" data-tname="${esc(t.name)}">${t.status === "pending" ? "Arizani yangilash" : "🙋 O'quvchisiman"}</button>`}</div>`).join("")}</div>`
+      ${courseCardsHTML(teachers)}`
       : `<div class="card empty"><div class="big">🔍</div><b>Bu tumanda hali kurs yo'q</b><span>Boshqa tumanni tanlang yoki ustozingizdan taklif havolasini so'rang.</span></div>`) : ""}
-    <button type="button" class="btn ${first ? "" : "plain "}block" id="just-enter">${first ? "Shunchaki kirayapman →" : "Bosh sahifa"}</button>
+    ${first ? `<button type="button" class="btn block" id="just-enter">Shunchaki kirayapman →</button>` : ""}
   </div>`;
   document.getElementById("pick-place").onclick = () => placePicker(meta.regions, meta.with_courses, (region, district) => {
     store("course-place", JSON.stringify({ region, district })); rerender();
   });
-  document.getElementById("just-enter").onclick = () => { haptic("light"); S.stack = []; S.boot = null; go("home", {}, true); };
-  document.querySelectorAll("[data-join]").forEach(x => x.onclick = () => joinForm(+x.dataset.join, x.dataset.tname));
-  if (!saved.region) setTimeout(() => { if (document.getElementById("pick-place")) document.getElementById("pick-place").click(); }, 300);
+  const enter = document.getElementById("just-enter");
+  if (enter) enter.onclick = () => { haptic("light"); S.stack = []; S.boot = null; go("home", {}, true); };
+  bindCourseCards(document);
+  // Tepadagi qidiruv: yozish to'xtagach 400 ms — ism, @username yoki joy bo'yicha
+  const q = document.getElementById("c-q"), box = document.getElementById("c-found");
+  let timer = null;
+  q.oninput = () => {
+    clearTimeout(timer);
+    const text = q.value.trim();
+    if (text.length < 2) { box.innerHTML = ""; return; }
+    timer = setTimeout(async () => {
+      let res; try { res = await api(`/api/courses?q=${encodeURIComponent(text)}`); } catch (e) { box.innerHTML = ""; return toast(e.message); }
+      if (q.value.trim() !== text) return;  // bu orada yana yozildi
+      box.innerHTML = res.teachers.length ? `<div class="section-title"><h2>Topildi</h2><span class="muted small">${res.teachers.length} ta ustoz</span></div>${courseCardsHTML(res.teachers)}`
+        : `<div class="card empty"><div class="big">🔍</div><b>«${esc(text)}» bo'yicha kurs topilmadi</b><span>Boshqacha yozib ko'ring yoki pastda joyingizni tanlang.</span></div>`;
+      bindCourseCards(box);
+    }, 400);
+  };
+  if (first && !saved.region) setTimeout(() => { if (document.getElementById("pick-place")) document.getElementById("pick-place").click(); }, 300);
 };
+
+function courseCardsHTML(teachers) {
+  const chip = st => st === "approved" ? `<span class="pill-tag done">✅ O'quvchisiz</span>` : st === "pending" ? `<span class="pill-tag wait">⏳ Ariza yuborilgan</span>` : st === "rejected" ? `<span class="pill-tag bad">❌ Rad etilgan</span>` : "";
+  return `<div class="list">${teachers.map(t => `<div class="card course-card"><div class="row between"><span><b>👩‍🏫 ${esc(t.name)}</b><br><small class="muted">${t.username ? `@${esc(t.username)}` : ""}${t.phone ? ` · ${esc(t.phone)}` : ""}${t.place ? `<br>📍 ${esc(t.place)}` : ""}</small></span>${chip(t.status)}</div>
+    ${t.status === "approved" ? "" : `<button type="button" class="btn ${t.status === "pending" ? "ghost " : ""}block" data-join="${t.id}" data-tname="${esc(t.name)}">${t.status === "pending" ? "Arizani yangilash" : "🙋 O'quvchisiman"}</button>`}</div>`).join("")}</div>`;
+}
+function bindCourseCards(root) {
+  root.querySelectorAll("[data-join]").forEach(x => x.onclick = () => joinForm(+x.dataset.join, x.dataset.tname));
+}
 
 function joinForm(teacherId, teacherName) {
   const modal = openModal("🙋 O'quvchisiman", `<span class="muted small">${esc(teacherName)} ustozga ariza. Ustoz tasdiqlasa — uning o'quvchisi bo'lasiz.</span>
@@ -3155,50 +3160,99 @@ function earningsHTML(e) {
 }
 
 // ---------- ⚙️ Sozlamalar (ustoz): karta, begonalar uchun esse tekshiruvi, kredit narxlari ----------
-VIEWS.settings = async () => {
+// «⚙️ Sozlamalar»: menyu → uchta alohida ekran (to'lov va narxlar · AI · begonalar va e'lonlar).
+// Har ekran tepasida — undagi har bir funksiya nima qilishi (FREE_IDS uchun ayniqsa: sozlama ko'p)
+const SETTINGS_TABS = {
+  pay: { icon: "💳", title: "To'lov va narxlar", hint: "karta, kredit narxlari, ekspert, tariflar, daromad" },
+  ai: { icon: "🤖", title: "AI", hint: "qaysi ishni qaysi AI qiladi, Claude balansi" },
+  public: { icon: "🌐", title: "Begonalar va e'lonlar", hint: "ommaviy esse havolasi, e'lon kanali" },
+};
+function guideHTML(rows) {
+  return `<div class="card" style="border:1.5px solid var(--line)"><b class="small">Bu bo'limda</b>
+    ${rows.filter(Boolean).map(([name, text]) => `<span class="small"><b>${name}</b> — ${text}</span>`).join("")}</div>`;
+}
+VIEWS.settings = async ({ tab } = {}) => {
   loading();
   let s; try { s = await api("/api/teacher/settings"); } catch (e) { return fail(e); }
-  const ready = s.card && s.packs.length, rs = s.earnings && s.earnings.routed;
+  const ready = s.card && s.packs.length, rs = s.earnings && s.earnings.routed, free = !!s.can_public;
+  const admin = !!(S.boot && S.boot.can_manage);
+  if (!SETTINGS_TABS[tab]) {  // menyu: har bo'lim — nima ichida va holati
+    const state = {
+      pay: !s.card ? `<span class="pill-tag wait">karta yo'q</span>` : s.earnings && s.earnings.balance ? `<span class="pill-tag done">${sum(s.earnings.balance)} so'm</span>` : "",
+      ai: free && s.claude ? `<span class="pill-tag done">$${s.claude.usd}</span>` : "",
+      public: s.public ? `<span class="pill-tag done">ochiq</span>` : `<span class="pill-tag wait">yopiq</span>`,
+    };
+    $app.innerHTML = `<div class="view">
+      <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
+        <span class="muted small">Bo'limni tanlang — har birining tepasida undagi funksiyalar nima qilishi yozilgan.</span></div>
+      <div class="list">${Object.entries(SETTINGS_TABS).map(([key, t]) => `<button type="button" class="item" data-st-tab="${key}">
+        <span class="ico">${t.icon}</span><span><b>${t.title}</b><small>${t.hint}</small></span>${state[key] || `<span class="muted">›</span>`}</button>`).join("")}
+      ${free && s.expert_waiting ? `<button type="button" class="item" data-go-expert style="border:1.5px solid var(--warn)"><span class="ico">🎓</span><span><b>Ekspert: ${s.expert_waiting} ta esse kutmoqda</b><small>O'quvchilar to'lagan — baholang</small></span><span class="muted">›</span></button>` : ""}
+      ${admin ? `<button type="button" class="item" id="st-sales"><span class="ico">💎</span><span><b>Obuna tariflari</b><small>Faqat admin: ilova narxlari, bot kartasi, begonalar puli, yechish so'rovlari</small></span><span class="muted">›</span></button>` : ""}</div>
+    </div>`;
+    document.querySelectorAll("[data-st-tab]").forEach(x => x.onclick = () => { haptic("light"); go("settings", { tab: x.dataset.stTab }); });
+    document.querySelectorAll("[data-go-expert]").forEach(x => x.onclick = () => { haptic("light"); go("expert"); });
+    const toSales = document.getElementById("st-sales");
+    if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
+    return;
+  }
+  const t = SETTINGS_TABS[tab];
+  const unit = (s.packs || []).find(p => p.essays === 1);
+  const guide = {
+    pay: guideHTML([
+      ["💳 Karta", rs ? "«💸 Yechib olish»da daromadingiz shu kartaga o'tkaziladi." : "begona o'quvchilar kredit va esse uchun shu kartaga to'laydi; AI chekdagi karta oxirgi 4 raqamini yoki ismni tekshiradi."],
+      s.earnings && ["💰 Daromad", `begonalar puli bot kartasiga tushadi, har to'lovdan sizga ${s.earnings.teacher_percent}% shu balansga yoziladi; ${sum(s.earnings.withdraw_min)} so'mdan yechib olasiz.`],
+      ["💳 Kredit narxlari", "begona o'quvchi sizdan sotib oladigan esse krediti: 1 kredit = 1 esse (Claude tekshiradi). Paketlarda chegirma qo'yish mumkin."],
+      free && ["🎓 Ekspert tekshiruvi", `o'quvchi Claude o'rniga sizni tanlasa, essesini o'zingiz baholaysiz; narx kreditga aylanadi${unit ? ` (1 kredit = ${sum(unit.price)} so'm)` : ""}. 48 soatda baholamasangiz kredit qaytadi.`],
+      free && ["💎 O'quvchi tariflari", "begona o'quvchi muddatli tarif oladi — muddat davomida hamma mocklaringiz unga bepul."],
+    ]),
+    ai: guideHTML([
+      ["📝 Esse baholash", "faqat Claude (imtihondagidek 75 ballik shkala). Claude ishlamasa esse sizga qo'lda baholash uchun keladi."],
+      ["🧾 Chek tekshirish", "Gemini o'qiydi: summa, bugungi sana, karta yoki ism. Natija 1–2 daqiqada."],
+      ["📷 Esse rasmini o'qish", "o'quvchi tanlaydi: Gemini (bepul) yoki Claude (aniqroq) — qo'lyozmani matnga aylantiradi."],
+      free && ["💰 Claude balansi", "Anthropic hisobingizdagi dollarni yozing — ilova yana nechta esse tekshirish mumkinligini hisoblaydi."],
+      admin && ["⚙️ Model tanlash", "qaysi ishni qaysi model bajarishi botda: /ai_sozlama (sarf hisoboti — /ai)."],
+    ]),
+    public: guideHTML([
+      ["🌐 Ommaviy esse havolasi", `havolani kanal yoki guruhga tashlaysiz: kirgan begona ${s.free} ta esseni bepul tekshirtiradi, keyin sizdan kredit oladi. «✍️ Esse» bo'limida ham ko'rinadi.`],
+      free && ["📣 E'lon kanali", "bot mocklaringiz haqida shu kanallarga o'zi e'lon yozadi (ochilish, eslatma, natija)."],
+      ["🔑 Esse kodi", "o'z o'quvchilaringiz uchun — «👥 O'quvchilarim» bo'limida (ular sizning limitingizdan tekshirtiradi)."],
+    ]),
+  }[tab];
+  const sections = {
+    pay: `${earningsHTML(s.earnings)}
+      <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
+      <div class="card">
+        <div class="field"><label for="st-card">Karta raqami</label><input class="input" id="st-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
+        <div class="field"><label for="st-holder">Karta egasi</label><input class="input" id="st-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
+        <button type="button" class="btn ghost block" id="st-card-save">Kartani saqlash</button></div>
+      ${packsCardHTML({ essay_packs: s.packs, min_price: rs ? s.earnings.min_price : 0, warn: rs ? revshareWarnHTML(s.earnings.teacher_percent, s.earnings.min_price) : "" })}
+      ${free ? expertPriceHTML(s) : ""}
+      ${free ? studentTariffsHTML(s.student_tariffs || []) : ""}`,
+    ai: free ? claudeCardHTML(s.claude, true)
+      : `<div class="card"><span class="small">O'z o'quvchilaringiz essesi tarifingiz limitidan tekshiriladi — qoldig'i «💎 Obuna» bo'limida.</span></div>`,
+    public: `<div class="section-title"><h2>🌐 Ommaviy esse havolasi</h2><span class="muted small">${s.public ? "✅ ochiq" : "⛔️ yopiq"}</span></div>
+      <div class="card">
+        ${s.public && s.public_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="st-share" style="flex:1">📨 Havolani ulashish</button><button type="button" class="btn plain" id="st-copy">📋</button></div>` : ""}
+        ${!ready && !s.public ? `<span class="small" style="color:var(--warn)">Yoqish uchun avval «💳 To'lov va narxlar»da karta va kamida bitta kredit narxini kiriting.</span>` : ""}
+        <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
+      ${free ? announceChannelsHTML(s.announce_channels || []) : ""}`,
+  }[tab];
   $app.innerHTML = `<div class="view">
-    <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
-      <span class="muted small">${rs ? `Begonalar (o'quvchingiz bo'lmaganlar) esse tekshiruvi uchun platformaga to'laydi — har to'lovdan sizga ${s.earnings.teacher_percent}%, AI xarajati platformadan.`
-        : "Begonalar (o'quvchingiz bo'lmaganlar) uchun esse tekshiruvi: pul to'g'ridan-to'g'ri kartangizga tushadi."}</span></div>
-    ${earningsHTML(s.earnings)}
-    ${S.boot && S.boot.can_manage ? `<button type="button" class="item results-go" id="st-sales"><span class="ico">💎</span>
-      <span><b>Obuna tariflari</b><small>Ilova narxlari, to'lov kartasi, begonalar puli va yechish so'rovlari — faqat admin</small></span>
-      <span class="rg-end">${ico("arrow")}</span></button>` : ""}
-
-    <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
-    <div class="card"><span class="muted small">${rs ? "«💸 Yechib olish»da daromadingiz shu kartaga o'tkaziladi."
-      : "O'quvchilar kreditni shu kartaga to'laydi. AI chekdagi karta oxirgi 4 raqamini yoki egasining ismini tekshiradi."}</span>
-      <div class="field"><label for="st-card">Karta raqami</label><input class="input" id="st-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
-      <div class="field"><label for="st-holder">Karta egasi</label><input class="input" id="st-holder" autocomplete="off" value="${esc(s.holder || "")}" placeholder="Ism Familiya"></div>
-      <button type="button" class="btn ghost block" id="st-card-save">Kartani saqlash</button></div>
-
-    <div class="section-title"><h2>🌐 Begonalar uchun</h2><span class="muted small">${s.public ? "✅ ochiq" : "⛔️ yopiq"}</span></div>
-    <div class="card"><span class="muted small">Havolani kanal yoki guruhga tashlang: kirgan o'quvchi ${s.free} ta esseni bepul tekshirtiradi, keyin sizdan kredit sotib oladi (1 kredit = 1 esse).</span>
-      ${s.public && s.public_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="st-share" style="flex:1">📨 Havolani ulashish</button><button type="button" class="btn plain" id="st-copy">📋</button></div>` : ""}
-      ${!ready && !s.public ? `<span class="small" style="color:var(--warn)">Yoqish uchun avval karta va kamida bitta kredit narxini kiriting.</span>` : ""}
-      <button type="button" class="btn ${s.public ? "ghost" : ""} block" id="st-public" ${!ready && !s.public ? "disabled" : ""}>${s.public ? "⛔️ Yopish" : "🌐 Ochish"}</button></div>
-
-    ${packsCardHTML({ essay_packs: s.packs, min_price: rs ? s.earnings.min_price : 0, warn: rs ? revshareWarnHTML(s.earnings.teacher_percent, s.earnings.min_price) : "" })}
-    ${s.can_public ? claudeCardHTML(s.claude, true) : ""}
-    ${s.can_public ? announceChannelsHTML(s.announce_channels || []) : ""}
-    ${s.can_public ? studentTariffsHTML(s.student_tariffs || []) : ""}
-    ${s.can_public ? expertPriceHTML(s) : ""}
+    <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>${t.icon} ${t.title}</h1></div>
+    ${guide}
+    ${sections}
   </div>`;
   bindPacksCard();
   bindStudentTariffs();
   bindExpertPrice();
   bindAnnounceChannels(s.announce_channels || []);
   bindClaudeCard();
-  const toSales = document.getElementById("st-sales");
-  if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
   const digits = v => String(v || "").replace(/\D/g, "");
   const cardEl = document.getElementById("st-card");
-  cardEl.oninput = () => { const d = digits(cardEl.value).slice(0, 16); cardEl.value = d.replace(/(\d{4})(?=\d)/g, "$1 "); };
+  if (cardEl) cardEl.oninput = () => { const d = digits(cardEl.value).slice(0, 16); cardEl.value = d.replace(/(\d{4})(?=\d)/g, "$1 "); };
   const saveCard = document.getElementById("st-card-save");
-  saveCard.onclick = async () => {
+  if (saveCard) saveCard.onclick = async () => {
     saveCard.disabled = true;
     try { await api("/api/teacher/settings", { card: cardEl.value, holder: document.getElementById("st-holder").value });
       haptic("success"); toast("✅ Karta saqlandi"); rerender(); }
@@ -3214,7 +3268,7 @@ VIEWS.settings = async () => {
     catch (e) { toast(e.message); haptic("error"); wd.disabled = false; }
   };
   const pub = document.getElementById("st-public");
-  pub.onclick = async () => {
+  if (pub) pub.onclick = async () => {
     pub.disabled = true;
     try { await api("/api/teacher/settings", { public: !s.public }); haptic("success");
       toast(s.public ? "⛔️ Begonalar uchun yopildi" : "🌐 Begonalar uchun ochildi"); rerender(); }
@@ -3500,7 +3554,7 @@ VIEWS.practice = async () => {
   const t = r.teachers;
   const history = r.history.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">📝</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
-      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : "⏳"}</span></button>`).join("");
+      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
@@ -3631,7 +3685,7 @@ VIEWS.expert = async () => {
     <div class="hero"><span class="brand"><i>I</i>Ekspert</span><h1>🎓 Ekspert tekshiruvi</h1>
       <span class="muted small">${list.length ? `${list.length} ta esse kutmoqda — o'quvchilar to'lagan, natijani bot ularga yuboradi` : "Hozircha kutayotgan esse yo'q."}</span></div>
     <div class="list">${list.map(e => `<button type="button" class="item" data-ex="${e.id}"><span class="ico">📝</span>
-      <span><b>${esc((e.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${esc(e.name)} · ${dmy(e.created_at)} · ${e.words} so'z</small></span><span class="muted">›</span></button>`).join("")}</div>
+      <span><b>${esc((e.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${esc(e.name)} · ${dmy(e.created_at)} · ${e.photos ? `📷 ${e.photos} ta rasm` : `${e.words} so'z`}</small></span><span class="muted">›</span></button>`).join("")}</div>
     <div id="ex-form"></div>
   </div>`;
   document.querySelectorAll("[data-ex]").forEach(x => x.onclick = () => { haptic("light"); expertForm(list.find(e => e.id === +x.dataset.ex), r.rubric); });
@@ -3642,8 +3696,9 @@ function expertForm(e, rubric) {
   const scores = {};
   const to75 = p => p ? 27 + 2 * p : 0;  // structure.essay_to_75: 0 → 0, aks holda 27 + 2 × ball
   box.innerHTML = `<div class="card">
-      <b>${esc(e.topic || "Mavzusiz esse")}</b><span class="muted small">${esc(e.name)} · ${e.words} so'z</span>
-      <div class="topic" style="white-space:pre-wrap">${esc(e.text)}</div></div>
+      <b>${esc(e.topic || "Mavzusiz esse")}</b><span class="muted small">${esc(e.name)} · ${e.photos ? `${e.photos} ta rasm` : `${e.words} so'z`}</span>
+      ${e.text ? `<div class="topic" style="white-space:pre-wrap">${esc(e.text)}</div>` : ""}
+      ${e.photos ? `<span class="small">📷 Esse ${e.photos} ta rasmda — botdagi «🎓 Ekspert tekshiruvi» xabaridan ko'ring.</span>` : ""}</div>
     <div class="section-title"><h2>Baholash</h2><b id="ex-total">0 / 24 · 0 / 75</b></div>
     <div class="card" style="display:grid;gap:14px">${rubric.map(c => `<div style="display:grid;gap:6px">
         <b class="small">${esc(c.title)}</b><span class="muted small">${esc(c.levels)}</span>
@@ -3679,7 +3734,8 @@ function receiptHTML(src) {
 
 async function showPractice(id) {
   let e; try { e = await api(`/api/practice/${id}`); } catch (err) { return toast(err.message); }
-  if (e.status !== "graded") return toast(e.status === "failed" ? "AI tekshira olmadi" : e.status === "awaiting_credit" ? "💳 Kredit kutmoqda — kredit olsangiz o'zi tekshiriladi" : "⏳ Hali tekshirilmoqda");
+  if (e.status !== "graded") return toast(e.status === "failed" ? "AI tekshira olmadi" : e.status === "awaiting_credit" ? "💳 Kredit kutmoqda — kredit olsangiz o'zi tekshiriladi"
+    : e.status === "expert" ? "🎓 Ekspert baholamoqda — natija botga keladi" : e.status === "refunded" ? "↩️ Ekspert muddatida baholamadi — kredit qaytarildi" : "⏳ Hali tekshirilmoqda");
   const modal = openModal("📝 Esse natijasi", myEssayHTML(e).replace("Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.", ""));
   return modal;
 }
@@ -3821,22 +3877,21 @@ VIEWS.plan = async () => {
       <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(x.final)} so'm</b>
         ${x.discount ? `<s class="muted small" style="white-space:nowrap">${sum(x.price)} so'm</s>` : ""}</span></button>`).join("");
   const open = b.payment;
-  // AI esse: oylik limit + sotib olingan paket (oylik tugasa — paketdan)
-  const pk = p.pack || { essays: 100, price: 0 }, fromPack = Math.max(0, p.used.essays - p.limits.essays);
+  // AI esse: obunaga kirmaydi — faqat alohida sotib olingan 📦 paketdan (har esse 1 kredit)
+  const pk = p.pack || { essays: 100, price: 0 };
   const used = p.limits ? `<div class="card plan-card" id="essay-card"><div class="row between"><b>🤖 AI esse tekshiruvi</b>
-        <span class="muted small">bu oy</span></div>
-      <div class="plan-use"><span class="muted small">Obunada: ${Math.min(p.used.essays, p.limits.essays)} / ${p.limits.essays}${fromPack ? ` · paketdan ${fromPack} ta` : ""}</span>
-      <div class="track" style="height:6px"><i style="width:${Math.min(100, p.used.essays / Math.max(1, p.limits.essays) * 100)}%"></i></div>
-      <span class="muted small">📦 Paketda qoldi: <b>${p.credits || 0}</b> ta esse</span></div>
+        <span class="muted small">alohida to'lanadi</span></div>
+      <div class="plan-use"><span class="small">📦 Kreditingiz: <b>${p.credits || 0}</b> ta esse</span>
+      <span class="muted small">Bu oy tekshirildi: ${p.used.essays} ta. Obuna esse bo'limini ochadi, har bir esse tekshiruvi esa paketdan 1 kredit.</span></div>
       ${p.active ? `<button type="button" class="item" data-period="pack" style="margin-top:4px"><span class="ico">📦</span>
-        <span><b>+${pk.essays} esse</b><small>Oylik limit tugasa ishlatiladi · muddatsiz</small></span>
+        <span><b>+${pk.essays} esse</b><small>Esse tekshiruvi uchun · muddatsiz</small></span>
         <span class="score-col" style="text-align:right"><b style="white-space:nowrap">${sum(pk.price)} so'm</b></span></button>`
       : `<span class="muted small">Paket faol obunaga qo'shiladi — avval obunani yangilang.</span>`}
     </div>` : "";
   // Tarif nima beradi — ustoz nima uchun to'layotganini aniq bilsin (begona o'quvchi kelishi kafolatlanmaydi)
-  const rs = b.revshare, ess = (p.limits || {}).essays || 150;
+  const rs = b.revshare;
   const gives = `<div class="card"><b>💎 Tarif nima beradi</b>
-      <span class="small">✍️ <b>O'z o'quvchilaringiz</b> essesini AI imtihondagidek tekshiradi — oyiga <b>${ess} ta</b> (tugasa — 📦 paket). Asosiy foyda shu.</span>
+      <span class="small">✍️ Testlaringizda <b>45-esse bo'limi ochiladi</b>. O'z o'quvchilaringiz essesini AI tekshirishi uchun <b>📦 esse paketi alohida</b> sotib olinadi (har esse — 1 kredit).</span>
       <span class="small">📅 Mocklaringizni <b>«Bugungi mock»</b> qilib e'lon qilasiz — hamma o'quvchining bosh sahifasida chiqadi.</span>
       <span class="small">💰 Begona o'quvchilar esse uchun to'laydi${rs ? ` — har to'lovdan sizga <b>${rs.teacher_percent}%</b> (balans 💸 yechib olinadi)` : " — pul kartangizga"}.</span>
       <span class="muted small">Tarifsiz ham test yaratish va yechish bepul — faqat 45-esse yopiq bo'ladi. Begona o'quvchilar kelishi kafolatlanmaydi:
@@ -4281,6 +4336,8 @@ VIEWS.register = async () => {
           ? "➕ Tuman qo'shish" : (form.places.length ? "📍 Boshqa joyni tanlash" : "📍 Viloyat va tumanni tanlash")}</button>
         ${teacher ? `<span class="muted small">Bir nechta tumanda dars bersangiz — hammasini qo'shing.</span>` : ""}
       </div></div>
+      ${saved ? `<button type="button" class="btn ghost block" id="g-delete" style="color:var(--bad)">🗑 ${saved.role === "teacher" ? "Kursni o'chirish" : "Ro'yxatdan chiqish"}</button>
+        <span class="muted small">${saved.role === "teacher" ? "O'quvchilar sizni «🏫 Kurslar»da topmaydi. Ulangan o'quvchilaringiz, testlar va natijalar saqlanib qoladi." : "Arizangiz o'chadi; ustozlaringizga ulanishingiz saqlanib qoladi."}</span>` : ""}
       <div class="sticky-bottom"><div><button class="btn block" id="g-send">${saved ? "Saqlash" : "Ro'yxatdan o'tish"}</button></div></div>
     </div>`;
     const age = document.getElementById("g-age");
@@ -4306,6 +4363,15 @@ VIEWS.register = async () => {
       });
     };
     document.getElementById("g-send").onclick = send;
+    const del = document.getElementById("g-delete");
+    if (del) del.onclick = async () => {
+      if (!(await confirmBox(saved.role === "teacher" ? "Kursingiz o'chirilsinmi?\n\nO'quvchilar sizni kurslar ro'yxatida topmaydi. Ulangan o'quvchilar, testlar va natijalar qoladi."
+        : "Ro'yxatdan chiqasizmi?"))) return;
+      del.disabled = true;
+      try { await api("/api/register/delete", {}); store(draftKey, "{}"); S.boot = null; haptic("success");
+        toast(saved.role === "teacher" ? "🗑 Kurs o'chirildi" : "Ro'yxatdan chiqdingiz"); S.stack = []; go("home", {}, true); }
+      catch (e) { toast(e.message); haptic("error"); del.disabled = false; }
+    };
   }
 
   async function send() {

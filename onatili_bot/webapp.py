@@ -1628,6 +1628,25 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
 
 # ---------- «💎 Tarif» (begona o'quvchi): FREE_IDS ustoz narxini qo'yadi, pul uning kartasiga; muddatida hamma mock bepul ----------
 
+EXPERT_HOURS = 48  # ekspert shu vaqt ichida baholamasa — esse bekor, kredit o'quvchiga qaytadi
+
+
+async def expire_expert_essays() -> list[dict]:
+    """Muddati o'tgan ekspert esselari: kredit qaytadi, o'quvchi va ekspertga xabar. Bot har 30 daqiqada chaqiradi."""
+    cutoff = (datetime.now() - timedelta(hours=EXPERT_HOURS)).strftime("%Y-%m-%d %H:%M")
+    done = await run(db.expire_expert, cutoff)
+    for item in done if "send_text" in HOOKS else []:
+        topic = html.escape((item.get("topic") or "Mavzusiz esse")[:60])
+        try:
+            await HOOKS["send_text"](item["student_id"], f"↩️ <b>Ekspert {EXPERT_HOURS} soatda baholamadi</b> · {topic}\n"
+                                     f"{item['credits']} kredit hisobingizga qaytarildi — qayta yuboring yoki Claude'ni tanlang.")
+            await HOOKS["send_text"](item["teacher_id"], f"⏰ Ekspert tekshiruvi muddati o'tdi ({EXPERT_HOURS} soat) · {topic} — "
+                                     f"o'quvchiga {item['credits']} kredit qaytarildi.")
+        except Exception:
+            logger.warning("Ekspert muddati xabari yuborilmadi", exc_info=True)
+    return done
+
+
 def expert_price(teacher_id: int) -> int:
     """Ekspert (FREE_IDS) qo'lda tekshirishi narxi, so'm (0 — o'chiq). Faqat FREE_IDS / admin."""
     if not plans.ai_unlimited(teacher_id):
@@ -2234,8 +2253,8 @@ async def ai_allowed(owner_id: int, kind: str, amount: int = 1) -> bool:
                     "Yangi esselarni o'zingiz baholaysiz («📝 Esselar»). Uzaytirish — ilovadagi «💎 Obuna».")
         else:
             offer = status["pack"]
-            text = (f"⚠️ <b>Bu oygi AI esse limiti tugadi</b> ({status['limits']['essays']} ta).\n"
-                    "Yangi esselarni o'zingiz baholaysiz («📝 Esselar»).\n\n"
+            text = ("⚠️ <b>AI esse krediti tugadi</b>.\nObuna esse bo'limini ochadi, esselarni tekshirish esa alohida — "
+                    "📦 esse paketidan. Yangi esselarni hozircha o'zingiz baholaysiz («📝 Esselar»).\n\n"
                     f"AI davom etsin desangiz: ilovada «💎 Obuna» → <b>📦 +{offer['essays']} esse</b> "
                     f"({plans.money(offer['price'])} so'm).")
         try:
@@ -2689,7 +2708,8 @@ async def practice_home(request: web.Request) -> web.Response:
     return ok({"teachers": teachers, "history": history, "ai": essay_ai.essay_enabled()})
 
 
-async def practice_expert_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
+async def practice_expert_submit(user: dict, teacher_id: int, topic: str | None, text: str,
+                                 photos: list | None = None) -> dict:
     """O'quvchi esseni ekspertga (FREE_IDS) yuboradi: narx (ekspert qo'ygan) kreditda yechiladi, esse ekspert
     navbatiga tushadi va unga bot xabar beradi. Kredit yetmasa — avval kredit oladi."""
     need = await run(expert_credits, teacher_id)
@@ -2701,12 +2721,14 @@ async def practice_expert_submit(user: dict, teacher_id: int, topic: str | None,
     if not await run(db.wallet_use_n, teacher_id, user["id"], need):
         raise ApiError(409, "Kredit yechilmadi — qayta urinib ko'ring")
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
-    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "expert", None, "expert",
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "expert", photos or None, "expert",
                             await run(expert_price, teacher_id))
+    await run(db.set_practice_credits, practice_id, need)  # baholanmasa (EXPERT_HOURS) — shuncha kredit qaytadi
     if "send_text" in HOOKS:
         try:
             who = html.escape(user.get("name") or "o'quvchi")
-            await HOOKS["send_text"](teacher_id, f"🎓 <b>Ekspert tekshiruvi</b> · yangi esse ({len(text.split())} so'z) — "
+            size = f"{len(photos)} ta rasm — quyida" if photos else f"{len(text.split())} so'z"
+            await HOOKS["send_text"](teacher_id, f"🎓 <b>Ekspert tekshiruvi</b> · yangi esse ({size}) — "
                                      f"{who}\nIlovada «🎓 Ekspert» bo'limida baholang.")
         except Exception:
             logger.warning("Ekspertga xabar yuborilmadi", exc_info=True)
@@ -2721,7 +2743,8 @@ async def expert_queue_view(request: web.Request) -> web.Response:
         raise ApiError(403, "Bu bo'lim ekspertlar (FREE_IDS) uchun")
     rows = await run(db.expert_queue, user["id"])
     return ok({"essays": [{"id": p["id"], "name": p.get("full_name") or "O'quvchi", "topic": p["topic"], "text": p["text"],
-                           "words": len(p["text"].split()), "created_at": p["created_at"], "price": p.get("price") or 0}
+                           "words": len(p["text"].split()), "created_at": p["created_at"], "price": p.get("price") or 0,
+                           "photos": len(p.get("photos") or [])}  # rasmli esse — botdagi xabarda
                           for p in rows],
                "rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in essay_ai.RUBRIC]})
 
@@ -2856,17 +2879,33 @@ def _not_approved(status: str | None) -> str | None:
 async def courses(request: web.Request) -> web.Response:
     """O'quvchi tumanini tanladi: shu tumanda kurs ochgan ustozlar (ismi, telefoni) va ularga holati."""
     user = await auth(request)
+    query = clean_text(request.query.get("q"), 60)
     region, district = str(request.query.get("region") or ""), str(request.query.get("district") or "")
-    if region not in places_data.REGIONS or district not in places_data.REGIONS[region]:
+    if query:  # tepadagi qidiruv: ustoz ismi, @username yoki joy nomi
+        if len(query) < 2:
+            raise ApiError(400, "Kamida 2 ta harf yozing")
+        found = await run(db.search_teachers, query.lstrip("@"))
+    elif region not in places_data.REGIONS or district not in places_data.REGIONS[region]:
         raise ApiError(400, "Viloyat va tumanni tanlang")
+    else:
+        found = await run(db.teachers_in, region, district)
     out = []
-    for t in await run(db.teachers_in, region, district):
+    for t in found:
         if t["tg_id"] == user["id"]:
             continue
         linked = await run(db.is_linked, t["tg_id"], user["id"])
         out.append({"id": t["tg_id"], "name": t["full_name"] or "Ustoz", "username": t["username"], "phone": t["phone"],
+                    "place": ", ".join(filter(None, [t.get("district"), t.get("region")])) if query else None,
                     "status": "approved" if linked else _not_approved(await run(db.join_status, t["tg_id"], user["id"]))})
-    return ok({"teachers": out, "region": region, "district": district})
+    return ok({"teachers": out, "region": region, "district": district, "q": query})
+
+
+async def registration_delete(request: web.Request) -> web.Response:
+    """«🗑 Kursni o'chirish»: ro'yxat va dars beradigan joylar o'chadi (ulangan o'quvchilar, testlar qoladi)."""
+    user = await auth(request)
+    if not await run(db.delete_registration, user["id"]):
+        raise ApiError(404, "Siz hali ro'yxatdan o'tmagansiz")
+    return ok({"ok": True})
 
 
 async def course_join(request: web.Request) -> web.Response:
@@ -4658,6 +4697,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/class/{class_id:\\d+}/send", class_send_ids)
     app.router.add_get("/api/register", registration_get)
     app.router.add_post("/api/register", registration_save)
+    app.router.add_post("/api/register/delete", registration_delete)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/sheets", sheets)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/scan", scan)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}/scan/layout", scan_layout)

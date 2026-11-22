@@ -219,9 +219,13 @@ def card() -> dict:
     return {"number": saved.get("card_number", ""), "holder": saved.get("card_holder", "")}
 
 
+# Tarif (obuna) esse tekshiruvini o'z ichiga olmaydi: u faqat esse bo'limini ochadi, esselar — alohida sotib olingan
+# 📦 esse paketidan (kredit). Shuning uchun obunada oylik esse limiti 0 (eski /sozlama ai_essays e'tiborga olinmaydi).
+TARIFF_ESSAYS = 0
+
+
 def limits() -> dict:
-    return {"essays": setting("ai_essays", DEFAULTS["ai_essays"]),
-            "written": setting("ai_written", DEFAULTS["ai_written"])}
+    return {"essays": TARIFF_ESSAYS, "written": setting("ai_written", DEFAULTS["ai_written"])}
 
 
 def trial_limits() -> dict:
@@ -331,7 +335,7 @@ def revoke(tg_id: int, period: str) -> dict:
 
 def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
     """AI ishlatishga ruxsat (va sarfni yozish). kind: "essays" | "written".
-    Avval oylik limitdan, u tugasa — esse paketidan (faqat faol obuna bilan)."""
+    Esse — faqat sotib olingan 📦 paketdan (kredit) va faqat faol obuna bilan; yozma — oylik limitdan."""
     if ai_unlimited(tg_id):
         db.consume_usage(tg_id, month_key(), kind, amount, None)
         return True
@@ -343,6 +347,12 @@ def use_ai(tg_id: int, kind: str, amount: int = 1) -> bool:
         return False
     sub = db.get_subscription(tg_id)
     if not sub or _expires(sub) <= now():
+        return False
+    if kind == "essays":  # tarifga esse kirmaydi — faqat paket krediti
+        if db.use_credits(tg_id, amount):
+            db.consume_usage(tg_id, month_key(), kind, amount, None)  # oylik hisobotda ham ko'rinsin
+            return True
+        db.consume_usage(tg_id, month_key(), kind, 0, None)  # oy qatori bo'lsin — «kredit tugadi» xabari belgisi
         return False
     limit = (trial_limits() if sub["plan"] == "trial" else limits())[kind]
     if db.consume_usage(tg_id, month_key(), kind, amount, limit):
@@ -364,8 +374,10 @@ def can_use_ai(tg_id: int, kind: str = "essays") -> bool:
     sub = db.get_subscription(tg_id)
     if not sub or _expires(sub) <= now():
         return False
+    if kind == "essays":  # tarifga esse kirmaydi — faqat paket krediti
+        return has_credits
     limit = (trial_limits() if sub["plan"] == "trial" else limits())[kind]
-    return (db.get_usage(tg_id, month_key()).get(kind) or 0) < limit or has_credits
+    return (db.get_usage(tg_id, month_key()).get(kind) or 0) < limit
 
 
 def money(amount: int) -> str:

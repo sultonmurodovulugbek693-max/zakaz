@@ -1200,6 +1200,30 @@ def expert_queue(teacher_id: int) -> list[dict]:
     return out
 
 
+def set_practice_credits(practice_id: int, credits: int) -> None:
+    """Ekspert tekshiruvi uchun yechilgan kredit soni (baholanmasa — shuncha qaytariladi)."""
+    with connect() as conn:
+        conn.execute("UPDATE practice_essays SET wallet = ? WHERE id = ?", (credits, practice_id))
+
+
+def expire_expert(cutoff: str) -> list[dict]:
+    """Ekspert muddatida (cutoff dan oldin yuborilgan) baholamagan esselar: holat 'refunded', yechilgan kreditlar
+    o'quvchiga qaytadi — har esse bir marta. Qaytaradi: qaytarilganlar (xabar yuborish uchun)."""
+    done = []
+    with connect() as conn:
+        rows = conn.execute("SELECT id, teacher_id, student_id, wallet, topic FROM practice_essays "
+                            "WHERE status = 'expert' AND created_at < ?", (cutoff,)).fetchall()
+        for row in rows:
+            if not conn.execute("UPDATE practice_essays SET status = 'refunded', graded_at = ? WHERE id = ? "
+                                "AND status = 'expert'", (_now(), row["id"])).rowcount:
+                continue
+            credits = int(row["wallet"] or 0)
+            if credits > 0:
+                _wallet_add(conn, row["teacher_id"], row["student_id"], credits)
+            done.append({**dict(row), "credits": credits})
+    return done
+
+
 def save_expert_result(practice_id: int, teacher_id: int, result: dict) -> bool:
     """Ekspert baholadi: faqat shu ekspertning kutilayotgan essesi, bir marta."""
     with connect() as conn:
@@ -2293,6 +2317,28 @@ def teachers_in(region: str, district: str) -> list[dict]:
             "LEFT JOIN registrations r ON r.tg_id = p.tg_id LEFT JOIN users u ON u.tg_id = p.tg_id "
             "WHERE p.region = ? AND p.district = ?", (region, district)).fetchall()
     return [dict(row) for row in rows]
+
+
+def search_teachers(query: str, limit: int = 30) -> list[dict]:
+    """Kurs qidirish (tepadagi maydon): ustoz ismi, @username, viloyat yoki tuman bo'yicha — kurs ochganlar orasidan."""
+    like = f"%{query.strip().lower()}%"
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.tg_id, r.full_name, r.phone, u.username, MIN(p.region) AS region, MIN(p.district) AS district "
+            "FROM teacher_places p LEFT JOIN registrations r ON r.tg_id = p.tg_id LEFT JOIN users u ON u.tg_id = p.tg_id "
+            "WHERE LOWER(COALESCE(r.full_name, '')) LIKE ? OR LOWER(COALESCE(u.username, '')) LIKE ? "
+            "OR LOWER(p.region) LIKE ? OR LOWER(p.district) LIKE ? "
+            "GROUP BY p.tg_id, r.full_name, r.phone, u.username ORDER BY r.full_name LIMIT ?",
+            (like, like, like, like, limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_registration(tg_id: int) -> bool:
+    """«🗑 Kursni o'chirish»: ro'yxat va dars beradigan joylar o'chadi — o'quvchilar uni endi topmaydi.
+    Ulangan o'quvchilar, testlar va natijalar saqlanib qoladi."""
+    with connect() as conn:
+        conn.execute("DELETE FROM teacher_places WHERE tg_id = ?", (tg_id,))
+        return bool(conn.execute("DELETE FROM registrations WHERE tg_id = ?", (tg_id,)).rowcount)
 
 
 def districts_with_teachers() -> list[dict]:

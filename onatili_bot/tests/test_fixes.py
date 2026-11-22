@@ -657,6 +657,7 @@ class EssaySelfCheck(ServerBase):
         await super().asyncTearDown()
 
     async def test_student_sees_score_and_it_goes_to_teacher_and_rasch(self):
+        plans.add_pack(OWNER, 5)  # obunaga esse kirmaydi — 📦 paket alohida
         _, r = await self.create(fmt="milliy")
         test = db.get_test(r["id"])
         db.link_student(OWNER, STUDENT)  # ustozning o'quvchisi — bepul
@@ -1175,9 +1176,8 @@ class EssayPaid(ServerBase):
         self.assertEqual((await self.post(f"/api/test/{test['code']}/essay-pay", {}))[0], 409)  # to'lov kerak emas
         status, data = await self.info(test)
         self.assertIsNone(data["essay_pay"])
-        self.assertIsNone(data["essay_warning"])  # obunaning oylik limiti bor — AI tekshiradi (kredit bo'lmasa ham)
-        db.set_setting("ai_essays", 0)  # oylik limit tugadi, kredit yo'q
-        self.assertIn("limiti tugagan", (await self.info(test))[1]["essay_warning"])
+        # Obunaga esse kirmaydi: ustozda 📦 kredit yo'q — ogohlantirish, AI tekshirmaydi
+        self.assertIn("limiti tugagan", data["essay_warning"])
         self.assertFalse(await webapp.essay_ai_ok(test, STUDENT))
         db.add_credits(OWNER, 3)
         self.assertIsNone((await self.info(test))[1]["essay_warning"])
@@ -1346,6 +1346,7 @@ class EssayPaid(ServerBase):
         self.assertIn("Ustozga yetkazilmadi", sent[0][1])
 
     async def test_ai_down_notice_tells_teachers(self):
+        plans.add_pack(OWNER, 5)  # esse tekshiruvi — alohida paket
         test = await self.paid_mock()
         db.link_student(OWNER, STUDENT)
         await self.as_student(STUDENT)
@@ -1472,6 +1473,25 @@ class CourseJoin(ServerBase):
     async def courses(self):
         from urllib.parse import quote
         return await (await self.client.get(f"/api/courses?region={quote(self.region)}&district={quote(self.district)}")).json()
+
+    async def test_search_and_delete_course(self):
+        """Tepadagi qidiruv (ism, @username, tuman) va «🗑 Kursni o'chirish» — o'chgach ustoz topilmaydi."""
+        from urllib.parse import quote
+        await self.as_student(STUDENT)
+        for q in ("karim", "@nodira", self.district[:4]):
+            r = await (await self.client.get(f"/api/courses?q={quote(q)}")).json()
+            self.assertEqual([t["id"] for t in r["teachers"]], [OWNER], q)
+            self.assertIn(self.district, r["teachers"][0]["place"])
+        self.assertEqual((await self.client.get("/api/courses?q=x")).status, 400)  # 1 ta harf — kam
+        self.assertEqual((await (await self.client.get("/api/courses?q=zzzqqq")).json())["teachers"], [])
+
+        self.user = {"id": OWNER, "name": "Nodira", "username": "nodira"}
+        self.assertEqual((await self.post("/api/register/delete", {}))[0], 200)
+        self.assertIsNone(db.get_registration(OWNER))
+        self.assertEqual((await self.post("/api/register/delete", {}))[0], 404)  # ikkinchi marta
+        await self.as_student(STUDENT)
+        self.assertEqual((await self.courses())["teachers"], [])
+        self.assertEqual((await (await self.client.get("/api/courses?q=karim")).json())["teachers"], [])
 
     async def test_join_approve_links_student(self):
         _, r = await self.create()
@@ -1889,6 +1909,7 @@ class PracticePublic(ServerBase):
         db.set_setting(f"essay_public:{OWNER}", "1")
         db.set_setting(f"teacher_card:{OWNER}", "8600 1234 5678 9012")
         webapp.save_packs(OWNER, 5000, [(5, 20000)])
+        plans.add_pack(OWNER, 20)  # obunaga esse kirmaydi — ustozning 📦 paketi (bepullar va o'z o'quvchilari shundan)
 
     async def asyncTearDown(self):
         essay_ai.essay_enabled = self._essay_enabled
@@ -1999,6 +2020,68 @@ class PracticePublic(ServerBase):
             self.assertEqual((essays[0]["status"], essays[0]["score_75"]), ("graded", 73))
             item = (await self.get(f"/api/practice/{res['id']}"))[1]
             self.assertEqual((item["comment"], item["criteria"][10]["comment"]), ("Yaxshi", "3 ta xato"))
+        finally:
+            plans.FREE_IDS = saved
+
+    async def test_expert_timeout_refund(self):
+        """Ekspert 48 soatda baholamasa — kredit o'quvchiga bir marta qaytadi, keyin baholab bo'lmaydi."""
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:
+            db.set_setting(f"expert_price:{OWNER}", "10000")  # 2 kredit (1 kredit = 5 000)
+            db.wallet_add(OWNER, OTHER, 3)
+            self.user = {"id": OTHER, "name": "Begona", "username": None}
+            status, res = await self.post("/api/practice", {"teacher_id": OWNER, "essay": self.ESSAY, "mode": "expert"})
+            self.assertEqual((status, res["credits"], res["balance"]), (200, 2, 1), res)
+            self.assertEqual(await webapp.expire_expert_essays(), [])  # hali muddati bor
+            with db.connect() as conn:
+                conn.execute("UPDATE practice_essays SET created_at = '2020-01-01 00:00' WHERE id = ?", (res["id"],))
+            done = await webapp.expire_expert_essays()
+            self.assertEqual([(d["id"], d["credits"]) for d in done], [(res["id"], 2)])
+            self.assertEqual(db.wallet_balance(OWNER, OTHER), 3)  # 2 kredit qaytdi
+            self.assertEqual(db.get_practice(res["id"])["status"], "refunded")
+            self.assertTrue(any(c == OTHER and "qaytarildi" in m for c, m in self.bot.messages))
+            self.assertEqual(await webapp.expire_expert_essays(), [])  # ikkinchi marta qaytarilmaydi
+            self.user = {"id": OWNER, "name": "Ekspert", "username": None}
+            scores = {k: 2 for k in essay_ai.RUBRIC_KEYS}
+            self.assertEqual((await self.post(f"/api/expert/practice/{res['id']}", {"scores": scores}))[0], 409)
+        finally:
+            plans.FREE_IDS = saved
+
+    async def test_expert_from_bot(self):
+        """Botdan ekspertga: rasmli esse ham boradi (rasm ekspertga Telegram'da), kredit yechiladi; menyuda tugma."""
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:
+            db.set_setting(f"expert_price:{OWNER}", "10000")  # 2 kredit
+            self.assertIn("ecw:exp:", str(bot.public_markup(OWNER)))
+            db.wallet_add(OWNER, OTHER, 2)
+            answers, sent = [], []
+
+            class State:
+                async def get_data(self):
+                    return {"teacher_id": OWNER, "kind": "expert", "parts": [], "photos": [["file-1", "image/jpeg"]],
+                            "topic": "Kitob"}
+
+                async def clear(self):
+                    pass
+
+            async def answer(text, **kw):
+                answers.append(text)
+
+            async def send_photo(chat, file_id, **kw):
+                sent.append((chat, file_id))
+            msg = types.SimpleNamespace(answer=answer, bot=types.SimpleNamespace(send_photo=send_photo, send_document=send_photo))
+            user = types.SimpleNamespace(id=OTHER, full_name="Begona", username=None)
+            await bot.submit_essay(msg, State(), user)
+            self.assertIn("ekspertga yuborildi", answers[-1])
+            self.assertEqual(sent, [(OWNER, "file-1")])
+            self.assertEqual(db.wallet_balance(OWNER, OTHER), 0)
+            item = db.expert_queue(OWNER)[0]
+            self.assertEqual((item["kind"], item["photos"], item["wallet"]), ("expert", [["file-1", "image/jpeg"]], 2))
+            await bot.submit_essay(msg, State(), user)  # kredit yo'q — yuborilmaydi
+            self.assertIn("kredit", answers[-1])
+            self.assertEqual(len(db.expert_queue(OWNER)), 1)
         finally:
             plans.FREE_IDS = saved
 
@@ -2286,6 +2369,20 @@ class ScheduledMock(ServerBase):
         self.assertEqual(status, 403)
         self.assertEqual(await webapp.mock_cards({"id": OTHER, "name": "B", "username": None}), [])  # bosh sahifadan tushdi
 
+
+    async def test_mock_essay_notices_wait_for_close(self):
+        """«Bugungi mock»: har esse baholanganda ustozga xabar yo'q (200 kishilik mockda 200 xabar bo'lardi);
+        oddiy testda — avvalgidek."""
+        _, r = await self.create("online", fmt="milliy")
+        test = db.get_test(r["id"])
+        attempt = {"test_id": test["id"], "student_name": "Ali Valiyev", "tg_id": OTHER}
+        db.set_schedule(test["id"], "2026-11-20 20:00", "2026-11-20 22:00", "2026-11-20 23:00", True)
+        before = len(self.bot.messages)
+        await bot.self_check_notice(self.bot, attempt, 20)
+        self.assertEqual(len(self.bot.messages), before)
+        db.set_schedule(test["id"], None, None, None, False)  # jadvalsiz test
+        await bot.self_check_notice(self.bot, attempt, 20)
+        self.assertTrue(any(c == OWNER and "Esse AI bilan tekshirildi" in m for c, m in self.bot.messages[before:]))
 
     async def test_credit_pay_own_link_and_claude_capacity(self):
         """Mock kredit bilan (narxga teng kredit), o'z o'quvchilari havolasi (bepul), Claude — nechta esse qoldi."""
