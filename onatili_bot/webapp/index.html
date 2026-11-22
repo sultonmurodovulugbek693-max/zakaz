@@ -193,6 +193,33 @@ html.dark .quick-action i { background: #20302a; }
 .growth-tip span { color: var(--muted); }
 .test-strip { margin-top: 2px; }
 .essay-wait { display: grid; gap: 4px; }
+/* Mezon bali (rasmiy jadval: 2 / 1,5 / 1 / 0,5) */
+.crit-pts { font-weight: 800; font-size: 15px; color: var(--good); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.crit-pts small { font-size: 11px; opacity: .6; font-weight: 600; }
+.crit-pts.mid { color: var(--warn); } .crit-pts.low { color: var(--bad); }
+/* «Tekshirilmoqda» — ko'zga tashlansin: rangli ramka, katta aylanish, yugurayotgan chiziq */
+.essay-wait.live { border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card, transparent)); gap: 8px; padding: 18px; }
+.essay-wait.live b { font-size: 17px; display: flex; align-items: center; gap: 10px; }
+.essay-wait.live .spin { width: 22px; height: 22px; border-width: 3px; margin: 0; }
+.essay-wait .run { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; }
+.essay-wait .run i { display: block; height: 100%; width: 35%; border-radius: 99px; background: var(--accent); animation: es-run 1.4s ease-in-out infinite; }
+@keyframes es-run { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+/* Esse bali — muhr: ro'yxatda kichik, natijada katta va tepadan tushadi */
+.es-stamp { --c: var(--good); display: inline-grid; place-items: center; width: 54px; height: 54px; border-radius: 50%;
+  border: 2.5px solid var(--c); color: var(--c); transform: rotate(-10deg); line-height: 1; box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent); }
+.es-stamp b { font-size: 19px; font-weight: 800; }
+.es-stamp i { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-top: -6px; }
+.es-stamp.mid, .stamp-drop.mid { --c: var(--warn); }
+.es-stamp.low, .stamp-drop.low { --c: var(--bad); }
+.stamp-drop { --c: var(--good); justify-self: center; display: grid; place-items: center; gap: 2px; width: 156px; height: 156px; border-radius: 50%;
+  border: 4px double var(--c); color: var(--c); text-align: center; transform: rotate(-9deg); margin: 6px 0 4px;
+  box-shadow: inset 0 0 0 6px color-mix(in srgb, var(--c) 14%, transparent); animation: stamp-in .55s cubic-bezier(.2, 1.4, .4, 1) both; }
+.stamp-drop b { font-size: 46px; font-weight: 900; line-height: .9; }
+.stamp-drop span { font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.stamp-drop small { font-size: 10px; opacity: .8; }
+@keyframes stamp-in { 0% { opacity: 0; transform: translateY(-140px) scale(1.9) rotate(-28deg); } 70% { opacity: 1; transform: translateY(4px) scale(.94) rotate(-7deg); }
+  100% { transform: translateY(0) scale(1) rotate(-9deg); } }
+@media (prefers-reduced-motion: reduce) { .stamp-drop, .essay-wait .run i { animation: none; } }
 .essay-wait .spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .essay-self { display: grid; gap: 10px; }
@@ -1516,7 +1543,7 @@ VIEWS.myresults = async () => {
   // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
   const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
-      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
+      <span class="score-col">${h.status === "graded" ? essayStamp(h.score_75) : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
       <h1>Mening natijalarim</h1><span class="muted small">${b.attempts.length} ta test · ${ready} ta natija tayyor${essays.length ? ` · ${essays.length} ta esse` : ""}</span></div></div>
@@ -1684,7 +1711,7 @@ VIEWS.answer = async ({ code }) => {
       const res = await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay: auto && essay.length < 200 ? "" : essay });
       sent = true; clearInterval(S.pingTimer); clearTimeout(pingWait);
       store(draftKey, "{}"); S.boot = null; haptic("success");
-      done({ title: t.title, attemptId: res.essay ? res.attempt_id : null });
+      done({ title: t.title, attemptId: t.fmt === "milliy" ? res.attempt_id : null });
     } catch (e) {
       if (e.data && e.data.channels) { toast(e.message); haptic("error"); return testGate(t.code, e.data.channels); }  // javoblar qoralamada saqlangan
       if (e.data && e.data.essay_pay) { toast(e.message); haptic("error"); save(); return rerender(); }
@@ -1719,6 +1746,7 @@ function offlineEssay(t) {
     <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
       <textarea class="input" id="essay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
       <div class="counter" id="essay-count"></div></div>
+    ${(t.readers || []).length ? essayScanHTML(t.readers, store("essay-reader"), false) : ""}
     <div class="sticky-bottom"><div><button class="btn block" id="send">${sent ? "Esseni qayta yuborish" : "Esseni yuborish"}</button></div></div>
   </div>`;
   const idEl = document.getElementById("eid"), nameEl = document.getElementById("ename"), essayEl = document.getElementById("essay");
@@ -1731,6 +1759,7 @@ function offlineEssay(t) {
   nameEl.oninput = save;
   essayEl.oninput = () => { save(); count(); };
   count();
+  if ((t.readers || []).length) bindEssayScan(t.code, essayEl, () => { save(); count(); }, key => store("essay-reader", key));
   const btn = document.getElementById("send");
   btn.onclick = async () => {
     if (idEl.value.length !== 4) { toast("ID'ni 4 ta raqam bilan yozing, masalan 0007"); haptic("error"); return idEl.focus(); }
@@ -1775,6 +1804,7 @@ async function watchMyEssay(attemptId) {
   for (let i = 0; i < 60 && seq === S.seq && document.body.contains(box); i++) {
     let e; try { e = await api(`/api/my-essay/${attemptId}`); } catch (err) { e = null; }
     if (!document.body.contains(box)) return;
+    if (e && (e.status === "none" || e.status === "self")) { if (e.can_self || e.status === "self") selfEssay(box, attemptId, e); return; }
     if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e); haptic("success"); return; }
     box.innerHTML = e && e.status === "manual" ? `<div class="card essay-wait"><b>✍️ Essengizni o'qituvchi tekshiradi</b><span class="muted small">Natija e'lon qilinganda ko'rasiz.</span></div>`
       : e && e.status === "failed" ? `<div class="card essay-wait"><b>✍️ Esse AI'da tekshirilmadi</b><span class="muted small">O'qituvchingiz o'zi baholaydi.</span></div>`
@@ -1783,11 +1813,33 @@ async function watchMyEssay(attemptId) {
     await new Promise(r => setTimeout(r, 4000));
   }
 }
+// Onlayn mockdan keyin: esseni haqiqiy odam tekshirgan — o'quvchi balini (75 ballik) o'zi kiritadi → Rasch'ga qo'shiladi
+function selfEssay(box, attemptId, e) {
+  const has = e.status === "self";
+  box.innerHTML = `<div class="card"><b>📝 Esse bali</b>
+    <span class="muted small">${has ? `Kiritgan balingiz: <b>${num(e.score_75)}</b> / 75 — test bilan birga umumiy (Rasch) natijangizga qo'shiladi.`
+      : "Esseni ustoz yoki ekspert tekshirgan bo'lsa, balini shu yerga kiriting (75 ballik) — umumiy (Rasch) natijangizga qo'shiladi."}</span>
+    ${e.can_self ? `<div class="row" style="gap:8px"><input class="input" id="self-75" inputmode="numeric" maxlength="2" placeholder="0 yoki 28–75" value="${has ? num(e.score_75) : ""}" style="flex:1">
+      <button type="button" class="btn" id="self-save">${has ? "O'zgartirish" : "Saqlash"}</button></div>
+    <span class="muted small">Natija e'lon qilinguncha o'zgartirsa bo'ladi.</span>` : ""}</div>`;
+  const btn = box.querySelector("#self-save"); if (!btn) return;
+  btn.onclick = async () => {
+    const v = +box.querySelector("#self-75").value.trim();
+    if (!Number.isInteger(v) || !(v === 0 || (v >= 28 && v <= 75))) { toast("Ball: 0 yoki 28–75 oralig'idagi butun son"); haptic("error"); return; }
+    btn.disabled = true;
+    try { const r = await api(`/api/my-essay/${attemptId}/self`, { score75: v }); haptic("success"); toast("✅ Esse bali saqlandi"); selfEssay(box, attemptId, r); }
+    catch (err) { toast(err.message); haptic("error"); btn.disabled = false; }
+  };
+}
+
+// Esse bali (75 ballik) → daraja va rang: 63+ yaxshi, 51+ o'rta, qolgani past
+const essayLevel = v => v >= 70 ? ["", "A'lo"] : v >= 63 ? ["", "Yaxshi"] : v >= 51 ? ["mid", "O'rta"] : ["low", "Past"];
+const essayStamp = v => `<span class="es-stamp ${essayLevel(v)[0]}"><b>${num(v)}</b><i>ball</i></span>`;
 function myEssayHTML(e) {
   return `<div class="card essay-self">
-    <div class="row between"><b>📝 Esse natijangiz</b><span class="pill-tag done">AI tekshirdi</span></div>
-    <div class="essay-score"><b>${num(e.score_75)}</b><span>/ ${e.scale}</span></div>
-    ${(e.criteria || []).map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
+    <div class="row between"><b>📝 Esse natijangiz</b><span class="pill-tag done">${e.expert ? "🎓 Ekspert baholadi" : "AI tekshirdi"}</span></div>
+    <div class="stamp-drop ${essayLevel(e.score_75)[0]}"><b>${num(e.score_75)}</b><span>ball · ${essayLevel(e.score_75)[1]}</span><small>${e.scale} ballik shkala</small></div>
+    ${(e.criteria || []).map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="crit-pts ${c.score >= 2 ? "full" : c.score >= 1 ? "mid" : "low"}">${num(c.score)}<small>/2</small></span><p>${esc(c.comment)}</p></div>`).join("")}
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}
     <span class="muted small">Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.${e.teacher_changed ? " O'qituvchi bahoni o'zgartirgan." : ""}</span></div>`;
 }
@@ -1818,7 +1870,7 @@ VIEWS.result = async ({ id }) => {
   }).join("");
   const e = r.essay;
   const essayBlock = e && e.criteria ? `<div class="section-title"><h2>Esse tahlili</h2><span class="muted small">${num(a.essay_75)} / 75</span></div>
-    <div class="card">${e.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("")}
+    <div class="card">${e.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="crit-pts ${c.score >= 2 ? "full" : c.score >= 1 ? "mid" : "low"}">${num(c.score)}<small>/2</small></span><p>${esc(c.comment)}</p></div>`).join("")}
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}</div>` : "";
   $app.innerHTML = `<div class="view">${card}
     ${!r.announced ? `<div class="card small muted">ℹ️ Natijalar hali e'lon qilinmagan — buni faqat siz (o'qituvchi) ko'ryapsiz.</div>` : ""}
@@ -2097,7 +2149,7 @@ function claudeCardHTML(c, editable) {
   const low = c && c.essays_left < 100;
   return `<div class="card claude-card ${low ? "low" : ""}"><div class="row between"><b>🤖 Claude</b>${c ? `<span class="pill-tag ${low ? "wait" : "done"}">$${num(c.usd)} qoldi</span>` : ""}</div>
     ${c ? `<div class="cl-big"><b>≈ ${sum(c.essays_left)}</b><span>ta esse tekshira oladi</span></div>
-      <span class="muted small">1 esse ≈ $${c.per_essay} · ${c.since} dan beri ${sum(c.checked)} ta tekshirildi (balans $${num(c.set_usd)})${low ? " · ⚠️ balansni to'ldiring" : ""}</span>`
+      <span class="muted small">${c.model ? `${esc(c.model)} · ` : ""}1 esse ≈ $${c.per_essay}${c.estimated ? " (taxmin — tekshiruvlar boshlangach aniq hisoblanadi)" : ""} · ${c.since} dan beri ${sum(c.checked)} ta tekshirildi (balans $${num(c.set_usd)})${low ? " · ⚠️ balansni to'ldiring" : ""}</span>`
       : `<span class="muted small">Anthropic (console.anthropic.com) hisobingizdagi balansni kiriting — bot sarfni hisoblab, yana nechta esse tekshira olishini ko'rsatadi.</span>`}
     ${editable ? `<div class="row" style="gap:8px"><input class="input" id="cl-usd" inputmode="decimal" placeholder="Balans, $ (masalan 20)" style="flex:1" autocomplete="off">
       <button type="button" class="btn ghost" id="cl-save">Saqlash</button></div>
@@ -2264,7 +2316,9 @@ function mockCardHTML(c) {
     ? `<button type="button" class="mk-btn on" data-mk-sign="${c.code}" data-on="0"><span>✓</span> Qatnashasiz, ${hm(s.opens_at)} da eslatamiz</button>`
     : `<button type="button" class="mk-btn" data-mk-sign="${c.code}" data-on="1"><span>✓</span> Qatnashaman</button>`;
   else if (phase === "open") action = `<button type="button" class="mk-btn go" data-mk-open="${c.code}">Boshlash →</button>`;
-  else if (phase === "late") action = `<button type="button" class="mk-btn" data-mk-open="${c.code}">Davom ettirish →</button><small class="mk-sub">Qabul yopilgan — faqat oldin kirganlar davom etadi</small>`;
+  else if (phase === "late") action = c.entered === false
+    ? `<div class="mk-done">⛔️ Kirish vaqti tugagan (${hm(s.entry_until)} gacha edi) — keyingi mockda qatnashing</div>`
+    : `<button type="button" class="mk-btn" data-mk-open="${c.code}">Davom ettirish →</button><small class="mk-sub">Siz kirgansiz — ${hm(s.closes_at)} gacha davom eting</small>`;
   else action = `<div class="mk-done">🔒 Mock yopildi — natijalar tekshirilgach e'lon qilinadi</div>`;
   const price = mockFromPrice(c);
   const step = (cls, icon, at, label, active) => `<li class="${cls} ${active ? "on" : ""}"><i>${icon}</i><b>${hm(at)}</b><span>${label}</span></li>`;
@@ -2629,7 +2683,7 @@ VIEWS.teacher = async ({ id, tab }) => {
   const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;
   const pending = d.attempts.filter(a => a.essay_status === "pending").length;
   const essayIcon = a => a.essay != null ? `✅ ${num(essay75(a.essay))}` : a.essay_status === "graded" ? `🤖 ${num(essay75(a.ai_score))}` : a.essay_status === "pending" ? "⏳" : a.essay_status === "failed" ? "❗️" : a.essay_status === "none" ? "➖" : "✍️";
-  const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay != null ? (a.essay_status === "none" || !a.essay_status ? "baholangan" : "tasdiqlangan") : a.essay_status === "none" ? "baho kiritilmagan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
+  const essays = d.attempts.map(a => `<button class="item" data-essay="${a.id}"><span class="ico">📝</span><span><b>${esc(a.name)}</b><small>${a.essay != null ? (a.essay_status === "self" ? "o'quvchi o'zi kiritdi" : a.essay_status === "none" || !a.essay_status ? "baholangan" : "tasdiqlangan") : a.essay_status === "none" ? "baho kiritilmagan" : a.essay_status === "graded" ? "AI taklifi — tasdiqlang" : a.essay_status === "pending" ? "AI tekshirmoqda" : "o'zingiz baholang"}</small></span><span class="score-col"><b>${essayIcon(a)}</b></span></button>`).join("");
   // Qadamlar: o'qituvchi qayerda turganini va keyin nima qilishini ko'radi
   const essaysLeft = milliy && n > 0 && (suggested > 0 || pending > 0 || (d.essays_missing || 0) > 0);
   const wPending = d.attempts.filter(a => a.written_status === "pending").length, wFailed = d.attempts.filter(a => a.written_status === "failed").length;
@@ -2873,13 +2927,15 @@ function checkModeHTML(st) {
 }
 
 // Qog'ozga yozilgan esse: rasmini AI o'qib matnga aylantiradi — ilovada yuklash yoki botga yuborish; qaysi AI — o'quvchi tanlaydi
-function essayScanHTML(readers, chosen) {
+// upload=false — faqat bot orqali (titulli test: qo'lda yozilgan esse rasmi botga yuboriladi)
+function essayScanHTML(readers, chosen, upload = true) {
   const pick = readers.some(r => r.key === chosen) ? chosen : readers[0].key;
   return `<div class="card" id="essay-scan"><b>📷 Qog'ozga yozdingizmi?</b>
-    <span class="muted small">Esse sahifalari rasmini AI o'qib, matnga aylantiradi — keyin xatolarini tuzatib yuborasiz.</span>
+    <span class="muted small">${upload ? "Esse sahifalari rasmini AI o'qib, matnga aylantiradi — keyin xatolarini tuzatib yuborasiz."
+      : "«🤖 Botga yuboraman» ni bosing, sahifalar rasmini botga yuboring — AI matnga aylantiradi. Keyin «⬇️ Botdan olish» ni bosib, xatolarini tuzatib yuborasiz."}</span>
     <div class="field"><label>Qaysi AI o'qisin</label><div class="chips">${readers.map(r =>
       `<button type="button" class="chip ${r.key === pick ? "on" : ""}" data-reader="${r.key}">${r.key === "gemini" ? "🆓" : "💎"} ${esc(r.name)} · ${esc(r.note)}</button>`).join("")}</div></div>
-    <label class="btn block" for="es-files" id="es-upload">📷 Rasmni yuklash (1–4 bet)</label><input type="file" id="es-files" accept="image/*" multiple hidden>
+    ${upload ? `<label class="btn block" for="es-files" id="es-upload">📷 Rasmni yuklash (1–4 bet)</label><input type="file" id="es-files" accept="image/*" multiple hidden>` : ""}
     <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="es-bot" style="flex:1">🤖 Botga yuboraman</button>
       <button type="button" class="btn ghost" id="es-pull" style="flex:1">⬇️ Botdan olish</button></div>
     <span class="small" id="es-note"></span></div>`;
@@ -2901,7 +2957,7 @@ function bindEssayScan(code, essayEl, changed, remember) {
     return true;
   };
   const files = document.getElementById("es-files"), upload = document.getElementById("es-upload");
-  files.onchange = async () => {
+  if (files) files.onchange = async () => {
     if (!files.files.length) return;
     upload.textContent = "🔎 O'qilmoqda… (20–60 soniya)"; upload.style.pointerEvents = "none";
     try {
@@ -3171,11 +3227,20 @@ const SETTINGS_TABS = {
 async function loadAiModels(data) {
   const box = document.getElementById("ai-models"); if (!box) return;
   if (!data) { try { data = await api("/api/admin/ai"); } catch (e) { box.innerHTML = ""; return toast(e.message); } }
-  box.innerHTML = `<div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
+  const rb = data.rubric;
+  box.innerHTML = `${rb ? `<div class="section-title"><h2>📏 Baholash mezoni</h2></div>
+    <div class="card" style="display:grid;gap:8px"><div class="chips">${rb.options.map(o => `<button type="button" class="chip ${o.key === rb.chosen ? "on" : ""}" data-rubric="${o.key}">${esc(o.name)}</button>`).join("")}</div>
+      <span class="muted small">Esse qaysi mezon bilan baholanadi (AI va 🎓 ekspert). Standart — hozirgi mezon; UZBMB rasmiy jadvalida har mezon 2 / 1,5 / 1 / 0,5 ball.</span></div>` : ""}
+    <div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
     <div class="card" style="display:grid;gap:14px">${data.tasks.map(t => `<div style="display:grid;gap:6px">
       <b class="small">${esc(t.title)}</b>
       <div class="chips">${t.options.map(o => `<button type="button" class="chip ${o.key === t.chosen ? "on" : ""}" data-ai-task="${t.key}" data-ai-choice="${o.key}" ${o.locked ? "disabled" : ""}>${o.locked ? "🔒 " : ""}${esc(o.name)}</button>`).join("")}</div>
       <span class="muted small">Hozir ishlayapti: ${esc(t.working)}</span></div>`).join("")}</div>`;
+  box.querySelectorAll("[data-rubric]").forEach(x => x.onclick = async () => {
+    haptic("select");
+    try { const fresh = await api("/api/admin/ai", { rubric: x.dataset.rubric }); toast("✅ Mezon saqlandi"); loadAiModels(fresh); }
+    catch (e) { toast(e.message); haptic("error"); }
+  });
   box.querySelectorAll("[data-ai-choice]").forEach(x => x.onclick = async () => {
     haptic("select");
     try { const fresh = await api("/api/admin/ai", { task: x.dataset.aiTask, choice: x.dataset.aiChoice }); toast("✅ Saqlandi"); loadAiModels(fresh); }
@@ -3571,7 +3636,7 @@ VIEWS.practice = async () => {
   const t = r.teachers;
   const history = r.history.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">📝</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
-      <span class="score-col">${h.status === "graded" ? `<b>${num(h.score_75)}</b><small class="muted">/ 75</small>` : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
+      <span class="score-col">${h.status === "graded" ? essayStamp(h.score_75) : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
@@ -3688,7 +3753,8 @@ async function watchPractice(id, note = "Ustozingiz kreditidan tekshirildi.") {
     if (!document.body.contains(box)) return;
     if (e && e.status === "graded") { box.innerHTML = myEssayHTML(e).replace("Ball o'qituvchingizga yuborildi va test bilan birga umumiy (Rasch) natijangizga qo'shiladi.", note); haptic("success"); return; }
     if (e && e.status === "failed") { box.innerHTML = `<div class="card essay-wait"><b>❗️ AI tekshira olmadi</b><span class="muted small">Kredit qaytarildi — keyinroq qayta yuboring.</span></div>`; return; }
-    box.innerHTML = `<div class="card essay-wait"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b><span class="muted small">Odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi — bot xabar beradi.</span></div>`;
+    box.innerHTML = `<div class="card essay-wait live" role="status"><b><span class="spin"></span> Essengiz tekshirilmoqda…</b>
+      <div class="run"><i></i></div><span class="small">Odatda 20–60 soniya. Sahifani yopsangiz ham natija saqlanadi — bot xabar beradi.</span></div>`;
     await new Promise(r => setTimeout(r, 4000));
   }
 }
@@ -3705,10 +3771,10 @@ VIEWS.expert = async () => {
       <span><b>${esc((e.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${esc(e.name)} · ${dmy(e.created_at)} · ${e.photos ? `📷 ${e.photos} ta rasm` : `${e.words} so'z`}</small></span><span class="muted">›</span></button>`).join("")}</div>
     <div id="ex-form"></div>
   </div>`;
-  document.querySelectorAll("[data-ex]").forEach(x => x.onclick = () => { haptic("light"); expertForm(list.find(e => e.id === +x.dataset.ex), r.rubric); });
+  document.querySelectorAll("[data-ex]").forEach(x => x.onclick = () => { haptic("light"); expertForm(list.find(e => e.id === +x.dataset.ex), r.rubric, r.steps); });
 };
 
-function expertForm(e, rubric) {
+function expertForm(e, rubric, steps = [2, 1, 0]) {
   const box = document.getElementById("ex-form"); if (!box || !e) return;
   const scores = {};
   const to75 = p => p ? 27 + 2 * p : 0;  // structure.essay_to_75: 0 → 0, aks holda 27 + 2 × ball
@@ -3719,7 +3785,7 @@ function expertForm(e, rubric) {
     <div class="section-title"><h2>Baholash</h2><b id="ex-total">0 / 24 · 0 / 75</b></div>
     <div class="card" style="display:grid;gap:14px">${rubric.map(c => `<div style="display:grid;gap:6px">
         <b class="small">${esc(c.title)}</b><span class="muted small">${esc(c.levels)}</span>
-        <div class="chips">${[0, 1, 2].map(n => `<button type="button" class="chip" data-sc="${c.key}" data-n="${n}">${n}</button>`).join("")}</div>
+        <div class="chips">${steps.map(n => `<button type="button" class="chip" data-sc="${c.key}" data-n="${n}">${num(n)}</button>`).join("")}</div>
         <input class="input" id="ex-note-${c.key}" placeholder="Izoh (ixtiyoriy)" autocomplete="off"></div>`).join("")}
       <div class="field"><label for="ex-comment">Umumiy xulosa</label><textarea class="input" id="ex-comment" rows="4" placeholder="Kuchli va zaif tomonlari, nimani yaxshilash kerak"></textarea></div>
       <button type="button" class="btn block" id="ex-send">Bahoni yuborish</button></div>`;
@@ -3838,6 +3904,36 @@ function compressImage(file, max = 2000) {
   });
 }
 
+// Skaner: esse varaqlari (3–4-varaq) rasmi, 1–4 bet — AI essening o'zini rasmdan o'qib baholaydi.
+// Har rasm qo'shiladi; onSet(pages) — to'liq ro'yxat (telefonga yoki serverga saqlaydi)
+function bindEssayPages(box, initial, onSet) {
+  let pages = (initial || []).slice(0, 4);
+  box.insertAdjacentHTML("beforeend", `<div class="card"><b>📝 Esse varaqlari</b><span class="muted small" id="ep-note"></span>
+    <label class="btn ghost block" for="ep-files" id="ep-add"></label><input type="file" id="ep-files" accept="image/*" multiple hidden>
+    <button type="button" class="btn plain sm" id="ep-clear" hidden>🗑 Qaytadan olish</button></div>`);
+  const note = box.querySelector("#ep-note"), files = box.querySelector("#ep-files"), add = box.querySelector("#ep-add"), clear = box.querySelector("#ep-clear");
+  const show = () => {
+    note.textContent = pages.length ? `✅ ${pages.length} bet qo'shildi — AI rasmdan o'qib baholaydi.`
+      : "3–4-varaqdagi esseni rasmga oling — AI o'qib baholaydi. Olmasangiz, ballni «📝 Esselar»da o'zingiz kiritasiz.";
+    add.textContent = pages.length ? `📷 Yana bet qo'shish (${pages.length}/4)` : "📷 Esseni rasmga olish (1–4 bet)";
+    add.style.display = pages.length >= 4 ? "none" : ""; clear.hidden = !pages.length;
+  };
+  show();
+  files.onchange = async () => {
+    if (!files.files.length) return;
+    add.textContent = "⏳ Saqlanmoqda…"; add.style.pointerEvents = "none";
+    try {
+      const added = [];
+      for (const f of [...files.files].slice(0, 4 - pages.length)) added.push(await compressImage(f, 2000));
+      await onSet([...pages, ...added]); pages = [...pages, ...added]; haptic("success");
+    } catch (e) { toast(e.message); haptic("error"); }
+    add.style.pointerEvents = ""; files.value = ""; show();
+  };
+  clear.onclick = async () => {
+    try { await onSet([]); pages = []; haptic("light"); show(); } catch (e) { toast(e.message); }
+  };
+}
+
 // ---------- Obuna: muddat, narx, to'lov (karta → chek → admin tasdiqlaydi) ----------
 const sum = n => String(n == null ? 0 : n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
@@ -3868,11 +3964,11 @@ function planCard(p) {
       <span><b>${p.trial_available ? "Bepul sinov" : "Obuna kerak"}</b><small>${p.trial_available
         ? `Birinchi testingizni yarating — ${p.trial_days} kunlik sinov o'zi boshlanadi`
         : "Esse bo'limini ochish uchun tarif oling — bosing"}</small></span><span class="muted">›</span></button>`;
-  const bar = (used, limit) => `<div class="track" style="height:6px"><i style="width:${Math.min(100, used / Math.max(1, limit) * 100)}%"></i></div>`;
   return `<div class="card plan-card ${p.active ? "" : "plan-off"}">
       <div class="row between"><b>💎 ${esc(p.name)}</b><span class="pill-tag ${p.active && p.days_left > 3 ? "done" : "wait"}">${p.active ? `${p.days_left} kun qoldi` : "Muddati tugagan"}</span></div>
-      <div class="plan-use"><span class="muted small">AI esse (bu oy): ${Math.min(p.used.essays, p.limits.essays)} / ${p.limits.essays}${p.credits ? ` · 📦 paketda ${p.credits} ta` : ""}</span>${bar(p.used.essays, p.limits.essays)}</div>
-      <button type="button" class="btn ${p.active ? "ghost" : ""} sm" id="plan-open">${p.active ? "Obunani uzaytirish" : "💎 Obunani yangilash"}</button></div>`;
+      <div class="cl-big"><b>${sum(p.credits || 0)}</b><span>ta esse tekshirtira olasiz${p.credits ? "" : " — 📦 paket oling"}</span></div>
+      <span class="muted small">Har esse — 1 kredit (📦 paketdan). Bu oy tekshirildi: ${p.used.essays} ta.${p.credits && p.credits <= 5 ? " ⚠️ Kredit oz qoldi." : ""}</span>
+      <button type="button" class="btn ${p.active && p.credits ? "ghost" : ""} sm" id="plan-open">${!p.active ? "💎 Obunani yangilash" : p.credits ? "📦 Paket olish / obunani uzaytirish" : "📦 Esse paketi olish"}</button></div>`;
 }
 
 // Obuna — pastki paneldagi alohida bo'lim (oldin modal edi)
@@ -4749,6 +4845,7 @@ VIEWS.scan = async ({ id }) => {
   } catch (e) { return fail(e); }
   const fromCache = S.fromCache;
   const t = d.test, milliy = t.fmt === "milliy";
+  const essayPaper = milliy && t.mode === "offline" && t.sheet_style === "official";  // esse 3–4-varaqda — rasmini AI baholaydi
   const wm = t.written_modes;
   // Skanerlashdan oldin so'raladi: yozma javoblarni (36–44) kim tekshiradi — Gemini, Claude yoki qo'lda
   if (milliy && wm && (!wm.chosen || S.pickWritten === t.id) && !fromCache) return writtenModePicker(t, id);
@@ -5130,6 +5227,9 @@ VIEWS.scan = async ({ id }) => {
       save: async payload => { rec.payload = payload; rec.error = null; await scanDB.put(rec); await refreshQueue(); },
       remove: async () => { await scanDB.del(rec.uid); await refreshQueue(); },
     });
+    if (essayPaper) bindEssayPages(review, rec.essays, async blobs => {
+      rec.essays = blobs; await scanDB.put(rec); await refreshQueue();
+    });
     review.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -5337,6 +5437,12 @@ function showReview(r, d, allItems, box, onNext, local = null) {
         <h2>${esc(res.name)}</h2><p class="muted" style="margin:0">${res.essay_pending ? "Saqlandi · natija esse bahosi kiritilgach chiqadi" : milliy ? `${num(res.points)} / ${num(res.max_points)} ball (essesiz)` : `${res.correct} / ${res.auto_total} to'g'ri`}</p>
         <button class="btn block" id="next-sheet">📷 Keyingi titul</button></div>`;
       box.querySelector("#next-sheet").onclick = () => { haptic("light"); onNext(); };
+      if (milliy && t.mode === "offline" && t.sheet_style === "official" && res.attempt_id)
+        bindEssayPages(box, [], async pages => {
+          if (!pages.length) return;
+          const form = new FormData(); pages.forEach((b, i) => form.append("photo", b, `esse-${i + 1}.jpg`));
+          await apiForm(`/api/teacher/attempt/${res.attempt_id}/essay-photo`, form);
+        });
       S.boot = null;
     } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "💾 Saqlash"; }
   };
@@ -5701,7 +5807,7 @@ const essay75 = s => s == null || s === "" || isNaN(s) ? null : (Math.round(Math
 async function essaySheet(attemptId, testId) {
   let e; try { e = await api(`/api/teacher/essay/${attemptId}`); } catch (err) { return toast(err.message); }
   const modal = document.createElement("div"); modal.className = "sheet-modal";
-  const crit = e.ai && e.ai.criteria ? e.ai.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="dots"><i class="${c.score >= 1 ? "on" : ""}"></i><i class="${c.score >= 2 ? "on" : ""}"></i></span><p>${esc(c.comment)}</p></div>`).join("") : "";
+  const crit = e.ai && e.ai.criteria ? e.ai.criteria.map(c => `<div class="crit"><b>${esc(e.titles[c.key] || c.key)}</b><span class="crit-pts ${c.score >= 2 ? "full" : c.score >= 1 ? "mid" : "low"}">${num(c.score)}<small>/2</small></span><p>${esc(c.comment)}</p></div>`).join("") : "";
   modal.innerHTML = `<div role="dialog" aria-label="Esse">
     <div class="row between"><h2>${esc(e.name)}</h2><button class="btn plain" data-close>Yopish</button></div>
     ${e.essay != null ? `<div class="pill-tag done" style="justify-self:start">✅ Tasdiqlangan: ${num(essay75(e.essay))} / 75</div>` : ""}

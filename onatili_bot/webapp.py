@@ -214,7 +214,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         # O'quvchi: ulangan ustozlari — «✍️ Esse tekshirish» (ustoz kreditidan)
         # Begona ham: ustozning ommaviy havolasini ochgan bo'lsa (bepul esselari va krediti shu yerda)
         # «✍️ Esse» (o'quvchi panelida): hohlagan odam kiradi — ustoz kodi bilan (ustoz limitidan) yoki bot orqali
-        "practice": essay_ai.essay_enabled(),
+        "practice": essay_ai.essay_enabled() or await run(experts_available),  # AI yo'q bo'lsa ham — ekspert bor
         # «📊 Natijalar»da «✍️ Esselarim»: o'zi tekshirtirgan esselar (shaxsiy — ustozga ro'yxat bo'lib bormaydi)
         "essays": [{"id": p["id"], "status": p["status"], "topic": p["topic"], "created_at": p["created_at"],
                     "score_75": essay_to_75(p["ai_score"]), "words": len(p["text"].split())}
@@ -317,6 +317,7 @@ async def test_info(request: web.Request) -> web.Response:
             "closed": bool(test["closed"]), "essay_topic": test.get("essay_topic"), "ai": essay_ai.essay_enabled(),
             "last_name": await run(db.last_name_used, user["id"]),
             "essay_sent": {"number": mine["number"], "words": len(mine["text"].split()), "name": mine["name"]} if mine else None,
+            "readers": essay_ai.readers() if essay_on else [],  # qog'ozdagi esse rasmini botga yuborsa — AI matnga aylantiradi
         })
     previous = await run(db.find_attempt, test["id"], user["id"])
     if not previous:
@@ -581,7 +582,9 @@ async def mock_choice_info(test: dict, user: dict) -> dict | None:
     None — tanlangan va (pullik bo'lsa) to'langan. Pul — ustoz kartasiga, chekni botda AI tekshiradi."""
     if not test.get("opens_at") or test["owner_id"] == user["id"]:
         return None
-    if test["fmt"] == "milliy" and not await run(plans.essay_open, test["owner_id"]):
+    if test["fmt"] != "milliy":
+        return None  # essesiz test — «esseni kim tekshiradi» so'ralmaydi, darhol boshlanadi
+    if not await run(plans.essay_open, test["owner_id"]):
         return None  # esse bo'limi yopiq (ustozda tarif yo'q) — mock essesiz, tanlov va to'lov yo'q
     pay = await run(db.essay_payment_of, test["id"], user["id"])
     if pay and pay["status"] == "paid":
@@ -673,6 +676,8 @@ async def mock_card(test: dict, user: dict, signups: list[dict] | None = None) -
             # Kartadagi izoh: tarifi bilan bepulmi; ustoz tarif sotadimi (sotsa — «tarif olsangiz, hamma mock bepul»)
             "owner_id": test["owner_id"], "has_pass": await pass_active(test["owner_id"], user["id"]),
             "first_free": False,  # «birinchi mock bepul» yo'q — bot bepul, faqat esse pullik
+            # Kirish vaqtida kirganmi — qabul yopilgach faqat kirganlarga «Davom ettirish», qolganlarga «vaqt tugadi»
+            "entered": bool(attempt) or await mock_entered(test, user["id"]) or test["owner_id"] == user["id"],
             "sells_pass": bool(await run(student_tariffs, test["owner_id"]))}
 
 
@@ -744,6 +749,9 @@ async def mock_file(request: web.Request) -> web.StreamResponse:
                                             "Content-Disposition": disposition, "Cache-Control": "private, max-age=3600"})
 
 
+MOCK_MIN_ENTRY = timedelta(minutes=5)  # ochilishdan kirish to'xtashigacha eng kam vaqt
+
+
 def parse_schedule(payload: dict) -> tuple[str, str, str]:
     """{date: 2026-11-20, opens: 20:00, entry: 22:00, closes: 23:00} → uchta «YYYY-MM-DD HH:MM» (tartibi tekshiriladi)."""
     date = str(payload.get("date") or "").strip()
@@ -757,6 +765,9 @@ def parse_schedule(payload: dict) -> tuple[str, str, str]:
     opens, entry, closes = values
     if not opens < entry <= closes:
         raise ApiError(400, "Tartib: ochiladi → kirish to'xtaydi → yopiladi (kirish yopilishdan kech bo'lmasin)")
+    if _at(entry) - _at(opens) < MOCK_MIN_ENTRY:  # 1 daqiqalik kirish oynasida o'quvchilar ulgurmaydi
+        raise ApiError(400, f"Kirish uchun kamida {int(MOCK_MIN_ENTRY.total_seconds() // 60)} daqiqa qoldiring "
+                            "(ochilishdan «kirish to'xtaydi»gacha)")
     if _at(closes) - _at(opens) > timedelta(hours=12):
         raise ApiError(400, "Mock 12 soatdan uzun bo'lmasin")
     if _at(closes) < plans.now():
@@ -853,10 +864,17 @@ async def wallet_view(test: dict, user: dict) -> dict | None:
 
 async def _scan_test(request: web.Request, user: dict) -> dict:
     test = await run(db.get_test_by_code, request.match_info["code"])
-    if not test or test["fmt"] != "milliy" or (test.get("mode") or "online") != "online":
+    if not test or test["fmt"] != "milliy":
         raise ApiError(404, "Test topilmadi")
     if test["closed"]:
         raise ApiError(409, "Natijalar e'lon qilingan — javob qabul qilinmaydi")
+    if (test.get("mode") or "online") == "offline":  # titulli test: esse ID bilan yuboriladi, qayta yuborsa ham bo'ladi
+        if essay_on_paper(test):
+            raise ApiError(409, "Bu testda esse qog'ozga (3–4-varaqqa) yoziladi — o'qituvchingizga topshiring")
+        if not await run(plans.essay_open, test["owner_id"]):
+            raise ApiError(403, "Bu testda esse bo'limi yopiq")
+        await test_gate(test, user)
+        return test
     if await run(db.find_attempt, test["id"], user["id"]):
         raise ApiError(409, "Siz bu testga javob yuborgansiz")
     if not await essay_allowed(test, user["id"]):
@@ -1632,7 +1650,10 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
 def ai_models_view() -> dict:
     """«🤖 AI» (mini app, admin): har ish uchun qaysi model — botdagi /ai_sozlama bilan bir xil sozlama (ai:<ish>)."""
     keys = {"gemini": essay_ai._ready("gemini"), "claude": essay_ai._ready("claude")}
-    return {"keys": keys, "tasks": [
+    return {"keys": keys,
+            "rubric": {"chosen": essay_ai.rubric_choice(),
+                       "options": [{"key": k, "name": v["name"]} for k, v in essay_ai.RUBRICS.items()]},
+            "tasks": [
         {"key": task, "title": title, "chosen": essay_ai.choice_of(task), "working": essay_ai.route_name(task),
          "options": [{"key": c, "name": essay_ai.CHOICE_NAMES[c], "locked": not keys[essay_ai.CHOICES[c][0]]}
                      for c in essay_ai.allowed_choices(task)]}
@@ -1645,6 +1666,13 @@ async def ai_models(request: web.Request) -> web.Response:
         raise ApiError(403, "AI modellarini faqat admin tanlaydi")
     if request.method == "POST":
         payload = await body(request)
+        if "rubric" in payload:  # «📏 Baholash mezoni»: hozirgi (standart) yoki UZBMB rasmiy jadvali
+            rubric = str(payload.get("rubric") or "")
+            if rubric not in essay_ai.RUBRICS:
+                raise ApiError(400, "Bunday mezon yo'q")
+            await run(db.set_setting, "ai:rubric", rubric)
+            essay_ai.forget_choices()
+            return ok(await run(ai_models_view))
         task, choice = str(payload.get("task") or ""), str(payload.get("choice") or "")
         if task not in essay_ai.TASKS or choice not in essay_ai.allowed_choices(task):
             raise ApiError(400, "Bu ish uchun bunday model yo'q")
@@ -1673,6 +1701,11 @@ async def expire_expert_essays() -> list[dict]:
         except Exception:
             logger.warning("Ekspert muddati xabari yuborilmadi", exc_info=True)
     return done
+
+
+def experts_available() -> bool:
+    """Biror FREE_IDS / admin ekspert tekshiruvini ochganmi (narx qo'ygan) — «✍️ Esse» AI'siz ham ko'rinsin."""
+    return any(expert_price(tid) for tid in set(plans.FREE_IDS) | set(ADMIN_IDS))
 
 
 def expert_price(teacher_id: int) -> int:
@@ -1713,7 +1746,15 @@ def test_from_own_code(code: str) -> str | None:
     return parts[1] if hmac.compare_digest(own_mock_code({"code": parts[1]}), code) else None
 
 
-CLAUDE_ESSAY_COST = 0.02  # $ — tarix bo'lmasa, bitta esse tekshiruvining taxminiy narxi
+CLAUDE_ESSAY_COST = 0.02  # $ — tarix bo'lmasa, Sonnet bilan bitta esse tekshiruvining taxminiy narxi
+HAIKU_ESSAY_COST = 0.003  # $ — Haiku bilan (≈ 2 ming kirish + 3–5 ming chiqish tokeni)
+
+
+def essay_cost_estimate() -> tuple[float, str]:
+    """Tarix bo'lmasa: hozir esseni qaysi Claude baholaydi va bitta esse taxminan qancha ($)."""
+    _provider, model = essay_ai.route("essay")
+    model = model or essay_ai.CLAUDE_MODEL
+    return (HAIKU_ESSAY_COST if "haiku" in model else CLAUDE_ESSAY_COST), ("Claude Haiku" if "haiku" in model else "Claude Sonnet")
 
 
 def claude_capacity() -> dict | None:
@@ -1726,9 +1767,12 @@ def claude_capacity() -> dict | None:
         return None
     spent = db.claude_spent_since(saved["day"])
     left = max(0.0, float(saved["usd"]) - spent["cost"])
-    per = spent["essay_cost"] / spent["essay_calls"] if spent["essay_calls"] else CLAUDE_ESSAY_COST
+    estimate, model = essay_cost_estimate()
+    # Haqiqiy o'rtacha (tekshiruvlar bo'lsa) — aks holda tanlangan modelga qarab taxmin
+    per = spent["essay_cost"] / spent["essay_calls"] if spent["essay_calls"] else estimate
     return {"usd": round(left, 2), "set_usd": float(saved["usd"]), "since": saved["day"], "per_essay": round(per, 4),
-            "essays_left": int(left / per) if per > 0 else 0, "checked": spent["essay_calls"]}
+            "essays_left": int(left / per) if per > 0 else 0, "checked": spent["essay_calls"], "model": model,
+            "estimated": not spent["essay_calls"]}
 
 
 def announce_channels(teacher_id: int) -> list[dict]:
@@ -1952,8 +1996,14 @@ async def my_essay(request: web.Request) -> web.Response:
     if not attempt or attempt["tg_id"] != user["id"]:
         raise ApiError(404, "Topilmadi")
     essay = await run(db.get_essay, attempt["id"])
+    test = await run(db.get_test, attempt["test_id"])
+    # Onlayn mock, esse yuborilmagan: natija e'lon qilinguncha o'quvchi esse balini o'zi kiritadi (75 ballik)
+    can_self = bool(test and test["fmt"] == "milliy" and (test.get("mode") or "online") == "online" and not test["closed"]
+                    and (not essay or essay["status"] in ("none", "self")))
     if not essay or essay["status"] == "none":
-        return ok({"status": "none"})
+        return ok({"status": "none", "can_self": can_self})
+    if essay["status"] == "self":
+        return ok({"status": "self", "can_self": can_self, "score_75": essay_to_75(attempt["essay"])})
     ai = essay["ai_result"] or {}
     score = attempt["essay"] if attempt["essay"] is not None else essay["ai_score"]
     return ok({
@@ -1964,6 +2014,28 @@ async def my_essay(request: web.Request) -> web.Response:
         "comment": ai.get("comment") if essay["status"] == "graded" else None,
         "titles": essay_ai.RUBRIC_TITLES,
     })
+
+
+async def my_essay_self(request: web.Request) -> web.Response:
+    """Onlayn mockdan keyin: o'quvchi esse balini (75 ballik: 0 yoki 28–75) o'zi kiritadi → Rasch natijasiga qo'shiladi."""
+    user = await auth(request)
+    attempt = await run(db.get_attempt, int(request.match_info["attempt_id"]))
+    test = attempt and await run(db.get_test, attempt["test_id"])
+    if not test or attempt["tg_id"] != user["id"]:
+        raise ApiError(404, "Topilmadi")
+    if test["fmt"] != "milliy" or (test.get("mode") or "online") != "online":
+        raise ApiError(409, "Faqat onlayn mockda")
+    if test["closed"]:
+        raise ApiError(409, "Natijalar e'lon qilingan — ballni o'zgartirib bo'lmaydi")
+    essay = await run(db.get_essay, attempt["id"])
+    if essay and essay["status"] not in ("none", "self"):
+        raise ApiError(409, "Essengiz AI yoki o'qituvchida tekshirilyapti")
+    try:
+        score = essay_from_75(float(str((await body(request)).get("score75")).replace(",", ".")))
+    except ValueError:
+        raise ApiError(400, "Ball: 0 yoki 28–75 oralig'idagi butun son")
+    await run(db.set_self_essay, attempt["id"], score)
+    return ok({"ok": True, "status": "self", "can_self": True, "score_75": essay_to_75(score)})
 
 
 async def ping(request: web.Request) -> web.Response:
@@ -2730,7 +2802,8 @@ def _practice_view(item: dict) -> dict:
             "score": item["ai_score"], "score_75": essay_to_75(item["ai_score"]), "max": ESSAY_MAX, "scale": ESSAY_SCALE,
             "criteria": ai.get("criteria") if item["status"] == "graded" else None,
             "comment": ai.get("comment") if item["status"] == "graded" else None,
-            "titles": essay_ai.RUBRIC_TITLES, "words": len(item["text"].split())}
+            "titles": essay_ai.RUBRIC_TITLES, "words": len(item["text"].split()),
+            "expert": ai.get("by") == "expert"}  # 🎓 ekspert qo'lda baholagan (AI emas)
 
 
 async def practice_home(request: web.Request) -> web.Response:
@@ -2816,7 +2889,8 @@ async def expert_queue_view(request: web.Request) -> web.Response:
                            "words": len(p["text"].split()), "created_at": p["created_at"], "price": p.get("price") or 0,
                            "photos": len(p.get("photos") or [])}  # rasmli esse — botdagi xabarda
                           for p in rows],
-               "rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in essay_ai.RUBRIC]})
+               "rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in essay_ai.RUBRIC],
+               "steps": sorted(essay_ai.SCORE_STEPS, reverse=True)})
 
 
 async def expert_grade(request: web.Request) -> web.Response:
@@ -2828,10 +2902,12 @@ async def expert_grade(request: web.Request) -> web.Response:
     raw = payload.get("scores") if isinstance(payload.get("scores"), dict) else {}
     notes = payload.get("notes") if isinstance(payload.get("notes"), dict) else {}
     criteria = []
+    steps = essay_ai.SCORE_STEPS  # tanlangan mezon: rasmiy — 2/1,5/1/0,5 (0), hozirgi — 0/1/2
     for key in essay_ai.RUBRIC_KEYS:
         score = raw.get(key)
-        if score not in (0, 1, 2):
-            raise ApiError(400, f"«{essay_ai.RUBRIC_TITLES[key]}» uchun 0, 1 yoki 2 ball qo'ying")
+        if score not in steps:
+            raise ApiError(400, f"«{essay_ai.RUBRIC_TITLES[key]}» uchun ball qo'ying: "
+                                + ", ".join(str(x).replace(".", ",") for x in sorted(steps, reverse=True)))
         criteria.append({"key": key, "score": score, "comment": clean_text(notes.get(key), 300)})
     result = {"score": sum(c["score"] for c in criteria), "criteria": criteria, "outline": False,
               "comment": clean_text(payload.get("comment"), 600), "transcription": "", "by": "expert",
@@ -2906,15 +2982,15 @@ async def practice_submit(request: web.Request) -> web.Response:
     linked = await run(db.is_linked, teacher_id, user["id"])
     if not linked and (teacher_id == user["id"] or not await run(db.find_user, str(teacher_id))):
         raise ApiError(403, "Siz bu ustozga ulanmagansiz")
-    if not essay_ai.essay_enabled():
-        raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
     text = str(payload.get("essay") or "").strip()
     if len(text.split()) < PRACTICE_MIN_WORDS:
         raise ApiError(400, f"Esse juda qisqa — kamida {PRACTICE_MIN_WORDS} so'z yozing")
     if len(text) > PRACTICE_MAX_CHARS:
         raise ApiError(400, "Esse juda uzun")
-    if payload.get("mode") == "expert":  # «🎓 Ekspert»: FREE_IDS qo'lda tekshiradi — narxi kreditda, oldindan
+    if payload.get("mode") == "expert":  # «🎓 Ekspert»: FREE_IDS qo'lda tekshiradi (AI shart emas) — narxi kreditda
         return ok(await practice_expert_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
+    if not essay_ai.essay_enabled():
+        raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
     if not linked:  # begona — ommaviy havola qoidalari (bepul / kredit)
         return ok(await practice_public_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
     if not await run(plans.essay_open, teacher_id):  # aniq sabab: ustozda tarif yo'q (kredit tugagan emas)
@@ -4362,11 +4438,23 @@ async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]
 
 
 async def essay_photo(request: web.Request) -> web.Response:
-    """Oflayn esse varaqasi surati: bot orqali Telegram'ga saqlanadi va AI navbatiga qo'yiladi."""
+    """Oflayn esse varaqasi suratlari (1–4 bet): bot orqali Telegram'ga saqlanadi va AI navbatiga qo'yiladi."""
     user = await auth(request)
     attempt, test = await _own_attempt(request, user)
-    data = await read_photo(request)
-    return ok({"ok": True, "status": await attach_essay(user, test, attempt, [data])})
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Rasm yuborilmadi")
+    pages = []
+    for field in [f for f in form.getall("photo", []) if hasattr(f, "file")][:4]:
+        data = field.file.read()
+        if len(data) > 12 * 1024 * 1024:
+            raise ApiError(400, "Rasm juda katta (12 MB dan kichik bo'lsin)")
+        if data:
+            pages.append(data)
+    if not pages:
+        raise ApiError(400, "Rasm yuborilmadi")
+    return ok({"ok": True, "status": await attach_essay(user, test, attempt, pages)})
 
 
 # ---------- Oflayn skaner: telefonda saqlangan titullar bittada yuboriladi ----------
@@ -4689,6 +4777,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/offline-essays/{number:\\d{1,4}}/delete", offline_essay_delete)
     app.router.add_get("/api/result/{attempt_id:\\d+}", result)
     app.router.add_get("/api/my-essay/{attempt_id:\\d+}", my_essay)
+    app.router.add_post("/api/my-essay/{attempt_id:\\d+}/self", my_essay_self)
     app.router.add_post("/api/teacher/tests", create_test)
     app.router.add_get("/api/teacher/test/{test_id:\\d+}", teacher_test)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/announce", announce)

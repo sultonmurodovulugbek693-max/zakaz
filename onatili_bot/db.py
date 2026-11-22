@@ -935,6 +935,15 @@ def set_essay(attempt_id: int, score: float) -> None:
         conn.execute("UPDATE attempts SET essay = ? WHERE id = ?", (score, attempt_id))
 
 
+def set_self_essay(attempt_id: int, score: float) -> None:
+    """Onlayn mockdan keyin o'quvchi esse balini o'zi kiritdi (esse holati — «self»)."""
+    with connect() as conn:
+        conn.execute("UPDATE attempts SET essay = ? WHERE id = ?", (score, attempt_id))
+        if not conn.execute("UPDATE essays SET status = 'self' WHERE attempt_id = ?", (attempt_id,)).rowcount:
+            conn.execute("INSERT INTO essays (attempt_id, text, photos, status, created_at) VALUES (?, NULL, '[]', 'self', ?)",
+                         (attempt_id, _now()))
+
+
 # ---------- Esselar ----------
 
 def _essay_dict(row) -> dict | None:
