@@ -529,7 +529,8 @@ class _Connection:
 
     def execute(self, sql: str, params: tuple | list = ()):
         if self.postgres:
-            sql = sql.replace("?", "%s")
+            # psycopg «%» ni o'zgaruvchi joyi deb o'qiydi: LIKE '%claude%' → «got '%c'» xatosi. Avval % → %%, keyin ? → %s
+            sql = sql.replace("%", "%%").replace("?", "%s")
         return self.raw.execute(sql, params)
 
 
