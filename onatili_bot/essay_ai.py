@@ -191,7 +191,7 @@ def _ready(provider: str) -> bool:
 CHOICES = {"gemini": ("gemini", None), "sonnet": ("claude", None), "haiku": ("claude", None)}  # model — pastda
 CHOICE_NAMES = {"gemini": "Gemini", "sonnet": "Claude Sonnet", "haiku": "Claude Haiku"}
 TASKS = {  # ish: (nomi, standart tanlov)
-    "essay": ("📝 Esse baholash", "sonnet"),  # faqat Claude (ekspert darajasi) — Gemini esse baholamaydi
+    "essay": ("📝 Esse baholash", "haiku"),  # faqat Claude — standart arzon Haiku (Sonnet /ai_sozlama'da); Gemini yo'q
     "written": ("✍️ Titul yozma javoblari — bepul variant", None),
     "paid": ("💎 Titul yozma javoblari — pullik variant", "haiku"),
     "receipt": ("🧾 Chek tekshirish", None),

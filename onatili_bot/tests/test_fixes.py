@@ -1575,6 +1575,35 @@ class PaidCheck(ServerBase):
             self.assertTrue(await webapp.attach_written(test, await self.attempt(test, n), "aGk=", "image/png"))
         self.assertFalse(await webapp.attach_written(test, await self.attempt(test, 20), "aGk=", "image/png"))  # 21-titul
 
+    async def test_scan_asks_written_mode(self):
+        """Skanerlashdan oldin: yozma javoblarni kim tekshiradi — Gemini (FREE_IDS), Claude yoki qo'lda."""
+        test = await self.offline("free")
+        modes = (await self.get(f"/api/teacher/test/{test['id']}"))[1]["test"]["written_modes"]
+        self.assertIsNone(modes["chosen"])  # hali so'ralmagan — ilova tanlov ekranini ko'rsatadi
+        self.assertEqual({o["key"]: o["locked"] for o in modes["options"]}, {"gemini": True, "paid": False, "manual": False})
+        self.assertEqual((await self.post(f"/api/teacher/test/{test['id']}/check-mode", {"mode": "gemini"}))[0], 403)
+        self.assertEqual((await self.post(f"/api/teacher/test/{test['id']}/check-mode", {"mode": "xyz"}))[0], 400)
+
+        db.add_credits(OWNER, 5)
+        status, r = await self.post(f"/api/teacher/test/{test['id']}/check-mode", {"mode": "manual"})
+        self.assertEqual((status, r["chosen"], r["working"]), (200, "manual", "manual"))
+        test = db.get_test(test["id"])
+        attempt = await self.attempt(test, 1)
+        self.assertFalse(await webapp.attach_written(test, attempt, "aGk=", "image/png"))  # qo'lda — AI yo'q
+        self.assertEqual((db.get_written_job(attempt["id"])["status"], db.get_credits(OWNER)), ("manual", 5))
+
+        status, r = await self.post(f"/api/teacher/test/{test['id']}/check-mode", {"mode": "paid"})
+        self.assertEqual((status, r["working"]), (200, "claude"))
+        test = db.get_test(test["id"])
+        self.assertTrue(await webapp.attach_written(test, await self.attempt(test, 2), "aGk=", "image/png"))  # Claude
+
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:  # FREE_IDS — Gemini ochiq
+            self.assertEqual((await self.post(f"/api/teacher/test/{test['id']}/check-mode", {"mode": "gemini"}))[1]["working"], "gemini")
+        finally:
+            plans.FREE_IDS = saved
+
     async def test_paid_mode_without_credit_is_manual(self):
         test = await self.offline("paid")
         attempt = await self.attempt(test, 1)
@@ -1791,6 +1820,29 @@ class AiRoutes(ServerBase):
             bot.ADMIN_IDS = admins
         return replies, edits
 
+    async def test_models_in_mini_app(self):
+        """Mini app «🤖 AI» → «⚙️ Model tanlash»: faqat admin; esse uchun Gemini yo'q; kaliti yo'q AI — 🔒."""
+        essay_ai.ANTHROPIC_API_KEY = "test-key"
+        self.assertEqual((await self.get("/api/admin/ai"))[0], 403)  # oddiy ustoz
+        webapp.ADMIN_IDS.add(OWNER)
+        try:
+            status, data = await self.get("/api/admin/ai")
+            self.assertEqual(status, 200, data)
+            essay = next(t for t in data["tasks"] if t["key"] == "essay")
+            self.assertEqual(([o["key"] for o in essay["options"]], essay["chosen"]), (["sonnet", "haiku"], "haiku"))
+            self.assertEqual((await self.post("/api/admin/ai", {"task": "essay", "choice": "gemini"}))[0], 400)
+            status, data = await self.post("/api/admin/ai", {"task": "essay", "choice": "sonnet"})
+            self.assertEqual(status, 200, data)
+            self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.CLAUDE_MODEL))  # bot ham shuni ishlatadi
+            self.assertEqual(db.get_settings()["ai:essay"], "sonnet")
+            essay_ai.ANTHROPIC_API_KEY = ""
+            status, data = await self.get("/api/admin/ai")
+            self.assertTrue(all(o["locked"] for o in next(t for t in data["tasks"] if t["key"] == "essay")["options"]))
+            self.assertEqual((await self.post("/api/admin/ai", {"task": "essay", "choice": "haiku"}))[0], 409)
+        finally:
+            webapp.ADMIN_IDS.discard(OWNER)
+            essay_ai.forget_choices()
+
     async def test_buttons_choose_ai_per_task(self):
         essay_ai.ANTHROPIC_API_KEY = ""
         self.assertEqual(essay_ai.route("essay"), (None, None))  # esseni faqat Claude — kalit yo'q: AI esse o'chiq
@@ -1799,7 +1851,7 @@ class AiRoutes(ServerBase):
         self.assertIn("ANTHROPIC_API_KEY", replies[0])
         essay_ai.ANTHROPIC_API_KEY = "test-key"
         replies, _ = await self.press("aiset:essay:gemini")  # esse uchun Gemini tanlovi yo'q
-        self.assertEqual(essay_ai.choice_of("essay"), "sonnet")
+        self.assertEqual(essay_ai.choice_of("essay"), "haiku")  # standart — arzon Haiku
         await self.press("aiset:essay:haiku")
         self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.PAID_MODEL))
         await self.press("aiset:essay:sonnet")
@@ -1811,7 +1863,7 @@ class AiRoutes(ServerBase):
         self.assertEqual(essay_ai.route("written"), ("gemini", None))  # tegilmagan — standart
         db.set_setting("ai:essay", "gemini")  # eski saqlangan tanlov — e'tiborga olinmaydi
         essay_ai.forget_choices()
-        self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.CLAUDE_MODEL))
+        self.assertEqual(essay_ai.route("essay"), ("claude", essay_ai.PAID_MODEL))  # eski tanlov — standart Haiku
         essay_ai.ANTHROPIC_API_KEY = ""  # kalit olib tashlandi — esse Gemini'ga o'tmaydi
         self.assertEqual(essay_ai.route("essay"), (None, None))
         self.assertEqual(essay_ai.route("receipt"), ("gemini", None))  # chek — bor AI'ga o'tadi

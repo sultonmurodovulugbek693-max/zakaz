@@ -3167,6 +3167,21 @@ const SETTINGS_TABS = {
   ai: { icon: "🤖", title: "AI", hint: "qaysi ishni qaysi AI qiladi, Claude balansi" },
   public: { icon: "🌐", title: "Begonalar va e'lonlar", hint: "ommaviy esse havolasi, e'lon kanali" },
 };
+// «⚙️ Model tanlash» (admin): har ish — qaysi AI; kaliti yo'q — 🔒. Botdagi /ai_sozlama bilan bir xil sozlama
+async function loadAiModels(data) {
+  const box = document.getElementById("ai-models"); if (!box) return;
+  if (!data) { try { data = await api("/api/admin/ai"); } catch (e) { box.innerHTML = ""; return toast(e.message); } }
+  box.innerHTML = `<div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
+    <div class="card" style="display:grid;gap:14px">${data.tasks.map(t => `<div style="display:grid;gap:6px">
+      <b class="small">${esc(t.title)}</b>
+      <div class="chips">${t.options.map(o => `<button type="button" class="chip ${o.key === t.chosen ? "on" : ""}" data-ai-task="${t.key}" data-ai-choice="${o.key}" ${o.locked ? "disabled" : ""}>${o.locked ? "🔒 " : ""}${esc(o.name)}</button>`).join("")}</div>
+      <span class="muted small">Hozir ishlayapti: ${esc(t.working)}</span></div>`).join("")}</div>`;
+  box.querySelectorAll("[data-ai-choice]").forEach(x => x.onclick = async () => {
+    haptic("select");
+    try { const fresh = await api("/api/admin/ai", { task: x.dataset.aiTask, choice: x.dataset.aiChoice }); toast("✅ Saqlandi"); loadAiModels(fresh); }
+    catch (e) { toast(e.message); haptic("error"); }
+  });
+}
 function guideHTML(rows) {
   return `<div class="card" style="border:1.5px solid var(--line)"><b class="small">Bu bo'limda</b>
     ${rows.filter(Boolean).map(([name, text]) => `<span class="small"><b>${name}</b> — ${text}</span>`).join("")}</div>`;
@@ -3175,7 +3190,7 @@ VIEWS.settings = async ({ tab } = {}) => {
   loading();
   let s; try { s = await api("/api/teacher/settings"); } catch (e) { return fail(e); }
   const ready = s.card && s.packs.length, rs = s.earnings && s.earnings.routed, free = !!s.can_public;
-  const admin = !!(S.boot && S.boot.can_manage);
+  const admin = !!(S.boot && S.boot.can_manage), owner = !!(S.boot && S.boot.is_admin);
   if (!SETTINGS_TABS[tab]) {  // menyu: har bo'lim — nima ichida va holati
     const state = {
       pay: !s.card ? `<span class="pill-tag wait">karta yo'q</span>` : s.earnings && s.earnings.balance ? `<span class="pill-tag done">${sum(s.earnings.balance)} so'm</span>` : "",
@@ -3211,7 +3226,7 @@ VIEWS.settings = async ({ tab } = {}) => {
       ["🧾 Chek tekshirish", "Gemini o'qiydi: summa, bugungi sana, karta yoki ism. Natija 1–2 daqiqada."],
       ["📷 Esse rasmini o'qish", "o'quvchi tanlaydi: Gemini (bepul) yoki Claude (aniqroq) — qo'lyozmani matnga aylantiradi."],
       free && ["💰 Claude balansi", "Anthropic hisobingizdagi dollarni yozing — ilova yana nechta esse tekshirish mumkinligini hisoblaydi."],
-      admin && ["⚙️ Model tanlash", "qaysi ishni qaysi model bajarishi botda: /ai_sozlama (sarf hisoboti — /ai)."],
+      owner && ["⚙️ Model tanlash", "pastda har ish uchun model tanlanadi (botda ham: /ai_sozlama). Claude Haiku — arzon, Sonnet — aniqroq. Sarf hisoboti — botda /ai."],
     ]),
     public: guideHTML([
       ["🌐 Ommaviy esse havolasi", `havolani kanal yoki guruhga tashlaysiz: kirgan begona ${s.free} ta esseni bepul tekshirtiradi, keyin sizdan kredit oladi. «✍️ Esse» bo'limida ham ko'rinadi.`],
@@ -3229,8 +3244,9 @@ VIEWS.settings = async ({ tab } = {}) => {
       ${packsCardHTML({ essay_packs: s.packs, min_price: rs ? s.earnings.min_price : 0, warn: rs ? revshareWarnHTML(s.earnings.teacher_percent, s.earnings.min_price) : "" })}
       ${free ? expertPriceHTML(s) : ""}
       ${free ? studentTariffsHTML(s.student_tariffs || []) : ""}`,
-    ai: free ? claudeCardHTML(s.claude, true)
-      : `<div class="card"><span class="small">O'z o'quvchilaringiz essesi tarifingiz limitidan tekshiriladi — qoldig'i «💎 Obuna» bo'limida.</span></div>`,
+    ai: `${owner ? `<div id="ai-models"><div class="card"><span class="muted small">Modellar yuklanmoqda…</span></div></div>` : ""}
+      ${free ? claudeCardHTML(s.claude, true)
+      : `<div class="card"><span class="small">O'z o'quvchilaringiz essesi 📦 esse paketidan tekshiriladi — qoldig'i «💎 Obuna» bo'limida.</span></div>`}`,
     public: `<div class="section-title"><h2>🌐 Ommaviy esse havolasi</h2><span class="muted small">${s.public ? "✅ ochiq" : "⛔️ yopiq"}</span></div>
       <div class="card">
         ${s.public && s.public_url ? `<div class="row" style="gap:8px"><button type="button" class="btn ghost" id="st-share" style="flex:1">📨 Havolani ulashish</button><button type="button" class="btn plain" id="st-copy">📋</button></div>` : ""}
@@ -3243,6 +3259,7 @@ VIEWS.settings = async ({ tab } = {}) => {
     ${guide}
     ${sections}
   </div>`;
+  if (tab === "ai" && owner) loadAiModels();
   bindPacksCard();
   bindStudentTariffs();
   bindExpertPrice();
@@ -4700,6 +4717,26 @@ function recWarnings(rec) {
   return rec.payload ? 0 : rec.r.questions.filter(q => q.status === "multiple" || q.status === "unsure").length;
 }
 
+// «Qanday yo'l bilan tekshirasiz?» — yozma javoblar (36–44): 🆓 Gemini · 💎 Claude · ✋ Qo'lda (savol bo'yicha ✅/❌)
+function writtenModePicker(t, id) {
+  const wm = t.written_modes;
+  $app.innerHTML = `<div class="view">
+    <div class="hero"><span class="brand"><i>I</i>Kod ${t.code}</span><h1>Yozma javoblarni qanday tekshirasiz?</h1>
+      <span class="muted small">36–44-savollar qo'lda yoziladi. Test qismi (1–35) skanerda o'zi tekshiriladi.</span></div>
+    <div class="list">${wm.options.map(o => `<button type="button" class="item" data-wm="${o.key}" ${o.locked ? "disabled" : ""}>
+      <span class="ico">${o.name.split(" ")[0]}</span><span><b>${esc(o.name.split(" ").slice(1).join(" "))}${o.locked ? " 🔒" : ""}</b>
+      <small>${o.key === "gemini" ? "AI o'qiydi, siz tekshirib tasdiqlaysiz — bepul" : o.key === "paid" ? "Claude o'qiydi — aniqroq (har 10 titul = 1 kredit)"
+        : "Har savol bo'yicha: tepada o'quvchi yozgani, pastda kalit — ✅ To'g'ri / ❌ Noto'g'ri. Avval 36-savol hammaniki, keyin 37…"}${o.locked ? (o.key === "gemini" ? " · faqat ruxsat berilgan ustozlarga" : " · hozir ulanmagan") : ""}</small></span>
+      ${wm.chosen === o.key ? `<span class="pill-tag done">tanlangan</span>` : `<span class="muted">›</span>`}</button>`).join("")}</div>
+  </div>`;
+  document.querySelectorAll("[data-wm]").forEach(x => x.onclick = async () => {
+    x.disabled = true;
+    try { await api(`/api/teacher/test/${id}/check-mode`, { mode: x.dataset.wm }); haptic("success");
+      toast(`✅ ${(wm.options.find(o => o.key === x.dataset.wm) || {}).name || ""} — skanerlashni boshlang`); S.pickWritten = null; rerender(); }
+    catch (e) { toast(e.message); haptic("error"); x.disabled = false; }
+  });
+}
+
 VIEWS.scan = async ({ id }) => {
   loading();
   let d, layout = null;
@@ -4712,6 +4749,9 @@ VIEWS.scan = async ({ id }) => {
   } catch (e) { return fail(e); }
   const fromCache = S.fromCache;
   const t = d.test, milliy = t.fmt === "milliy";
+  const wm = t.written_modes;
+  // Skanerlashdan oldin so'raladi: yozma javoblarni (36–44) kim tekshiradi — Gemini, Claude yoki qo'lda
+  if (milliy && wm && (!wm.chosen || S.pickWritten === t.id) && !fromCache) return writtenModePicker(t, id);
   const items = milliy ? itemsFor("milliy", 45) : [];  // oddiy testda savollar skaner natijasidan olinadi
   const count = () => `${d.students.filter(s => s.scanned).length} / ${d.students.length} skanerlangan`;
   // Oflayn rejim: kadrlar telefonda o'qiladi (omr.js) va natija telefon xotirasiga yoziladi — serverga
@@ -4721,6 +4761,7 @@ VIEWS.scan = async ({ id }) => {
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Kod ${t.code}</span><h1>Titulni skanerlash</h1><span class="muted small" id="scan-count">${d.students.length ? count() : ""}</span>
       ${fromCache ? `<span class="pill-tag wait" style="justify-self:start">📴 Internetsiz — titullar telefonga saqlanadi, keyin yuborasiz</span>` : ""}</div>
+    ${milliy && wm ? `<button type="button" class="item" id="wm-change"><span class="ico">✍️</span><span><b>Yozma javoblar (36–44): ${esc((wm.options.find(o => o.key === (wm.working === "claude" ? "paid" : wm.working)) || {}).name || "")}</b><small>Tekshirish usulini o'zgartirish</small></span><span class="muted">›</span></button>` : ""}
     <div class="cam" id="cam">
       <video id="video" playsinline muted autoplay></video>
       <img id="still" alt="" hidden>
@@ -4746,6 +4787,8 @@ VIEWS.scan = async ({ id }) => {
     </div>
     <div class="card" id="sc-roster" hidden></div>` : ""}
   </div>`;
+  const wmChange = document.getElementById("wm-change");
+  if (wmChange) wmChange.onclick = () => { haptic("light"); S.pickWritten = t.id; rerender(); };
   const video = document.getElementById("video"), still = document.getElementById("still"), cam = document.getElementById("cam");
   const statusEl = document.getElementById("cam-status"), quad = document.querySelector("#quad polygon"), review = document.getElementById("review");
   const setStatus = (text, kind = "") => { statusEl.textContent = text; statusEl.className = "cam-status " + kind; };

@@ -203,6 +203,7 @@ async def bootstrap(request: web.Request) -> web.Response:
         "essay_open": essay_open_me,  # testlarimda 45-esse ochiqmi (yo'q — «💎 Tarif» taklifi)
         "can_mock": essay_open_me,  # «📅 E'lon qilish» va «Bugungi mock»ni hammaga ko'rsatish — tarif bilan
         "credit_mode": credit_mode,  # AI esse kreditdan (obuna emas): «🤖 AI» bo'limi ko'rinadi
+        "is_admin": plans.is_admin(uid),  # AI modellarini tanlash (mini app «🤖 AI») — faqat admin
         "can_manage": plans.can_manage(uid),  # tariflar va to'lov kartasini kiritadi (admin, FREE_IDS)
         # AI esse krediti: o'quvchilar essesi shundan tekshiriladi (cheksiz — admin / FREE_IDS)
         "ai_credits": None if unlimited else credits,
@@ -1628,6 +1629,33 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
 
 # ---------- «💎 Tarif» (begona o'quvchi): FREE_IDS ustoz narxini qo'yadi, pul uning kartasiga; muddatida hamma mock bepul ----------
 
+def ai_models_view() -> dict:
+    """«🤖 AI» (mini app, admin): har ish uchun qaysi model — botdagi /ai_sozlama bilan bir xil sozlama (ai:<ish>)."""
+    keys = {"gemini": essay_ai._ready("gemini"), "claude": essay_ai._ready("claude")}
+    return {"keys": keys, "tasks": [
+        {"key": task, "title": title, "chosen": essay_ai.choice_of(task), "working": essay_ai.route_name(task),
+         "options": [{"key": c, "name": essay_ai.CHOICE_NAMES[c], "locked": not keys[essay_ai.CHOICES[c][0]]}
+                     for c in essay_ai.allowed_choices(task)]}
+        for task, (title, _default) in essay_ai.TASKS.items()]}
+
+
+async def ai_models(request: web.Request) -> web.Response:
+    user = await auth(request)
+    if not plans.is_admin(user["id"]):
+        raise ApiError(403, "AI modellarini faqat admin tanlaydi")
+    if request.method == "POST":
+        payload = await body(request)
+        task, choice = str(payload.get("task") or ""), str(payload.get("choice") or "")
+        if task not in essay_ai.TASKS or choice not in essay_ai.allowed_choices(task):
+            raise ApiError(400, "Bu ish uchun bunday model yo'q")
+        if not essay_ai._ready(essay_ai.CHOICES[choice][0]):
+            raise ApiError(409, "Bu AI'ning kaliti yo'q — Render'da " + ("GEMINI_API_KEY" if essay_ai.CHOICES[choice][0] == "gemini"
+                                                                         else "ANTHROPIC_API_KEY") + " ni qo'shing")
+        await run(db.set_setting, f"ai:{task}", choice)
+        essay_ai.forget_choices()
+    return ok(await run(ai_models_view))
+
+
 EXPERT_HOURS = 48  # ekspert shu vaqt ichida baholamasa — esse bekor, kredit o'quvchiga qaytadi
 
 
@@ -2205,6 +2233,47 @@ def paid_check(test: dict) -> bool:
     return test.get("check_mode") == "paid" and essay_ai.paid_enabled()
 
 
+# Skanerlashda ustoz tanlaydi: yozma javoblarni (36–44) kim tekshiradi. check_mode: gemini | paid (Claude) | manual;
+# "free" — eski (tanlanmagan): FREE_IDS da Gemini, qolganlarda qo'lda.
+WRITTEN_MODES = {"gemini": "🆓 Gemini", "paid": "💎 Claude", "manual": "✋ Qo'lda"}
+
+
+def written_mode(test: dict) -> str:
+    """Yozma javoblar qanday tekshiriladi: "gemini" | "claude" | "manual" (kalit / ruxsat yo'q bo'lsa — qo'lda)."""
+    mode = test.get("check_mode") or "free"
+    if mode == "manual":
+        return "manual"
+    if mode == "paid":
+        return "claude" if essay_ai.paid_enabled() else "manual"
+    return "gemini" if plans.ai_unlimited(test["owner_id"]) and essay_ai.enabled() else "manual"
+
+
+def written_modes_view(test: dict) -> dict:
+    """Skaner ekrani uchun: tanlangan usul va qaysilari mumkin (Gemini — faqat FREE_IDS / admin, Claude — kalit bilan)."""
+    return {"chosen": test.get("check_mode") if test.get("check_mode") in WRITTEN_MODES else None,
+            "working": written_mode(test),
+            "options": [{"key": "gemini", "name": WRITTEN_MODES["gemini"], "note": "bepul",
+                         "locked": not (plans.ai_unlimited(test["owner_id"]) and essay_ai.enabled())},
+                        {"key": "paid", "name": WRITTEN_MODES["paid"], "note": "aniqroq · har 10 titul = 1 kredit",
+                         "locked": not essay_ai.paid_enabled()},
+                        {"key": "manual", "name": WRITTEN_MODES["manual"], "note": "savol bo'yicha ✅ / ❌", "locked": False}]}
+
+
+async def check_mode_save(request: web.Request) -> web.Response:
+    """Skanerlashdan oldin: yozma javoblarni kim tekshiradi — Gemini, Claude yoki qo'lda."""
+    user = await auth(request)
+    test = await own_test(request, user)
+    mode = str((await body(request)).get("mode") or "")
+    view = written_modes_view(test)
+    option = next((o for o in view["options"] if o["key"] == mode), None)
+    if not option:
+        raise ApiError(400, "Usulni tanlang: Gemini, Claude yoki qo'lda")
+    if option["locked"]:
+        raise ApiError(403, "Gemini — faqat ruxsat berilgan ustozlarga" if mode == "gemini" else "Claude hozir ulanmagan")
+    await run(db.set_check_mode, test["id"], mode)
+    return ok(written_modes_view(await run(db.get_test, test["id"])))
+
+
 async def paid_written_allowed(owner_id: int) -> bool:
     """Pullik tekshiruv: har PAID_SHEETS_PER_CREDIT ta titulga ustozning 1 krediti (birinchi titulda yechiladi).
     Kredit tugagan bo'lsa — False (titul «qo'lda» bo'ladi) va ustozga bir marta xabar."""
@@ -2457,7 +2526,8 @@ async def teacher_test(request: web.Request) -> web.Response:
                  "essay_topic": test.get("essay_topic"), "max_points": max_points(test["items"], test["fmt"]),
                  "channels": public_channels(test["channels"]), "mode": test.get("mode") or "online",
                  "sheets_sent": bool(test.get("sheets_sent")),
-                 "sheet_style": sheet_styles.style_of(test)},
+                 "sheet_style": sheet_styles.style_of(test),
+                 "written_modes": written_modes_view(test) if test.get("mode") == "offline" else None},
         "sheet_styles": sheet_styles.STYLES,
         "students": [student_view(s, pupils) for s in students],
         "pupils": list(pupils.values()) if test.get("mode") == "offline" else [],
@@ -3969,7 +4039,7 @@ async def scan(request: web.Request) -> web.Response:
     written, ai_note = {}, None
     labels = [i["label"] for i in text_items(test["items"])]
     if labels and written_png and not live:
-        if await written_ai(test["owner_id"]):
+        if written_mode(test) == "gemini" and await written_ai(test["owner_id"]):
             try:
                 written, _cost = await essay_ai.read_written(written_png, labels)
             except essay_ai.AIError as error:
@@ -4069,8 +4139,9 @@ async def attach_written(test: dict, attempt: dict, image_b64: str, mime: str) -
     """Yozma kataklar rasmi natijaga: AI o'qiydi (ruxsat bo'lsa) yoki o'qituvchi «✍️ Yozmalarni tekshirish»da belgilaydi."""
     labels = [i["label"] for i in text_items(test["items"])]
     need_ai = [label for label in labels if not attempt["answers"].get(label)]
-    queued = bool(need_ai) and (await paid_written_allowed(test["owner_id"]) if paid_check(test)
-                                else await written_ai(test["owner_id"]))
+    mode = written_mode(test)  # ustoz skanerlashda tanlagan: gemini | claude | manual
+    queued = bool(need_ai) and (await paid_written_allowed(test["owner_id"]) if mode == "claude"
+                                else await written_ai(test["owner_id"]) if mode == "gemini" else False)
     await run(db.create_written_job, attempt["id"], test["id"], image_b64, mime[:20], "pending" if queued else "manual")
     if queued and "wake_ai" in HOOKS:
         HOOKS["wake_ai"]()
@@ -4677,6 +4748,9 @@ def create_app() -> web.Application:
     app.router.add_post("/api/practice/wallet-order", practice_wallet_order)
     app.router.add_post("/api/practice/code", practice_code)
     app.router.add_get("/api/expert/queue", expert_queue_view)
+    app.router.add_post(r"/api/teacher/test/{test_id:\d+}/check-mode", check_mode_save)
+    app.router.add_get("/api/admin/ai", ai_models)
+    app.router.add_post("/api/admin/ai", ai_models)
     app.router.add_post(r"/api/expert/practice/{practice_id:\d+}", expert_grade)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/theme", set_theme)
     app.router.add_post("/api/teacher/test/{test_id:\\d+}/essays/confirm-all", essays_confirm_all)

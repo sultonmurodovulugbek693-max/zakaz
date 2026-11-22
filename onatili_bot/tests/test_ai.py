@@ -52,9 +52,23 @@ class EssayOnClaude(unittest.IsolatedAsyncioTestCase):
 
     def test_providers_are_separate(self):
         self.assertTrue(essay_ai.enabled() and essay_ai.essay_enabled())
-        self.assertEqual((essay_ai.provider_name(), essay_ai.essay_provider_name()), ("Gemini", "Claude (claude-sonnet-5-5)"))
+        # Esse — standart arzon Claude Haiku (Sonnet admin /ai_sozlama'da tanlaydi)
+        self.assertEqual((essay_ai.provider_name(), essay_ai.essay_provider_name()),
+                         ("Gemini", f"Claude ({essay_ai.PAID_MODEL})"))
+
+    async def test_text_essay_graded_by_haiku_by_default(self):
+        essay = "Ijtimoiy tarmoqlar haqida esse. " * 20
+        result = await essay_ai.grade("Mavzu", essay)
+        params = FakeClient.calls[0]
+        self.assertEqual(params["model"], essay_ai.PAID_MODEL)
+        self.assertNotIn("fallbacks", params)  # Haiku'da server zaxirasi yo'q
+        self.assertEqual(result["provider"], f"Claude ({essay_ai.PAID_MODEL})")
+        self.assertAlmostEqual(result["cost"], 2000 * 0.10 / 1e6 + 3000 * 0.50 / 1e6, places=6)  # Haiku narxi
 
     async def test_text_essay_graded_by_claude_sonnet(self):
+        import time
+        essay_ai._ROUTE_CACHE.update(at=time.time(), saved={"essay": "sonnet"})  # admin Sonnet'ni tanlagan
+        self.addCleanup(essay_ai._ROUTE_CACHE.update, at=0.0, saved={})
         essay = "Ijtimoiy tarmoqlar haqida esse. " * 20
         result = await essay_ai.grade("Mavzu", essay)
         params = FakeClient.calls[0]
