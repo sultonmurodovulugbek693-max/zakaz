@@ -117,7 +117,7 @@ class _Sheet:
 
 def rows_of(test: dict, attempts: list[dict]) -> list[dict]:
     """Natijasi chiqqan qatnashchilar, balli bo'yicha kamayish tartibida: {name, score, grade}."""
-    if test["fmt"] == "milliy":
+    if test["fmt"] in ("milliy", "esse"):  # esse mocki ham 75 ballik — ball esse bahosi
         breakdown = rasch_breakdown(test, attempts)
         rows = [{"name": a["student_name"], "score": breakdown[a["id"]]["score"], "grade": breakdown[a["id"]]["grade"],
                  "created": a["created_at"] or ""}
@@ -197,10 +197,12 @@ LINE = (200, 205, 213)
 
 def _rating_page(test: dict, rows: list[dict], start: int, cut_at: int | None, page: int, pages: int,
                  summary: dict) -> bytes:
-    milliy = test["fmt"] == "milliy"
+    milliy = test["fmt"] in ("milliy", "esse")  # 75 ballik shkala va daraja (esse mocki ham)
     count = len(rows)
     has_cut = cut_at is not None and start < cut_at < start + count
-    footer = (["Ball — Rasch modeli bo'yicha umumiy ball (75 dan). Sertifikat — C (46) va yuqori."] if milliy
+    footer = (["Ball — esse bahosi (24 ballik mezon → 75 ballik shkala). Sertifikat — C (46) va yuqori."]
+              if test["fmt"] == "esse" else
+              ["Ball — Rasch modeli bo'yicha umumiy ball (75 dan). Sertifikat — C (46) va yuqori."] if milliy
               else ["Natija — to'g'ri javoblar foizi."])
     height = PAD + 52 + 12 + 44 + 16 + 18 + count * ROW_H + (20 if has_cut else 0) + 22 + 13 * len(footer) + PAD
     sheet = _Sheet(height)
@@ -268,7 +270,7 @@ def rating_pages(test: dict, attempts: list[dict]) -> list[bytes]:
     if not rows:
         return []
     scores = [r["score"] for r in rows]
-    milliy = test["fmt"] == "milliy"
+    milliy = test["fmt"] in ("milliy", "esse")  # 75 ballik shkala va daraja (esse mocki ham)
     certified = sum(1 for r in rows if r["grade"] and r["grade"] != "NC")
     summary = {"n": len(rows), "avg": sum(scores) / len(scores), "certified": certified, "nc": len(rows) - certified,
                "good": sum(1 for s in scores if s >= 80)}
@@ -299,7 +301,7 @@ def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
     rows = rows_of(test, attempts)
     if not rows:
         return None
-    milliy = test["fmt"] == "milliy"
+    milliy = test["fmt"] in ("milliy", "esse")  # 75 ballik shkala va daraja (esse mocki ham)
     scores = sorted((r["score"] for r in rows), reverse=True)
     n = len(scores)
     avg = sum(scores) / n
@@ -308,7 +310,9 @@ def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
     items = item_stats(test, attempts)
     show_items = len(items) >= 2
 
-    footer = (["Rasch modeli: kam yechilgan savol qiyinroq — uni yechgan o'quvchi ko'proq ball oladi.",
+    footer = (["Ball — esse bahosi: 24 ballik mezon DTM jadvali bo'yicha 75 ballik shkalaga o'tkazilgan.",
+               "Sertifikat — C (46 ball) va undan yuqori."] if test["fmt"] == "esse" else
+              ["Rasch modeli: kam yechilgan savol qiyinroq — uni yechgan o'quvchi ko'proq ball oladi.",
                "Umumiy ball: T = 50 + 10·Z, eng yuqorisi 75. Sertifikat — C (46 ball) va undan yuqori."] if milliy
               else ["Savol qiyinligi — uni yecha olmaganlar ulushidan (Rasch logit)."])
     hist_h, items_h, lists_h = 170, 140, 16 + 5 * 16 + 8
@@ -316,7 +320,8 @@ def stats_page(test: dict, attempts: list[dict]) -> bytes | None:
               + 10 + 13 * len(footer) + PAD)
     sheet = _Sheet(height)
 
-    method = "Rasch modeli bo'yicha" if milliy else "to'g'ri javoblar foizi"
+    method = ("esse bahosi (75 ballik)" if test["fmt"] == "esse" else
+              "Rasch modeli bo'yicha" if milliy else "to'g'ri javoblar foizi")
     top = _header(sheet, "STATISTIK TAHLIL", _title(test), f"Kod {test['code']} · {_date()} · {n} qatnashchi · {method}") + 12
     suffix = "" if milliy else "%"
     last = (f"{round(certified / n * 100)}%", f"sertifikat · {certified}/{n}") if milliy else (_num(median) + "%", "median")

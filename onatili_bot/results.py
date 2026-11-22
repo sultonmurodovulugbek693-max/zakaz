@@ -27,11 +27,17 @@ def offline_number(test_id: int, tg_id: int | None) -> int | None:
     return number if 0 <= number < 100000 else None
 
 
+def scaled(test: dict) -> bool:
+    """Ball 75 ballik shkalada (daraja bilan): Milliy sertifikat testi va esse mocki. Oddiy testda — foiz."""
+    return test["fmt"] in ("milliy", "esse")
+
+
 def scores(test: dict, attempts: list[dict]) -> dict[int, dict]:
-    """{attempt_id: {"score", "grade", "test", "essay", "suffix"}} — Milliy: umumiy ball (75); oddiy: foiz."""
+    """{attempt_id: {"score", "grade", "test", "essay", "suffix"}} — Milliy: umumiy ball (75); esse mocki: esse bahosi
+    (75); oddiy: foiz."""
     if not attempts:
         return {}
-    if test["fmt"] == "milliy":
+    if scaled(test):
         return {key: {**value, "suffix": ""} for key, value in rasch_breakdown(test, attempts).items()}
     return {a["id"]: {"score": percent(a["test_correct"] + a["written_correct"], a["auto_total"]),
                       "grade": None, "test": None, "essay": None, "suffix": "%"} for a in attempts}
@@ -104,7 +110,7 @@ def overview(owner_id: int) -> dict:
         tests.append({"id": test["id"], "title": test["title"], "code": test["code"], "fmt": test["fmt"],
                       "mode": test.get("mode") or "online", "date": (test.get("created_at") or "")[:10],
                       "n": len(attempts), "avg": _mean([m["score"] for m in marks.values()]),
-                      "suffix": "" if test["fmt"] == "milliy" else "%"})
+                      "suffix": "" if scaled(test) else "%"})
     classes = [{"id": c["id"], "name": c["name"], "students": c["students"],
                 "tests": len(tests_of_class.get(c["id"], ()))} for c in db.list_classes(owner_id)]
     return {"classes": classes, "tests": tests}
@@ -132,7 +138,7 @@ def class_report(owner_id: int, cls: dict) -> dict:
         tests.append({"id": test["id"], "title": test["title"], "code": test["code"], "fmt": test["fmt"],
                       "date": (test.get("created_at") or "")[:10], "n": len(mine),
                       "avg": _mean([marks[a["id"]]["score"] for a, _ in mine]),
-                      "suffix": "" if test["fmt"] == "milliy" else "%"})
+                      "suffix": "" if scaled(test) else "%"})
     order = [t["id"] for t in tests]
     rows = []
     for pupil in students:

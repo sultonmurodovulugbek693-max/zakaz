@@ -2590,12 +2590,12 @@ async def copy_test(request: web.Request) -> web.Response:
 async def teacher_test(request: web.Request) -> web.Response:
     user = await auth(request)
     test = await own_test(request, user)
-    milliy = test["fmt"] == "milliy"
+    scaled = test["fmt"] in ("milliy", "esse")  # esse bor, ball 75 ballik (esse mockida — essening o'zi)
     attempts, keys, essays, written_jobs, students, pupils = await asyncio.gather(  # parallel — sahifa tezroq
         run(db.list_attempts, test["id"]), run(db.get_keys, test["id"]),
-        run(db.essays_for_test, test["id"]) if milliy else asyncio.sleep(0, {}),
+        run(db.essays_for_test, test["id"]) if scaled else asyncio.sleep(0, {}),
         run(db.written_jobs_for_test, test["id"]), run(db.list_students, test["id"]), pupils_of(user["id"]))
-    rasch = await run(rasch_results, test, attempts) if milliy and attempts else {}
+    rasch = await run(rasch_results, test, attempts) if scaled and attempts else {}
     rows = []
     for a in attempts:
         essay = essays.get(a["id"])
@@ -3898,8 +3898,8 @@ async def send_certificates(request: web.Request) -> web.Response:
     """🎓 Mock sertifikatlar (PDF) bot chatiga: butun test, bitta sinf yoki tanlangan o'quvchi(lar)."""
     user = await auth(request)
     test = await own_test(request, user)
-    if test["fmt"] != "milliy":
-        raise ApiError(400, "Sertifikat Milliy sertifikat formatidagi test uchun chiqariladi")
+    if test["fmt"] not in ("milliy", "esse"):
+        raise ApiError(400, "Sertifikat Milliy sertifikat formatidagi test va esse mocki uchun chiqariladi")
     payload = await body(request)
     cls = await _class_of(user, payload.get("class"))
     chosen = {int(x) for x in payload.get("attempt_ids") or [] if str(x).isdigit()}
@@ -4316,13 +4316,35 @@ async def link_offline_essay(test: dict, number: int, attempt_id: int) -> bool:
     essay = await run(db.get_offline_essay, test["id"], number)
     if not essay:
         return False
-    charge = await _teacher_charge(test["owner_id"]) if essay_ai.essay_enabled() else None
-    await run(db.set_essay_text, attempt_id, essay["text"], "pending" if charge else "manual")
-    await run(db.set_essay_charge, attempt_id, charge if charge == "teacher" else None)
+    # Katta mock (45 savol) essesini AI tekshirmaydi — ustoz «📝 Esselar»da baholaydi (kredit yechilmaydi)
+    await run(db.set_essay_text, attempt_id, essay["text"], "manual")
+    await run(db.set_essay_charge, attempt_id, None)
     return True
 
 
 ESSAY_MIN_WORDS, ESSAY_MAX_CHARS = 30, 20000
+
+# Esse kodi 4 xonali (10 000 variant): taxmin qilib birovning ID'si bilan esse yuborilmasin — bitta akkaunt bitta
+# testda PIN_MAX_FAILS marta xato yozsa, PIN_LOCK soniya kod qabul qilinmaydi
+PIN_MAX_FAILS, PIN_LOCK = 5, 3600
+_PIN_FAILS: dict[tuple[int, int], list[float]] = {}
+
+
+def check_pin_attempts(user_id: int, test_id: int) -> None:
+    now = time.time()
+    fails = [at for at in _PIN_FAILS.get((user_id, test_id), []) if now - at < PIN_LOCK]
+    _PIN_FAILS[(user_id, test_id)] = fails
+    if len(fails) >= PIN_MAX_FAILS:
+        raise ApiError(429, "Esse kodi ko'p marta xato yozildi — 1 soatdan keyin qayta urinib ko'ring "
+                            "yoki o'qituvchingizga ayting")
+
+
+def pin_failed(user_id: int, test_id: int) -> None:
+    if len(_PIN_FAILS) > 5000:  # eski yozuvlar
+        now = time.time()
+        for key in [k for k, v in _PIN_FAILS.items() if not v or now - v[-1] >= PIN_LOCK]:
+            _PIN_FAILS.pop(key, None)
+    _PIN_FAILS.setdefault((user_id, test_id), []).append(time.time())
 
 
 async def offline_essay_submit(request: web.Request) -> web.Response:
@@ -4357,8 +4379,11 @@ async def offline_essay_submit(request: web.Request) -> web.Response:
         raise ApiError(400, "Ism va familiyangizni to'liq yozing")
     # Esse kodi (shaxsiy titulda ID yonida): to'g'ri bo'lsa — esse shu ID egasiniki deb tasdiqlanadi
     pin = "".join(ch for ch in str(payload.get("pin") or "") if ch.isdigit())
-    if pin and pin != sheet.essay_pin(test["id"], number):
-        raise ApiError(400, "Esse kodi noto'g'ri — titulingizda ID yonida yozilgan 4 ta raqam")
+    if pin:
+        check_pin_attempts(user["id"], test["id"])
+        if pin != sheet.essay_pin(test["id"], number):
+            pin_failed(user["id"], test["id"])
+            raise ApiError(400, "Esse kodi noto'g'ri — titulingizda ID yonida yozilgan 4 ta raqam")
     verified = bool(pin)
     await run(db.remember_user, user["id"], user["name"], user.get("username"))  # o'qituvchi kim yuborganini ko'radi
     mine = await run(db.offline_essay_of_user, test["id"], user["id"])
@@ -4483,7 +4508,8 @@ async def attach_essay(user: dict, test: dict, attempt: dict, pages: list[bytes]
         page = f" · {index}-bet" if len(pages) > 1 else ""
         file_ids.append(await HOOKS["store_photo"](user["id"], data,
                                                    f"📝 Esse · {attempt['student_name']}{page} · {test['title']}"))
-    charge = await _teacher_charge(test["owner_id"]) if essay_ai.essay_enabled() else None
+    # AI faqat esse mockini tekshiradi; katta mock (45 savol) essesini ustoz baholaydi — kredit yechilmaydi
+    charge = await _teacher_charge(test["owner_id"]) if test["fmt"] == "esse" and essay_ai.essay_enabled() else None
     status = "pending" if charge else "manual"
     if not await run(db.get_essay, attempt["id"]):
         await run(db.create_essay, attempt["id"], None, file_ids, status)

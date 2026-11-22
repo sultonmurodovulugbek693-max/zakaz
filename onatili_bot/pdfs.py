@@ -190,12 +190,13 @@ def results_pdf(test: dict, attempts: list[dict]) -> bytes:
                             topMargin=12 * mm, bottomMargin=14 * mm, title=f"Natijalar — {test['title']}")
     width = page[0] - 24 * mm
     milliy = test["fmt"] == "milliy"
-    rasch = rasch_results(test, attempts) if milliy and attempts else {}
+    esse = test["fmt"] == "esse"  # esse mocki: savol yo'q, natija — esse bahosi (75 ballik) va daraja
+    rasch = rasch_results(test, attempts) if (milliy or esse) and attempts else {}
 
     unchecked = _unchecked_written(test, attempts)
     pending = [a for a in attempts if milliy and essay_pending(test, a)]
     story = [_banner(test, width), Spacer(1, 4 * mm), _summary_cards(test, attempts, rasch, width)]
-    if milliy and rasch and len(pending) < len(attempts):
+    if (milliy or esse) and rasch and len(pending) < len(attempts):
         story += [Spacer(1, 3 * mm), _grade_strip(rasch, width)]
     notes = []
     if pending:
@@ -207,10 +208,13 @@ def results_pdf(test: dict, attempts: list[dict]) -> bytes:
     if notes:
         story += [Spacer(1, 3 * mm), _notice("<br/>".join(notes), width)]
     story.append(Spacer(1, 5 * mm))
-    story.append(_milliy_table(test, attempts, rasch, width, unchecked) if milliy else _simple_table(test, attempts, width))
+    story.append(_milliy_table(test, attempts, rasch, width, unchecked) if milliy
+                 else _esse_table(attempts, rasch, width) if esse else _simple_table(test, attempts, width))
     if milliy:
         story += [Spacer(1, 4 * mm), Paragraph(_milliy_note(attempts), STYLES["small"])]
-    if len(attempts) >= ANALYSIS_MIN:
+    if esse:
+        story += [Spacer(1, 4 * mm), Paragraph(_esse_note(), STYLES["small"])]
+    if len(attempts) >= ANALYSIS_MIN and test["items"]:  # esse mockida savol yo'q — tahlil ham yo'q
         story += [PageBreak(), Paragraph("Savollar tahlili", STYLES["h1"]),
                   Paragraph("Har bir savolni necha foiz qatnashchi to'g'ri yechgani. "
                             "Qizil — qiyin (40% dan kam), sariq — o'rtacha, yashil — oson (70% va ko'p).", STYLES["small"]),
@@ -269,7 +273,8 @@ def _page_footer(c: canvas.Canvas, doc) -> None:
 
 
 def _banner(test: dict, width: float) -> Table:
-    title = "ONA TILI VA ADABIYOT — MOCK NATIJALARI" if test["fmt"] == "milliy" else "ONA TILI — TEST NATIJALARI"
+    title = {"milliy": "ONA TILI VA ADABIYOT — MOCK NATIJALARI",
+             "esse": "ONA TILI VA ADABIYOT — ESSE MOCK NATIJALARI"}.get(test["fmt"], "ONA TILI — TEST NATIJALARI")
     info = (f"{_esc(test['title'])}  ·  kod {test['code']}  ·  {format_title(test['fmt'], test['count'])}  ·  "
             f"{datetime.now():%d.%m.%Y %H:%M}")
     table = Table([[Paragraph(title, STYLES["banner"])], [Paragraph(info, STYLES["banner_sub"])]], colWidths=[width])
@@ -295,6 +300,16 @@ def _summary_cards(test: dict, attempts: list[dict], rasch: dict, width: float) 
             ("Eng yuqori ball", fmt_num(max(totals)) if totals else "—"),
             ("O'rtacha umumiy (75)", fmt_num(sum(s for s, _ in scores) / len(scores)) if scores else "—"),
             ("Sertifikat (C va yuqori)", f"{certified} ta" if scores else "—"),
+        ]
+    elif test["fmt"] == "esse":
+        scores = [rasch[a["id"]] for a in attempts if a["id"] in rasch]  # esse bahosi kiritilganlar
+        values = [score for score, _ in scores]
+        cards = [
+            ("Qatnashchilar", str(count)),
+            ("Baholangan", f"{len(scores)} ta"),
+            ("O'rtacha esse (75)", fmt_num(sum(values) / len(values)) if values else "—"),
+            ("Eng yuqori", fmt_num(max(values)) if values else "—"),
+            ("Sertifikat (C va yuqori)", f"{sum(1 for _, grade in scores if grade != 'NC')} ta" if scores else "—"),
         ]
     else:
         shares = [percent(a["test_correct"] + a["written_correct"], a["auto_total"]) for a in attempts] or [0]
@@ -367,6 +382,34 @@ def _milliy_table(test: dict, attempts: list[dict], rasch: dict, width: float, u
     table = Table(rows, colWidths=fixed + [width - sum(fixed)], repeatRows=1)
     table.setStyle(style)
     return table
+
+
+def _esse_table(attempts: list[dict], rasch: dict, width: float) -> Table:
+    """Esse mocki: o'rin, ism, esse bahosi (24 ballik va 75 ballik) va daraja."""
+    header = ["№", "F.I.Sh.", f"Esse\n({ESSAY_MAX})", f"Esse\n({ESSAY_SCALE})", "Daraja"]
+    rows = [header]
+    style = _table_style()
+    for place, attempt in enumerate(ranked(attempts, rasch), start=1):
+        score, grade = rasch.get(attempt["id"], (None, None))
+        rows.append([str(place), Paragraph(_esc(attempt["student_name"]), STYLES["cell"]),
+                     "—" if attempt["essay"] is None else fmt_num(attempt["essay"]),
+                     "baholanmagan" if score is None else fmt_num(score), grade or "—"])
+        if grade in GRADE_COLORS:
+            style.add("BACKGROUND", (4, place), (4, place), colors.HexColor(GRADE_COLORS[grade]))
+            style.add("TEXTCOLOR", (4, place), (4, place), colors.white)
+            style.add("FONT", (4, place), (4, place), "Sans-Bold", 9)
+    if len(rows) == 1:
+        rows.append(["", "Hali hech kim esse yubormagan", "", "", ""])
+    fixed = [10 * mm, 120 * mm, 25 * mm, 28 * mm]
+    table = Table(rows, colWidths=fixed + [width - sum(fixed)], repeatRows=1)
+    table.setStyle(style)
+    return table
+
+
+def _esse_note() -> str:
+    return ("<b>Esse</b> 24 ballik mezon bilan baholanadi va DTM jadvali bo'yicha 75 ballik shkalaga o'tkaziladi "
+            "(0 → 0; aks holda 27 + 2 × ball). Daraja — shu 75 ballik bahodan. Taxminiy natija, rasmiy emas.<br/>"
+            f"<b>Darajalar:</b> {GRADE_SCALE}.")
 
 
 def _simple_table(test: dict, attempts: list[dict], width: float) -> Table:
@@ -570,6 +613,8 @@ def _certificate(c: canvas.Canvas, page: tuple, test: dict, row: dict, teacher: 
     essay = row.get("essay")
     parts = [("Test qismi", f"{fmt_num(row['test'])} / 75" if row.get("test") is not None else None),
              ("Esse", f"{fmt_num(essay)} / 75" if essay is not None else None)]
+    if test["fmt"] == "esse":  # esse mocki: test qismi yo'q
+        parts = parts[1:]
     for index, (label, value) in enumerate(parts):
         y = band + 5 * mm - index * 13 * mm
         c.setFont("Sans", 10)
@@ -594,7 +639,8 @@ def _certificate(c: canvas.Canvas, page: tuple, test: dict, row: dict, teacher: 
     c.setFont("Sans", 7.5)
     c.setFillColor(GRID)
     c.drawCentredString(cx, 19.5 * mm, "Rasmiy sertifikat emas — o'quv mashg'uloti (mock imtihon) natijasi. "
-                                        "Ball DTM tartibida, Rasch modeli bo'yicha taxminiy hisoblangan.")
+                        + ("Esse bahosi DTM jadvali bo'yicha 75 ballik shkalada." if test["fmt"] == "esse" else
+                           "Ball DTM tartibida, Rasch modeli bo'yicha taxminiy hisoblangan."))
 
 
 # ---------- Sinf jadvali (Natijalar bo'limi) ----------

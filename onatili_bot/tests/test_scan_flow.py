@@ -113,7 +113,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         status, first = await self.upload(payload, essays=[b"\xff\xd8 bet1", b"\xff\xd8 bet2"])
         self.assertEqual(status, 200)
         self.assertTrue(first["written_queued"])
-        self.assertEqual(first["essay_status"], "pending")
+        self.assertEqual(first["essay_status"], "manual")  # katta mock essesini AI tekshirmaydi — ustoz baholaydi
         _, again = await self.upload(payload)
         self.assertEqual(again, first)  # tarmoq qayta yuborsa — ikkinchi natija yo'q
         self.assertEqual(len(db.list_attempts(self.test["id"])), 1)
@@ -213,7 +213,7 @@ class ScanFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page["waiting_essays"], 1)
         _, up = await self.upload({"uid": "e1", "student_id": self.student["id"], "variant": "A", "answers": self.answers})
         essay = db.get_essay(up["attempt_id"])
-        self.assertEqual((essay["text"], essay["status"]), (self.ESSAY, "pending"))
+        self.assertEqual((essay["text"], essay["status"], essay["charge"]), (self.ESSAY, "manual", None))  # AI yo'q, kredit yechilmaydi
         page = await (await self.client.get(f"/api/teacher/test/{self.test['id']}")).json()
         self.assertEqual(page["waiting_essays"], 0)
         # 2) Titul allaqachon bor — esse darhol biriktiriladi; o'sha akkaunt tuzatib qayta yuborsa ham

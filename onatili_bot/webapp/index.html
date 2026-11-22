@@ -1793,7 +1793,7 @@ function offlineEssay(t) {
         <input class="input" id="epin" inputmode="numeric" maxlength="4" placeholder="4 ta raqam" autocomplete="off" value="${esc(draft.pin || "")}"></div>
       <span class="muted small">🔐 Kod bilan yuborilgan esseni ID'ingizni bilgan boshqa odam almashtira olmaydi.</span>
     </div>
-    <div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+    <div class="section-title"><h2>45. Esse</h2><span class="muted small">o'qituvchi baholaydi</span></div>
     <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
       <textarea class="input" id="essay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
       <div class="counter" id="essay-count"></div></div>
@@ -2742,10 +2742,10 @@ VIEWS.teacher = async ({ id, tab }) => {
   const toResults = n ? `<button type="button" class="item" id="to-results"><span class="ico">📊</span>
       <span><b>Natijalar va sertifikatlar</b><small>O'rtacha ball, darajalar, PDF va mock sertifikatlar</small></span><span class="muted">›</span></button>` : "";
   const people = d.attempts.map((a, i) => `<button class="item" data-res="${a.id}"><span class="rank">${i + 1}</span>
-      <span><b>${esc(a.name)}</b><small>${t.variants.length > 1 ? `${a.variant} variant · ` : ""}${milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}${a.written_status === "pending" ? " · ⏳ AI yozmani o'qimoqda" : a.written_status === "failed" ? " · ❗ yozmani AI o'qiy olmadi" : ""}</small></span>
+      <span><b>${esc(a.name)}</b><small>${t.variants.length > 1 ? `${a.variant} variant · ` : ""}${t.fmt === "esse" ? (a.essay != null ? "esse baholandi" : a.essay_status === "pending" ? "⏳ AI tekshirmoqda" : a.essay_status === "graded" ? "🤖 AI taklifi — tasdiqlang" : a.essay_status === "failed" ? "❗ AI tekshira olmadi — o'zingiz baholang" : "esse baholanmagan") : milliy ? `test ${a.test_correct}/35 · yozma ${a.written_correct}/14` : `${a.test_correct}/${a.auto_total}`}${a.written_status === "pending" ? " · ⏳ AI yozmani o'qimoqda" : a.written_status === "failed" ? " · ❗ yozmani AI o'qiy olmadi" : ""}</small></span>
       <span class="score-col">${milliy
         ? a.essay_pending ? `<span class="pill-tag wait">⏳ esse kutilmoqda</span><small class="muted">natija esse bahosi bilan chiqadi</small>`
-        : `<span class="row" style="gap:8px"><b title="Umumiy ball (75): test qismi va esse o'rtachasi">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${num(a.total)} / ${num(t.max_points)} ball</small>`
+        : `<span class="row" style="gap:8px"><b title="Umumiy ball (75): test qismi va esse o'rtachasi">${num(a.rasch)}</b>${a.grade ? `<span class="grade-chip" style="background:${GRADE_COLORS[a.grade]}">${a.grade}</span>` : ""}</span><small class="muted">${t.fmt === "esse" ? "esse · 75 ballik" : `${num(a.total)} / ${num(t.max_points)} ball`}</small>`
         : `<b>${num(a.percent)}%</b><small class="muted">${a.test_correct + a.written_correct} / ${a.auto_total}</small>`}</span></button>`).join("");
   const heat = d.analysis.map((q, i) => `<div class="${q.share >= 70 ? "h-good" : q.share >= 40 ? "h-mid" : "h-bad"}" style="animation-delay:${i * .012}s"><b>${q.label}</b>${q.share}%</div>`).join("");
   const suggested = d.attempts.filter(a => a.essay == null && a.essay_status === "graded").length;

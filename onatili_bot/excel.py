@@ -25,13 +25,16 @@ CENTER = Alignment(horizontal="center", vertical="center")
 
 def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
     milliy = test["fmt"] == "milliy"
-    rasch = rasch_results(test, attempts) if milliy and attempts else {}
+    esse = test["fmt"] == "esse"  # esse mocki: savol yo'q — esse bahosi (24 va 75 ballik) va daraja
+    rasch = rasch_results(test, attempts) if (milliy or esse) and attempts else {}
     labels = [item["label"] for item in test["items"]]
     wb = Workbook()
 
     ws = wb.active
     ws.title = "Natijalar"
-    if milliy:
+    if esse:
+        head = ["O'rin", "F.I.Sh.", "Esse (24)", "Esse (75)", "Daraja"]
+    elif milliy:
         head = ["O'rin", "F.I.Sh.", "Variant", "Test (35)", "Yozma (14)", "Esse (75)",
                 f"Ball ({max_points(test['items'], test['fmt']):g})", "Umumiy (75)", "Daraja"]
     else:
@@ -39,7 +42,10 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
     ws.append(head + labels)
     for place, a in enumerate(ranked(attempts, rasch), 1):
         wrong = set(a["wrong"])
-        if milliy:
+        if esse:
+            score, grade = rasch.get(a["id"], (None, None))
+            row = [place, a["student_name"], a["essay"], score if score is not None else "baholanmagan", grade]
+        elif milliy:
             score, grade = rasch.get(a["id"], (None, None))
             pending = essay_pending(test, a)  # esse bahosi kiritilmagan — natija chiqmaydi
             row = [place, a["student_name"], a["variant"], a["test_correct"], a["written_correct"],
@@ -62,6 +68,10 @@ def results_xlsx(test: dict, attempts: list[dict]) -> bytes:
     ws.freeze_panes = "C2"
     ws.auto_filter.ref = ws.dimensions
 
+    if not labels:  # esse mocki — «Savollar» varag'i kerak emas
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        return buffer.getvalue()
     qs = wb.create_sheet("Savollar")
     qs.append(["Savol", "To'g'ri yechdi", "Qatnashchi", "Foiz", "Holati"])
     stats = []

@@ -131,9 +131,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         teacher = await asyncio.to_thread(db.find_user, str(test["owner_id"])) or {}
         if test["owner_id"] != user.id:
             await webapp.link_by_teacher({"id": test["owner_id"], "name": teacher.get("full_name")}, user.id)
+        when = (f"\n📅 {test['opens_at'][:10]} · {test['opens_at'][11:16]} ochiladi · {test['entry_until'][11:16]} gacha kirish"
+                if test.get("opens_at") and test.get("entry_until") else "")  # ustoz jadvalni olib tashlagan bo'lishi mumkin
         await message.answer(f"✅ <b>{esc(teacher.get('full_name') or 'Ustoz')}</b>ning o'quvchisisiz — mock va esse siz uchun bepul.\n"
-                             f"📢 <b>{esc(mock_name(test))}</b> · {esc(test['title'])}\n"
-                             f"📅 {test['opens_at'][:10]} · {test['opens_at'][11:16]} ochiladi · {test['entry_until'][11:16]} gacha kirish",
+                             f"📢 <b>{esc(mock_name(test))}</b> · {esc(test['title'])}{when}",
                              reply_markup=app_markup("✨ Mockni ochish", c=test["code"]))
         return
     if len(args) == 2 and args[1].startswith("m_") and args[1][2:].isdigit():  # kanal e'lonidan: «Bugungi mock»
@@ -478,8 +479,8 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
 
 
 async def notify_granted(bot: Bot, tg_id: int, status: dict) -> None:
-    limits = status.get("limits") or {}
-    ai = f"\n🤖 AI oyiga {limits['essays']} ta esseni tekshiradi." if limits else ""
+    # Tarifga esse tekshiruvi kirmaydi (plans.TARIFF_ESSAYS = 0): u 45-esse bo'limini ochadi, esselar — 📦 paketdan
+    ai = "\n📝 45-esse bo'limi ochildi. Esselarni AI tekshirishi — alohida, 📦 esse paketi (kredit) bilan."
     try:
         await bot.send_message(
             tg_id, f"🎉 <b>Obunangiz faollashdi</b>: {status['name']} · {status['expires']} gacha{ai}",
@@ -518,7 +519,7 @@ async def cmd_subscriptions(message: Message) -> None:
         if st["unlimited"]:
             lines.append(f"♾ {_who(sub)}\n    {st['name']} · cheksiz")
             continue
-        lines.append(f"{mark} {_who(sub)}\n    {st['name']} · {days} · esse {st['used']['essays']}/{st['limits']['essays']}"
+        lines.append(f"{mark} {_who(sub)}\n    {st['name']} · {days} · shu oy {st['used']['essays']} ta esse"
                      + (f" · 📦 {st['credits']}" if st["credits"] else ""))
     text, chunk = "\n".join(lines), ""
     for line in text.split("\n"):
@@ -543,10 +544,10 @@ async def cmd_prices(message: Message) -> None:
     trial = await asyncio.to_thread(plans.trial_days)
     contact = f"\n\nSavol bo'lsa: @{esc(config.ADMIN_CONTACT)}" if config.ADMIN_CONTACT else ""
     prices = await asyncio.to_thread(plans.price_list)
-    limits, offer = await asyncio.to_thread(plans.limits), await asyncio.to_thread(plans.pack)
+    offer = await asyncio.to_thread(plans.pack)
     await message.answer(f"💎 <b>Obuna narxlari</b>\n{prices}\n\n"
-                         f"🤖 Obunada AI oyiga {limits['essays']} ta esseni tekshiradi.\n"
-                         f"📦 Qo'shimcha: +{offer['essays']} esse — {plans.money(offer['price'])} so'm\n\n"
+                         "📝 Obuna 45-esse bo'limini ochadi. Esselarni AI tekshirishi — alohida:\n"
+                         f"📦 +{offer['essays']} esse — {plans.money(offer['price'])} so'm\n\n"
                          + (f"Yangi o'qituvchiga {trial} kunlik bepul sinov.\n" if trial else "")
                          + "Sotib olish: ilovadagi «💎 Obuna» tugmasi — kartaga o'tkazasiz, chekni shu yerga "
                            "yuborasiz, admin tasdiqlaydi." + contact,
@@ -1366,7 +1367,6 @@ SETTING_FIELDS = {
     "card_number": ("💳 Karta raqamini yuboring (masalan <code>8600 1234 5678 9012</code>)", False),
     "card_holder": ("👤 Karta egasining ism-familiyasini yuboring", False),
     "trial_days": ("⏳ Bepul sinov necha kun bo'lsin? <code>0</code> — sinov o'chiq", True),
-    "ai_essays": ("🤖 Obunada oyiga nechta esseni AI tekshirsin? (har bir o'qituvchiga)", True),
     "pack_essays": ("📦 Bitta esse paketida nechta esse bo'lsin?", True),
     "platform_share": ("🏦 Begona o'qituvchining begonalari to'lagan puldan platformaga necha foiz? "
                        "(<code>80</code> — 80%, <code>0</code> — o'chiq: pul o'qituvchi kartasiga)", True),
@@ -1379,15 +1379,13 @@ async def settings_panel() -> tuple[str, InlineKeyboardMarkup]:
     card = await asyncio.to_thread(plans.card)
     offers = await asyncio.to_thread(plans.offers)
     trial = await asyncio.to_thread(plans.trial_days)
-    limits = await asyncio.to_thread(plans.limits)
     offer = await asyncio.to_thread(plans.pack)
     lines = [
         "💎 <b>Obuna sozlamalari</b>", LINE,
         f"💳 Karta: <code>{esc(card['number']) or '— kiritilmagan'}</code>"
         + (f"\n👤 Egasi: {esc(card['holder'])}" if card["holder"] else ""),
         f"⏳ Bepul sinov: <b>{trial}</b> kun" + (" <i>(o'chiq — darhol obuna kerak)</i>" if not trial else ""),
-        f"🤖 Obunada AI: oyiga <b>{limits['essays']}</b> ta esse",
-        f"📦 Esse paketi: +{offer['essays']} ta — <b>{plans.money(offer['price'])} so'm</b>",
+        f"📦 Esse paketi: +{offer['essays']} ta — <b>{plans.money(offer['price'])} so'm</b> (obunaga esse kirmaydi)",
         f"🏦 Begonalar puli: platformaga <b>{plans.platform_share()}%</b>, o'qituvchiga {100 - plans.platform_share()}% · "
         f"esse kamida {plans.money(plans.min_essay_price())} so'm · yechish {plans.money(plans.withdraw_min())} so'mdan",
         "", "<b>Narxlar</b> — tugma bosib o'zgartiring:",
@@ -1620,7 +1618,13 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
 
 def result_text(attempt: dict, test: dict, rasch: tuple[float, str] | None, multi_variant: bool = False) -> str:
     lines = [f"👤 <b>{esc(attempt['student_name'])}</b>" + (f" · {attempt['variant']} variant" if multi_variant else "")]
-    if test["fmt"] == "milliy":
+    if test["fmt"] == "esse":  # esse mocki: natija — essening o'zi (75 ballik), test qismi yo'q
+        if attempt["essay"] is None:
+            lines.append("📝 Esse: hali baholanmagan — baholangach bot xabar beradi")
+        else:
+            lines.append(f"📝 Esse: <b>{fmt_num(essay_to_75(attempt['essay']))}</b> / {ESSAY_SCALE}"
+                         + (f" · Daraja: <b>{rasch[1]}</b>" if rasch else ""))
+    elif test["fmt"] == "milliy":
         top = max_points(test["items"], test["fmt"])
         lines.append(f"🧩 Test: <b>{attempt['test_correct']}</b>/{len(choice_items(test['items']))} · "
                      f"✍️ Yozma: <b>{attempt['written_correct']}</b>/{len(text_items(test['items']))}"
@@ -1661,7 +1665,7 @@ async def announce_test(bot: Bot, test: dict, owner_chat: int) -> int:
     await asyncio.to_thread(db.set_closed, test["id"], True)
     test["closed"] = 1
     attempts = await asyncio.to_thread(db.list_attempts, test["id"])
-    rasch = await asyncio.to_thread(rasch_results, test, attempts) if test["fmt"] == "milliy" else {}
+    rasch = await asyncio.to_thread(rasch_results, test, attempts) if test["fmt"] in ("milliy", "esse") else {}
     multi_variant = len(await asyncio.to_thread(db.get_keys, test["id"])) > 1
     sent = 0
     for attempt in announce_targets(attempts):
@@ -1892,8 +1896,9 @@ async def finish_mock(bot: Bot, test: dict, now) -> None:
         if test.get("mock_state") != "teacher":
             await asyncio.to_thread(db.set_mock_state, test["id"], "teacher")
             await send_with_retry(
-                bot, test["owner_id"], f"✍️ <b>{esc(test['title'])}</b>: mock yopildi. <b>{unrated} ta</b> o'quvchi essesini "
-                "siz tekshirishingizni tanlagan — «📝 Esselar»da 75 ballik shkalada baholang.\n"
+                bot, test["owner_id"], f"✍️ <b>{esc(test['title'])}</b>: mock yopildi. <b>{unrated} ta</b> esse sizning "
+                "bahoingizni kutmoqda (o'quvchi sizni tanlagan yoki AI tekshira olmagan) — «📝 Esselar»da 75 ballik "
+                "shkalada baholang.\n"
                 "Hammasi baholangach natijalar va sertifikatlar o'zi yuboriladi.",
                 reply_markup=app_markup("📝 Esselarni ochish", t=test["id"]))
         return
@@ -1944,8 +1949,8 @@ async def essay_notice(bot: Bot, test: dict, attempt: dict, score: float) -> Non
     try:
         await bot.send_message(
             attempt["tg_id"],
-            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b>\n"
-            f"💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>",
+            f"✍️ <b>{esc(test['title'])}</b>\nEsse bahoyingiz yangilandi: <b>{fmt_num(essay_to_75(score))}/{ESSAY_SCALE}</b>"
+            + ("" if test["fmt"] == "esse" else f"\n💯 Jami ball: <b>{fmt_num(total_points(attempt))}/{top}</b>"),
             reply_markup=app_markup("◈ Natija kartasi", r=attempt["id"]),
         )
     except Exception:
@@ -2307,7 +2312,7 @@ async def scan_batch_notice(bot: Bot, chat_id: int, test: dict, saved: int, writ
     lines = [f"📥 <b>Skaner</b> · {esc(test['title'])} (kod {test['code']})",
              f"✅ Qabul qilindi: <b>{saved}</b> ta titul"]
     if essays:
-        lines.append(f"📝 Esse varaqalari: {essays} ta — AI navbatida")
+        lines.append(f"📝 Esse varaqalari: {essays} ta — «📝 Esselar»da 75 ballik shkalada baholang")
     if written:
         lines.append(f"✍️ Yozma javoblar AI'da o'qilmoqda ({written} ta) — tugagach xabar beraman")
     if failed:
@@ -2373,22 +2378,26 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
         logger.warning("Esse natijasi o'quvchiga yuborilmadi")
 
 
-async def refund_essay_charge(bot: Bot, attempt_id: int, charge: str) -> None:
-    """AI esseni tekshira olmadi: yechilgan kredit qaytadi — o'quvchiniki (wallet) yoki ustozniki (teacher)."""
+async def essay_gave_up(bot: Bot, attempt_id: int, charge: str | None) -> None:
+    """AI esseni tekshira olmadi (urinishlar tugadi): yechilgan kredit qaytadi — o'quvchiniki (wallet) yoki ustozniki
+    (teacher) — va o'quvchiga xabar: esse ustozga o'tdi (mock natijasi ustoz baholagach chiqadi)."""
     attempt = await asyncio.to_thread(db.get_attempt, attempt_id)
     test = attempt and await asyncio.to_thread(db.get_test, attempt["test_id"])
     if not test:
         return
     if charge == "wallet":
         await asyncio.to_thread(db.wallet_add, test["owner_id"], attempt["tg_id"], 1)
-        try:
-            await bot.send_message(attempt["tg_id"], f"❗️ <b>{esc(test['title'])}</b>: AI essengizni tekshira olmadi — "
-                                   "1 kreditingiz qaytarildi. Essengizni ustoz baholaydi.")
-        except Exception:
-            logger.warning("Kredit qaytgani haqida o'quvchiga yozilmadi: %s", attempt["tg_id"])
     elif charge == "teacher" and not plans.ai_unlimited(test["owner_id"]):
         await asyncio.to_thread(db.add_credits, test["owner_id"], 1)
-    logger.info("Esse krediti qaytarildi (%s): attempt=%s", charge, attempt_id)
+    if charge:
+        logger.info("Esse krediti qaytarildi (%s): attempt=%s", charge, attempt_id)
+    if attempt["tg_id"] > 0:  # titul (qog'oz) natijasida Telegram yo'q
+        try:
+            await bot.send_message(attempt["tg_id"], f"❗️ <b>{esc(test['title'])}</b>: AI essengizni tekshira olmadi — "
+                                   + ("1 kreditingiz qaytarildi. " if charge == "wallet" else "")
+                                   + "Essengizni ustoz baholaydi, natija shundan keyin chiqadi.")
+        except Exception:
+            logger.warning("AI esseni tekshira olmagani haqida o'quvchiga yozilmadi: %s", attempt["tg_id"])
 
 
 async def grade_one(bot: Bot, essay: dict) -> None:
@@ -2398,8 +2407,8 @@ async def grade_one(bot: Bot, essay: dict) -> None:
     except essay_ai.AIError as error:
         give_up = not error.retry or essay["tries"] + 1 >= ESSAY_MAX_TRIES
         charge = await asyncio.to_thread(db.essay_failed, essay["attempt_id"], str(error), give_up)
-        if charge:
-            await refund_essay_charge(bot, essay["attempt_id"], charge)
+        if give_up:
+            await essay_gave_up(bot, essay["attempt_id"], charge)
         if error.retry and not give_up:
             raise  # limit/tarmoq — butun navbat biroz kutadi
         return
@@ -2928,9 +2937,10 @@ def practice_result_text(result: dict, words: int | None) -> str:
         lines.append(f"✍️ {words} so'z")
     lines.append(LINE)
     for item in result.get("criteria", []):
-        mark = "✅" if item["score"] == 2 else "🟡" if item["score"] == 1 else "❌"
+        score = item["score"]  # rasmiy mezonda 0,5 qadam: 2 / 1,5 / 1 / 0,5
+        mark = "✅" if score >= 2 else "🟡" if score >= 1 else "❌"
         comment = item.get("comment", "")
-        lines.append(f"{mark} <b>{esc(essay_ai.RUBRIC_TITLES.get(item['key'], item['key']))}</b>: {item['score']}/2"
+        lines.append(f"{mark} <b>{esc(essay_ai.RUBRIC_TITLES.get(item['key'], item['key']))}</b>: {fmt_num(score)}/2"
                      + (f" — {esc(comment[:160])}" if comment else ""))
     if result.get("comment"):
         lines += [LINE, f"💬 {esc(result['comment'][:600])}"]

@@ -1535,10 +1535,12 @@ def set_mock_prices(test_id: int, price_ai: int, price_teacher: int) -> None:
 
 
 def unrated_teacher_essays(test_id: int) -> int:
-    """«Ustoz tekshirsin» tanlangan, hali baholanmagan esselar (natija shular baholangach chiqadi)."""
+    """Ustoz bahosini kutayotgan esselar: «Ustoz tekshirsin» tanlangan yoki AI tekshira olmagan (failed) — natija
+    shular baholangach chiqadi (pul to'lagan o'quvchi natijasiz qolib ketmasin)."""
     with connect() as conn:
         return conn.execute("SELECT COUNT(*) AS n FROM essays e JOIN attempts a ON a.id = e.attempt_id "
-                            "WHERE a.test_id = ? AND e.status = 'manual' AND a.essay IS NULL", (test_id,)).fetchone()["n"]
+                            "WHERE a.test_id = ? AND e.status IN ('manual', 'failed') AND a.essay IS NULL",
+                            (test_id,)).fetchone()["n"]
 
 
 def pending_essays_of_test(test_id: int) -> int:
