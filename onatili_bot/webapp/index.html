@@ -1557,13 +1557,29 @@ function mockBoardHTML(m) {
     <span class="muted small">👥 ${m.total} kishi qatnashdi${m.owner ? ` · ${esc(m.owner)}` : ""}</span></div>`;
 }
 
+// Taxta bo'limi: oxirgi kunlar ochiq, eskilari «🗄 Arxiv» ichida (o'quvchi va o'qituvchi natijalarida bir xil)
+function boardSectionHTML(board, withTitle = true) {
+  const fresh = board.mocks.filter(m => m.fresh), old = board.mocks.filter(m => !m.fresh);
+  if (!fresh.length && !old.length) return withTitle ? "" : `<div class="card empty"><div class="big">🏆</div>Hali e'lon qilingan mock yo'q.</div>`;
+  return `${fresh.length ? `${withTitle ? `<div class="section-title"><h2>🏆 Mock natijalari</h2><span class="muted small">oxirgi ${board.fresh_days} kun</span></div>` : ""}
+    ${fresh.map(mockBoardHTML).join("")}` : ""}
+    ${old.length ? `<div class="section-title"><h2>🗄 Arxiv</h2><span class="muted small">${old.length} ta mock</span></div>
+    <div class="card" style="padding:0"><button type="button" class="item" data-arch-open><span class="ico">🗄</span>
+      <span><b>Oldingi mocklar</b><small>${esc(dmy(old[old.length - 1].date))} — ${esc(dmy(old[0].date))}</small></span><span class="muted">›</span></button></div>
+    <div data-arch-box hidden class="board-box" style="margin-top:10px">${old.map(mockBoardHTML).join("")}</div>` : ""}`;
+}
+function bindBoardSection() {
+  document.querySelectorAll("[data-arch-open]").forEach(btn => btn.onclick = () => {
+    const box = document.querySelector("[data-arch-box]"); if (box) box.hidden = !box.hidden; haptic("light");
+  });
+}
+
 VIEWS.myresults = async () => {
   const b = await boot(); if (!b) return;
   const ready = b.attempts.filter(a => a.announced).length;
   const essays = b.essays || [];
   let board = { mocks: [], fresh_days: 2 };
   try { board = await api("/api/mock-board"); } catch (e) {}
-  const fresh = board.mocks.filter(m => m.fresh), old = board.mocks.filter(m => !m.fresh);
   // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
   const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
@@ -1571,12 +1587,7 @@ VIEWS.myresults = async () => {
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
       <h1>Mening natijalarim</h1><span class="muted small">${b.attempts.length} ta test · ${ready} ta natija tayyor${essays.length ? ` · ${essays.length} ta esse` : ""}</span></div></div>
-    ${fresh.length ? `<div class="section-title"><h2>🏆 Mock natijalari</h2><span class="muted small">oxirgi ${board.fresh_days} kun</span></div>
-    ${fresh.map(mockBoardHTML).join("")}` : ""}
-    ${old.length ? `<div class="section-title"><h2>🗄 Arxiv</h2><span class="muted small">${old.length} ta mock</span></div>
-    <div class="card" style="padding:0"><button type="button" class="item" id="arch-open"><span class="ico">🗄</span>
-      <span><b>Oldingi mocklar</b><small>${esc(dmy(old[old.length - 1].date))} — ${esc(dmy(old[0].date))}</small></span><span class="muted">›</span></button></div>
-    <div id="arch-box" hidden class="board-box" style="margin-top:10px">${old.map(mockBoardHTML).join("")}</div>` : ""}
+    ${boardSectionHTML(board)}
     ${essays.length ? `<div class="section-title"><h2>✍️ Esselarim</h2><span class="muted small">o'zim tekshirtirganlar</span></div>
     <div class="list">${essayRows}</div>
     <div class="section-title"><h2>📝 Testlarim</h2></div>` : ""}
@@ -1584,8 +1595,7 @@ VIEWS.myresults = async () => {
       <span>«Bosh» bo'limida o'qituvchingiz bergan kodni kiriting.</span></div>`}</div>
   </div>`;
   document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
-  const arch = document.getElementById("arch-open");
-  if (arch) arch.onclick = () => { const box = document.getElementById("arch-box"); box.hidden = !box.hidden; haptic("light"); };
+  bindBoardSection();
   bindHomeActions();
 };
 
@@ -4244,6 +4254,8 @@ async function sendCerts(testId, payload, btn) {
 VIEWS.results = async ({ seg } = {}) => {
   loading();
   let r; try { r = await api("/api/teacher/results"); } catch (e) { return fail(e); }
+  let board = { mocks: [], fresh_days: 2 };
+  try { board = await api("/api/mock-board"); } catch (e) {}
   seg = seg || store("resultsSeg") || "classes";
   const classes = r.classes.map(c => `<button type="button" class="item" data-cr="${c.id}"><span class="ico">👥</span>
       <span><b>${esc(c.name)}</b><small>${c.students} ta o'quvchi · ${c.tests ? `${c.tests} ta test` : "hali natija yo'q"}</small></span><span class="muted">›</span></button>`).join("");
@@ -4253,11 +4265,13 @@ VIEWS.results = async ({ seg } = {}) => {
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span><h1>Natijalar</h1>
       <span class="muted small">Sinf yoki testni tanlang — ballar, PDF jadval va mock sertifikatlar.</span></div></div>
-    <div class="tabs bar"><button class="${seg === "classes" ? "on" : ""}" data-seg="classes">👥 Sinflar · ${r.classes.length}</button><button class="${seg === "tests" ? "on" : ""}" data-seg="tests">📝 Testlar · ${r.tests.length}</button></div>
+    <div class="tabs bar"><button class="${seg === "classes" ? "on" : ""}" data-seg="classes">👥 Sinflar · ${r.classes.length}</button><button class="${seg === "tests" ? "on" : ""}" data-seg="tests">📝 Testlar · ${r.tests.length}</button><button class="${seg === "mocks" ? "on" : ""}" data-seg="mocks">🏆 Mocklar · ${board.mocks.length}</button></div>
     <div data-pane="classes" ${seg === "classes" ? "" : "hidden"}><div class="list">${classes || `<div class="card empty"><div class="big">👥</div><b>Hali sinf yo'q</b><span>«Sinflar» bo'limida sinf yarating va titulli testning «🗂 Ro'yxat» bo'limida qo'shing — natijalar shu yerda yig'iladi.</span></div>`}</div>
       ${classes ? `<span class="muted small">Sinf natijalari titulli testlardan o'quvchining doimiy ID'si orqali yig'iladi.</span>` : ""}</div>
     <div data-pane="tests" ${seg === "tests" ? "" : "hidden"}><div class="list">${tests || `<div class="card empty"><div class="big">📝</div>Hali natijasi bor test yo'q.</div>`}</div></div>
+    <div data-pane="mocks" class="board-box" ${seg === "mocks" ? "" : "hidden"}>${boardSectionHTML(board, false)}</div>
   </div>`;
+  bindBoardSection();
   document.querySelectorAll("[data-seg]").forEach(x => x.onclick = () => {
     const to = x.dataset.seg; store("resultsSeg", to); S.current.params = { seg: to }; haptic("select");
     document.querySelectorAll("[data-seg]").forEach(b => b.classList.toggle("on", b === x));
