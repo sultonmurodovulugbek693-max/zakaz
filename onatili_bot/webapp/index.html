@@ -223,6 +223,13 @@ html.dark .quick-action i { background: #20302a; }
 .essay-wait .spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .essay-self { display: grid; gap: 10px; }
+.board-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 2px; border-top: 1px solid var(--line); font-size: 14px; }
+.board-row:first-child { border-top: 0; }
+.board-row i { font-style: normal; font-weight: 800; color: var(--muted); text-align: center; }
+.board-row b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-row span { font-weight: 800; }
+.board-row.me { background: var(--accent-soft); border-radius: 8px; padding-left: 4px; padding-right: 6px; }
+.board-box { display: grid; gap: 10px; }
 .essay-score { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .essay-score b { font-family: var(--font-display); font-size: 40px; line-height: 1; }
 .essay-score span { font-size: 16px; color: var(--muted); font-weight: 700; }
@@ -1536,10 +1543,27 @@ VIEWS.tests = async () => {  // «Testlar» endi bosh sahifada — eski havolala
   return go("home", {}, true);
 };
 
+// ---------- Natijalar bo'limi: e'lon qilingan ommaviy mocklar taxtasi (1-o'rin — muhr) ----------
+const shortName = n => { const p = String(n || "").trim().split(/\s+/); return p.slice(0, 1).concat(p.slice(1, 2).map(x => x[0] + ".")).join(" ") || "O'quvchi"; };
+const medal = i => ["🥇", "🥈", "🥉"][i] || String(i + 1);
+function mockBoardHTML(m) {
+  const first = m.top[0];
+  return `<div class="card board-box">
+    <div class="row between"><b>${esc(m.title)}</b><span class="muted small">${esc(dmy(m.date))}</span></div>
+    ${m.topic ? `<span class="muted small">${esc(m.topic.slice(0, 140))}</span>` : ""}
+    ${first ? `<div class="stamp-drop ${essayLevel(first.score)[0]}"><b>${num(first.score)}</b><span>${esc(shortName(first.name))}</span><small>1-o'rin · ${m.max} dan</small></div>` : ""}
+    ${m.top.length > 1 ? `<div>${m.top.slice(1).map((r, i) => `<div class="board-row"><i>${medal(i + 1)}</i><b>${esc(shortName(r.name))}</b><span>${num(r.score)}</span></div>`).join("")}</div>` : ""}
+    ${m.my_place ? `<div class="board-row me"><i>${medal(m.my_place - 1)}</i><b>Siz</b><span>${num(m.my_score)}</span></div>` : ""}
+    <span class="muted small">👥 ${m.total} kishi qatnashdi${m.owner ? ` · ${esc(m.owner)}` : ""}</span></div>`;
+}
+
 VIEWS.myresults = async () => {
   const b = await boot(); if (!b) return;
   const ready = b.attempts.filter(a => a.announced).length;
   const essays = b.essays || [];
+  let board = { mocks: [], fresh_days: 2 };
+  try { board = await api("/api/mock-board"); } catch (e) {}
+  const fresh = board.mocks.filter(m => m.fresh), old = board.mocks.filter(m => !m.fresh);
   // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
   const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
@@ -1547,6 +1571,12 @@ VIEWS.myresults = async () => {
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
       <h1>Mening natijalarim</h1><span class="muted small">${b.attempts.length} ta test · ${ready} ta natija tayyor${essays.length ? ` · ${essays.length} ta esse` : ""}</span></div></div>
+    ${fresh.length ? `<div class="section-title"><h2>🏆 Mock natijalari</h2><span class="muted small">oxirgi ${board.fresh_days} kun</span></div>
+    ${fresh.map(mockBoardHTML).join("")}` : ""}
+    ${old.length ? `<div class="section-title"><h2>🗄 Arxiv</h2><span class="muted small">${old.length} ta mock</span></div>
+    <div class="card" style="padding:0"><button type="button" class="item" id="arch-open"><span class="ico">🗄</span>
+      <span><b>Oldingi mocklar</b><small>${esc(dmy(old[old.length - 1].date))} — ${esc(dmy(old[0].date))}</small></span><span class="muted">›</span></button></div>
+    <div id="arch-box" hidden class="board-box" style="margin-top:10px">${old.map(mockBoardHTML).join("")}</div>` : ""}
     ${essays.length ? `<div class="section-title"><h2>✍️ Esselarim</h2><span class="muted small">o'zim tekshirtirganlar</span></div>
     <div class="list">${essayRows}</div>
     <div class="section-title"><h2>📝 Testlarim</h2></div>` : ""}
@@ -1554,6 +1584,8 @@ VIEWS.myresults = async () => {
       <span>«Bosh» bo'limida o'qituvchingiz bergan kodni kiriting.</span></div>`}</div>
   </div>`;
   document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
+  const arch = document.getElementById("arch-open");
+  if (arch) arch.onclick = () => { const box = document.getElementById("arch-box"); box.hidden = !box.hidden; haptic("light"); };
   bindHomeActions();
 };
 
@@ -1632,7 +1664,7 @@ VIEWS.answer = async ({ code }) => {
     return fail(e);
   }
   if (t.mode === "offline") return offlineEssay(t);  // titulli test: test qog'ozda, esse shu yerda
-  if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "milliy" ? t.submitted : null }); }
+  if (t.submitted) { return t.closed ? go("result", { id: t.submitted }, true) : done({ title: t.title, already: true, attemptId: t.fmt === "oddiy" ? null : t.submitted }); }
   if (t.closed) return fail(new Error("Bu testning natijalari e'lon qilingan — javob qabul qilinmaydi"));
   const choices = t.items.filter(i => i.kind === "choice"), texts = t.items.filter(i => i.kind === "text");
   const draftKey = "draft-" + t.code;
@@ -1646,31 +1678,34 @@ VIEWS.answer = async ({ code }) => {
       <div class="field"><label for="name">Ism va familiya</label><input class="input" id="name" autocomplete="name" value="${esc(draft.name || t.last_name || "")}" placeholder="Masalan: Ali Valiyev"></div>
       ${t.variants.length > 1 ? `<div class="field"><label>Variant</label><div class="chips">${t.variants.map(v => `<button type="button" class="chip ${v === variant ? "on" : ""}" data-v="${v}">${v} variant</button>`).join("")}</div></div>` : ""}
     </div>
-    <div class="sheet-progress"><div class="row between small"><b id="prog-text"></b><span class="muted" id="prog-written"></span></div><div class="track"><i id="prog"></i></div></div>
+    ${t.fmt === "esse" ? "" : `<div class="sheet-progress"><div class="row between small"><b id="prog-text"></b><span class="muted" id="prog-written"></span></div><div class="track"><i id="prog"></i></div></div>
     <div class="section-title"><h2>Test savollari</h2><span class="muted small">bosib belgilang</span></div>
-    ${bubbleSheet(t.items, answers)}
+    ${bubbleSheet(t.items, answers)}`}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar</h2><span class="muted small">${texts[0].label}–${texts[texts.length - 1].label}</span></div>
       <div class="card">${texts.map(i => `<div class="textq"><b>${i.label}</b><input class="input wq" data-q="${i.label}" value="${esc(written[i.label] || "")}" placeholder="Javob" autocomplete="off"></div>`).join("")}</div>` : ""}
-    ${t.fmt === "milliy" && t.essay_open === false ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">yopiq</span></div>
+    ${t.fmt !== "oddiy" && t.essay_open === false ? `<div class="section-title"><h2>${t.fmt === "esse" ? "✍️ Esse" : "45. Esse"}</h2><span class="muted small">yopiq</span></div>
       <div class="card"><span class="small">🔒 Bu testda esse bo'limi yopiq — ustozingizda tarif yo'q. Test savollarini yechib, javoblarni yuboravering.</span></div>` : ""}
-    ${t.fmt === "milliy" && t.essay_open !== false && t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">to'lovdan keyin</span></div>
+    ${t.fmt !== "oddiy" && t.essay_open !== false && t.essay_pay ? `<div class="section-title"><h2>${t.fmt === "esse" ? "✍️ Esse" : "45. Esse"}</h2><span class="muted small">to'lovdan keyin</span></div>
       ${t.essay_topic ? `<div class="card"><div class="topic">${esc(t.essay_topic)}</div></div>` : ""}${essayPayHTML(t.essay_pay)}` : ""}
-    ${t.fmt === "milliy" && t.essay_open !== false && !t.essay_pay ? `<div class="section-title"><h2>45. Esse</h2><span class="muted small">${t.ai && !t.essay_warning ? "AI tekshiradi" : "o'qituvchi baholaydi"}</span></div>
+    ${t.fmt !== "oddiy" && t.essay_open !== false && !t.essay_pay ? `<div class="section-title"><h2>${t.fmt === "esse" ? "✍️ Esse" : "45. Esse"}</h2><span class="muted small">${t.fmt !== "esse" ? "ball qo'lda kiritiladi" : t.ai && !t.essay_warning ? "AI tekshiradi" : "ekspert baholaydi"}</span></div>
       ${t.essay_warning ? `<div class="card" style="border:1.5px solid var(--warn)"><span class="small">⚠️ ${esc(t.essay_warning)}</span></div>` : ""}
       ${t.wallet ? `<div class="card"><span class="small">💳 Kreditingiz: <b>${t.wallet.balance} ta</b> — esse bilan yuborsangiz 1 kredit yechiladi (chek kerak emas).</span></div>` : ""}
       <div class="card">${t.essay_topic ? `<div class="topic">${esc(t.essay_topic)}</div>` : ""}
         <textarea class="input" id="essay" rows="9" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
         <div class="counter" id="essay-count"></div></div>
       ${(t.readers || []).length ? essayScanHTML(t.readers, store("essay-reader")) : ""}` : ""}
-    <div class="sticky-bottom"><div><button class="btn block" id="submit">Javoblarni yuborish</button></div></div>
+    <div class="sticky-bottom"><div><button class="btn block" id="submit">${t.fmt === "esse" ? "Esseni yuborish" : "Javoblarni yuborish"}</button></div></div>
   </div>`;
   const nameEl = document.getElementById("name"), essayEl = document.getElementById("essay");
   function save() { store(draftKey, JSON.stringify({ answers, written, variant, name: nameEl.value, essay: essayEl ? essayEl.value : "" })); }
   function progress() {
     const n = Object.keys(answers).length, w = Object.values(written).filter(x => x && x.trim()).length;
-    document.getElementById("prog").style.width = (n / choices.length * 100) + "%";
-    document.getElementById("prog-text").textContent = `Belgilandi: ${n} / ${choices.length}`;
-    document.getElementById("prog-written").textContent = texts.length ? `Yozma: ${w} / ${texts.length}` : "";
+    const bar = document.getElementById("prog");  // esse mockida test savollari yo'q — chiziq ham yo'q
+    if (bar) {
+      bar.style.width = (n / choices.length * 100) + "%";
+      document.getElementById("prog-text").textContent = `Belgilandi: ${n} / ${choices.length}`;
+      document.getElementById("prog-written").textContent = texts.length ? `Yozma: ${w} / ${texts.length}` : "";
+    }
     if (essayEl) { const words = essayEl.value.trim() ? essayEl.value.trim().split(/\s+/).length : 0; document.getElementById("essay-count").textContent = `${words} so'z · ${essayEl.value.length} belgi`; }
     save(); pingSoon();
   }
@@ -1703,19 +1738,21 @@ VIEWS.answer = async ({ code }) => {
     const missing = choices.length - Object.keys(answers).length;
     const essay = essayEl ? essayEl.value.trim() : "";
     if (essay && essay.length < 200 && !auto) { toast("Esse juda qisqa — to'liq yozing yoki bo'sh qoldiring"); haptic("error"); return; }
+    if (t.fmt === "esse" && !essay) { toast("Esseni yozing"); haptic("error"); return essayEl && essayEl.focus(); }
     const warn = [missing ? `${missing} ta savol belgilanmagan` : "", t.fmt === "milliy" && t.essay_open !== false && !essay ? (t.essay_pay ? "esse to'lanmagan — essesiz yuboriladi" : "esse yozilmagan") : ""].filter(Boolean).join(", ");
+    const ask = t.fmt === "esse" ? "Esseni yuborasizmi?" : "Javoblarni yuborasizmi?";
     if (auto) toast("⏰ Vaqt tugadi — javoblaringiz yuborilmoqda");
-    if (!auto && !(await confirmBox(`Javoblarni yuborasizmi?${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
+    if (!auto && !(await confirmBox(`${ask}${warn ? "\n\n⚠️ " + warn : ""}\n\nYuborgandan keyin o'zgartirib bo'lmaydi.`))) return;
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Yuborilmoqda…";
     try {
       const res = await api(`/api/test/${t.code}/submit`, { variant, name, answers: { ...answers, ...written }, essay: auto && essay.length < 200 ? "" : essay });
       sent = true; clearInterval(S.pingTimer); clearTimeout(pingWait);
       store(draftKey, "{}"); S.boot = null; haptic("success");
-      done({ title: t.title, attemptId: t.fmt === "milliy" ? res.attempt_id : null });
+      done({ title: t.title, attemptId: t.fmt === "oddiy" ? null : res.attempt_id });
     } catch (e) {
       if (e.data && e.data.channels) { toast(e.message); haptic("error"); return testGate(t.code, e.data.channels); }  // javoblar qoralamada saqlangan
       if (e.data && e.data.essay_pay) { toast(e.message); haptic("error"); save(); return rerender(); }
-      toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Javoblarni yuborish";
+      toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = t.fmt === "esse" ? "Esseni yuborish" : "Javoblarni yuborish";
     }
   };
   document.getElementById("submit").onclick = () => submitNow(false);
@@ -1847,8 +1884,13 @@ function myEssayHTML(e) {
 VIEWS.result = async ({ id }) => {
   loading();
   let r; try { r = await api(`/api/result/${id}`); } catch (e) { return fail(e); }
-  const a = r.attempt, t = r.test, milliy = t.fmt === "milliy";
-  const card = milliy ? resultCard(t.theme, {
+  const a = r.attempt, t = r.test, esseOnly = t.fmt === "esse", milliy = t.fmt !== "oddiy";
+  const card = esseOnly ? resultCard(t.theme, {
+    kind: "Esse mock", code: t.code, name: a.name, sub: t.title, value: a.essay_75 || 0, max: r.essay_scale || 75,
+    of: `/ ${num(r.essay_scale || 75)} ball`, gradeLabel: "Daraja", grade: r.rasch ? r.rasch.grade : "—",
+    gradeSub: a.essay_75 != null ? "Esse 75 ballik shkalada" : "esse hali baholanmagan",
+    parts: [["Esse", a.essay_75, r.essay_scale || 75]], footLeft: `Kod ${t.code}`, footRight: a.created_at,
+  }) : milliy ? resultCard(t.theme, {
     kind: "Mock", code: t.code, name: a.name, sub: t.variants > 1 ? `${t.title} · ${a.variant} variant` : t.title, value: a.total, max: a.max_points,
     of: `/ ${num(a.max_points)} ball`, gradeLabel: "Daraja", grade: r.rasch ? r.rasch.grade : "—",
     gradeSub: r.rasch ? `Umumiy ${num(r.rasch.score)} / 75` + (r.rasch.essay != null ? ` · test ${num(r.rasch.test)} + esse ${num(r.rasch.essay)}` : "") : "e'lon qilinmagan",
@@ -1874,8 +1916,8 @@ VIEWS.result = async ({ id }) => {
     ${e.comment ? `<p class="muted small" style="margin:0">💬 ${esc(e.comment)}</p>` : ""}</div>` : "";
   $app.innerHTML = `<div class="view">${card}
     ${!r.announced ? `<div class="card small muted">ℹ️ Natijalar hali e'lon qilinmagan — buni faqat siz (o'qituvchi) ko'ryapsiz.</div>` : ""}
-    <div class="section-title"><h2>Har bir savol</h2><span class="muted small">${a.wrong.length} ta xato</span></div>
-    <div class="card"><div class="review">${review}</div></div>
+    ${review ? `<div class="section-title"><h2>Har bir savol</h2><span class="muted small">${a.wrong.length} ta xato</span></div>
+    <div class="card"><div class="review">${review}</div></div>` : ""}
     ${writtenRows ? `<div class="section-title"><h2>Yozma javoblar</h2></div><div class="card">${writtenRows}</div>` : ""}
     ${essayBlock}
   </div>`;
@@ -1908,18 +1950,19 @@ VIEWS.create = async () => {
       <div class="field"><label for="title">Test nomi</label><input class="input" id="title" value="${esc(st.title)}" placeholder="Masalan: Mock №3 · 11-sinf"></div>
       <div class="field"><label>Turi</label><div class="chips">
         <button type="button" class="chip ${st.fmt === "milliy" ? "on" : ""}" data-fmt="milliy">🏅 Rasch · Milliy mock (45)</button>
-        <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button></div></div>
-      <div class="field"><label>Qanday o'tkaziladi</label><div class="chips">
+        <button type="button" class="chip ${st.fmt === "oddiy" ? "on" : ""}" data-fmt="oddiy">📝 Oddiy test</button>
+        <button type="button" class="chip ${st.fmt === "esse" ? "on" : ""}" data-fmt="esse">✍️ Esse mock (faqat esse)</button></div></div>
+      ${st.fmt === "esse" ? "" : `<div class="field"><label>Qanday o'tkaziladi</label><div class="chips">
         <button type="button" class="chip ${st.mode !== "offline" ? "on" : ""}" data-mode="online">📱 Onlayn — ilovada</button>
         <button type="button" class="chip ${st.mode === "offline" ? "on" : ""}" data-mode="offline">📄 Oflayn — qog'ozda + skaner</button></div>
-        <span class="muted small">${st.mode === "offline" ? "Titul chop etasiz, o'quvchilar bo'yaydi, siz telefon kamerasida skanerlaysiz." : "O'quvchilar kodni kiritib, javoblarni ilovada belgilaydi."}</span></div>
+        <span class="muted small">${st.mode === "offline" ? "Titul chop etasiz, o'quvchilar bo'yaydi, siz telefon kamerasida skanerlaysiz." : "O'quvchilar kodni kiritib, javoblarni ilovada belgilaydi."}</span></div>`}
       ${st.fmt === "oddiy" ? `<div class="field"><label for="count">Savollar soni (5–100)</label><input class="input" id="count" inputmode="numeric" value="${st.count}"></div>` : ""}
-      ${st.fmt === "milliy" ? `<div class="field"><label for="topic">Esse mavzusi (45-savol vaziyati)</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — AI esseni shu mavzu bo'yicha tekshiradi">${esc(st.topic)}</textarea></div>` : ""}
+      ${st.fmt === "milliy" || st.fmt === "esse" ? `<div class="field"><label for="topic">Esse mavzusi${st.fmt === "esse" ? "" : " (45-savol vaziyati)"}</label><textarea class="input" id="topic" rows="3" placeholder="Vaziyat matni — esse shu mavzu bo'yicha tekshiriladi">${esc(st.topic)}</textarea>${st.fmt === "esse" ? `<span class="muted small">Mockda faqat shu esse bo'ladi — test savollari yo'q.</span>` : ""}</div>` : ""}
     </div>
-    ${st.fmt === "milliy" && st.mode !== "offline" && !(st.mock && st.mock.on) ? essayPriceHTML(st) : ""}
+    ${(st.fmt === "milliy" || st.fmt === "esse") && st.mode !== "offline" && !(st.mock && st.mock.on) ? essayPriceHTML(st) : ""}
     ${st.mode === "offline" ? checkModeHTML(st) : ""}
-    <div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
-    ${bubbleSheet(items, key)}
+    ${st.fmt === "esse" ? "" : `<div class="section-title"><h2>Kalit</h2><span class="muted small" id="key-count"></span></div>
+    ${bubbleSheet(items, key)}`}
     ${texts.length ? `<div class="section-title"><h2>Yozma javoblar kaliti</h2><span class="muted small">ma'nodosh — ixtiyoriy</span></div>
       <div class="card">${texts.map(i => {
         const parts = (key[i.label] || "").split("|").map(x => x.trim());
@@ -1931,8 +1974,8 @@ VIEWS.create = async () => {
       }).join("")}
       <span class="muted small">O'quvchi uchta javobdan istalganini yozsa ham to'g'ri hisoblanadi. Katta-kichik harf, o'/oʻ farqi, ortiqcha bo'shliq va kirillcha yozuv xato hisoblanmaydi.</span></div>` : ""}
     ${st.mode === "offline" ? "" : channelEditorHTML(st.channels)}
-    ${st.mode !== "offline" && st.fmt === "milliy" && (S.boot || {}).can_mock ? mockSetupHTML(st.mock || (st.mock = mockDefaults())) : ""}
-    <div class="sticky-bottom"><div><button class="btn block" id="save">Saqlash va PDF olish</button></div></div>
+    ${st.mode !== "offline" && (st.fmt === "milliy" || st.fmt === "esse") && (S.boot || {}).can_mock ? mockSetupHTML(st.mock || (st.mock = mockDefaults()), st.fmt !== "esse") : ""}
+    <div class="sticky-bottom"><div><button class="btn block" id="save">${st.fmt === "esse" ? "Esse mockni saqlash" : "Saqlash va PDF olish"}</button></div></div>
   </div>`;
   function collect() {
     const ti = document.getElementById("title"); if (ti) st.title = ti.value;
@@ -1947,7 +1990,9 @@ VIEWS.create = async () => {
       if (parts.length) key[box.dataset.q] = parts.join(" | "); else delete key[box.dataset.q];
     });
   }
-  function counter() { const n = items.filter(i => i.kind === "choice" && key[i.label]).length; document.getElementById("key-count").textContent = `${n} / ${items.filter(i => i.kind === "choice").length}`; saveDraft(); }
+  function counter() { const el = document.getElementById("key-count");
+    if (el) el.textContent = `${items.filter(i => i.kind === "choice" && key[i.label]).length} / ${items.filter(i => i.kind === "choice").length}`;
+    saveDraft(); }
   function saveDraft() { if (S.create !== st) return; collect(); store(DRAFT_KEY, JSON.stringify(st)); }
   S.saveDraft = saveDraft;
   let draftTimer;
@@ -1976,7 +2021,11 @@ VIEWS.create = async () => {
     if (x.dataset.check === "paid" && !(S.boot || {}).paid_ai) { toast("💎 Pullik tekshiruv hali ulanmagan — admin Render'ga ANTHROPIC_API_KEY qo'shishi kerak"); haptic("error"); return; }
     collect(); st.checkMode = x.dataset.check; haptic("select"); saveDraft(); rerender(); });
   document.querySelectorAll("[data-mode]").forEach(x => x.onclick = () => { collect(); st.mode = x.dataset.mode; haptic("select"); rerender(); });
-  document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => { collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} }; haptic("select"); rerender(); });
+  document.querySelectorAll("[data-fmt]").forEach(x => x.onclick = () => {
+    collect(); st.fmt = x.dataset.fmt; st.keys = { A: {} };
+    if (st.fmt === "esse") { st.mode = "online"; if (!st.mock) st.mock = mockDefaults(); st.mock.on = true; }  // esse mocki — faqat onlayn, e'lon bilan
+    haptic("select"); rerender();
+  });
   const ct = document.getElementById("count"); if (ct) ct.onchange = () => { collect(); rerender(); };
   bindChannelEditor(st.channels, async () => {});  // yaratishda serverga saqlash «Saqlash» bosilganda
   bindMockSetup(st.mock, () => { collect(); saveDraft(); rerender(); });
@@ -1992,16 +2041,17 @@ VIEWS.create = async () => {
   document.getElementById("save").onclick = async () => {
     collect();
     if (st.title.trim().length < 2) { toast("Test nomini yozing"); haptic("error"); return; }
-    if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
+    if (st.fmt === "esse" && st.topic.trim().length < 5) { toast("Esse mavzusini yozing"); haptic("error"); return; }
+    if (st.mock && st.mock.on && st.fmt !== "oddiy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
       const bad = mockProblem(st.mock); if (bad) { toast(bad); haptic("error"); return; }
     }
     const miss = items.filter(i => !st.keys.A[i.label]);
     if (miss.length) { toast(`${miss.slice(0, 5).map(i => i.label).join(", ")}${miss.length > 5 ? "…" : ""} — kaliti yo'q`); haptic("error"); return; }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saqlanmoqda…";
     try {
-      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt === "milliy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
+      const res = await api("/api/teacher/tests", { title: st.title, fmt: st.fmt, mode: st.mode, count: st.count, essay_topic: st.topic, theme: st.theme, check_mode: st.mode === "offline" ? (st.checkMode || "free") : "free", essay_price: st.fmt !== "oddiy" && st.mode !== "offline" ? +(st.essayPrice || 0) : 0, card: st.card || "", holder: st.holder || "", keys: { A: st.keys.A }, channels: st.mode === "offline" ? [] : st.channels.map(c => c.chat_id) });
       S.flash = createdFlash(res);
-      if (st.mock && st.mock.on && st.fmt === "milliy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
+      if (st.mock && st.mock.on && st.fmt !== "oddiy" && st.mode !== "offline" && (S.boot || {}).can_mock) {
         // Test saqlandi — endi jadval, narxlar va savollar fayli (xato bo'lsa test sahifasida tuzatiladi)
         btn.textContent = "E'lon qilinmoqda…";
         try { await saveMock(res.id, st.mock); }
@@ -2666,7 +2716,7 @@ VIEWS.teacher = async ({ id, tab }) => {
     }).catch(() => {});
   }
   if (!d) { try { d = await api(`/api/teacher/test/${id}`); } catch (e) { return fail(e); } S.teacherCache = { id, d }; }
-  const t = d.test, milliy = t.fmt === "milliy", n = d.attempts.length;
+  const t = d.test, milliy = t.fmt !== "oddiy", n = d.attempts.length;  // esse mocki ham: esse va reyting bor
   t.channels = t.channels || []; d.students = d.students || [];
   const offline = t.mode === "offline", scanned = d.students.filter(s => s.scanned).length;
   tab = tab && !(offline && tab === "design") ? tab : "home";  // oflaynda «Sozlama» yo'q
@@ -4317,7 +4367,7 @@ function studentSheet(p, tests) {
 VIEWS.testResults = async ({ id, cls }) => {
   loading();
   let r; try { r = await api(`/api/teacher/test/${id}/results${cls ? `?class=${cls}` : ""}`); } catch (e) { return fail(e); }
-  const t = r.test, rows = r.rows, milliy = t.fmt === "milliy";
+  const t = r.test, rows = r.rows, milliy = t.fmt !== "oddiy";
   const list = rows.map((a, i) => `<button type="button" class="item" data-row="${i}"><span class="rank">${i + 1}</span>
       <span><b>${esc(a.name)}</b><small>${a.number != null ? `ID ${pad3(a.number)} · ` : ""}${milliy ? `test ${num(a.test)} · esse ${a.essay == null ? "—" : num(a.essay)}` : `${a.test_correct + a.written_correct} / ${a.auto_total} to'g'ri`}${!r.class && a.class_name ? ` · ${esc(a.class_name)}` : ""}</small></span>
       <span class="score-col">${milliy ? `<span class="row" style="gap:8px"><b>${num(a.score)}</b>${gradeChip(a.grade)}</span><small class="muted">/ 75</small>` : `<b>${num(a.score)}%</b>`}</span></button>`).join("");

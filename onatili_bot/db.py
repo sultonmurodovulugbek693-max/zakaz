@@ -1426,6 +1426,17 @@ def set_schedule(test_id: int, opens_at: str | None, entry_until: str | None, cl
                                  (test_id,)).fetchone())
 
 
+def public_mock_history(limit: int = 30) -> list[dict]:
+    """Natijalar bo'limidagi taxta: natijasi e'lon qilingan ommaviy mocklar — eng yangisi birinchi."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT t.id, t.code, t.title, t.fmt, t.owner_id, t.closed, t.opens_at, t.closes_at, t.mock_no, "
+            "t.essay_topic, u.full_name AS owner_name "
+            "FROM tests t LEFT JOIN users u ON u.tg_id = t.owner_id "
+            "WHERE t.public_mock = 1 AND t.closed = 1 ORDER BY t.closes_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def public_mocks(since: str, now: str, limit: int = 3) -> list[dict]:
     """Bosh sahifadagi mocklar: yopilishi `since` dan keyin. Avval ochiq va bo'lajaklari (eng yaqini birinchi), keyin
     yaqinda yopilganlari (eng oxirgisi birinchi) — yopilganlar yangi mockni ro'yxatdan siqib chiqarmasin."""

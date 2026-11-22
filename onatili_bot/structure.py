@@ -39,6 +39,8 @@ def official_points(label: str) -> float:
 
 def build_items(fmt: str, count: int = 0) -> list[dict]:
     """Test savollari ro'yxati: {"label": "33", "kind": "choice"|"text", "options": 6}."""
+    if fmt == "esse":
+        return []  # esse mocki: test savollari yo'q, faqat esse
     if fmt == "milliy":
         items = [{"label": str(n), "kind": "choice", "options": 4} for n in range(1, 33)]
         items += [{"label": str(n), "kind": "choice", "options": 6} for n in range(33, 36)]
@@ -77,8 +79,8 @@ def item_points(item: dict) -> float:
 
 
 def max_points(items: list[dict], fmt: str) -> float:
-    """Testning eng yuqori bali (Milliy sertifikatda esse bilan — 100)."""
-    return round(sum(item_points(item) for item in items) + (ESSAY_MAX if fmt == "milliy" else 0), 1)
+    """Testning eng yuqori bali (Milliy sertifikatda esse bilan — 100; esse mockida faqat esse)."""
+    return round(sum(item_points(item) for item in items) + (ESSAY_MAX if fmt in ("milliy", "esse") else 0), 1)
 
 
 def choice_items(items: list[dict]) -> list[dict]:
@@ -92,6 +94,8 @@ def text_items(items: list[dict]) -> list[dict]:
 def format_title(fmt: str, count: int) -> str:
     if fmt == "milliy":
         return "Milliy sertifikat (45 savol)"
+    if fmt == "esse":
+        return "Esse mock (faqat esse)"
     return f"Oddiy test ({count} ta savol)"
 
 

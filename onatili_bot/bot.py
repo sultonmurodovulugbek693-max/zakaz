@@ -1590,7 +1590,7 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
         attempt = await asyncio.to_thread(db.save_attempt, test["id"], tg_id, name, variant, answers, result)
     except db.IntegrityError:  # shu test uchun javob allaqachon bor (SQLite ham, PostgreSQL ham)
         return None
-    if test["fmt"] == "milliy":
+    if test["fmt"] in ("milliy", "esse"):
         # begona — o'zi to'lagan bo'lsa; charge — yechilgan kredit (AI tekshira olmasa qaytariladi)
         charge = await webapp.essay_ai_charge(test, tg_id) if (essay_text or photos) else None
         status = ("pending" if charge else "manual") if (essay_text or photos) else "none"
@@ -1600,7 +1600,8 @@ async def record_attempt(bot: Bot, test: dict, tg_id: int, name: str, variant: s
             await asyncio.to_thread(db.add_essay_cost, attempt["id"], essay_cost)
     correct = result["test_correct"] + result["written_correct"]
     summary = (
-        f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
+        "esse yuborildi" if test["fmt"] == "esse"
+        else f"{fmt_num(result['points'])} ball (essesiz)" if test["fmt"] == "milliy"
         else f"{correct}/{result['auto_total']} ({fmt_num(percent(correct, result['auto_total']))}%)"
     )
     if not notify:  # skanerlashda o'qituvchi natijani ekranda ko'rib turadi
@@ -1834,6 +1835,7 @@ async def channel_post_due(test: dict, now, posted: set) -> tuple[str, str, str]
     opens, entry, closes = (webapp._at(test[k]) for k in ("opens_at", "entry_until", "closes_at"))
     name, line = esc(mock_name(test)), "━━━━━━━━━━━━━━"
     when = f"📅 <b>{day_label(opens)}</b>\n🕗 <b>{opens:%H:%M}</b> ochiladi · <b>{entry:%H:%M}</b> gacha kirish · <b>{closes:%H:%M}</b> da yopiladi"
+    esse = test["fmt"] == "esse"  # faqat esse mocki: test savollari yo'q, ball — esse bahosi (75 dan)
     signups = len(await asyncio.to_thread(db.mock_signups, test["id"]))
     people = f"\n👥 {signups} kishi qatnashmoqchi" if signups else ""
     if test.get("mock_state") == "done" and test.get("closed"):
@@ -1846,7 +1848,9 @@ async def channel_post_due(test: dict, now, posted: set) -> tuple[str, str, str]
         rows = "\n".join(f"{medals[i]} {esc(short(r['name']))} — <b>{fmt_num(r['score'])}</b>" + (f" · {r['grade']}" if r["grade"] else "")
                          for i, r in enumerate(top))
         return "results", "🏆", (f"🏆 <b>{name} natijalari</b>\n{line}\n{rows or 'Natijalar tayyor'}\n{line}\n"
-                                 f"👥 Qatnashdi: <b>{len(data['rows'])}</b> · natija Rasch modelida\nSertifikatlar botda 🎓")
+                                 f"👥 Qatnashdi: <b>{len(data['rows'])}</b> · "
+                                 + ("esse 75 ballik shkalada" if esse else "natija Rasch modelida")
+                                 + "\nSertifikatlar botda 🎓")
     if now >= closes:
         return None
     if "new" not in posted and now < opens:  # birinchi e'lon — har doim to'liq (kech e'lon qilingan bo'lsa ham)
@@ -1856,7 +1860,9 @@ async def channel_post_due(test: dict, now, posted: set) -> tuple[str, str, str]
         keys = "new" + (",day" if today else "") + (",hour" if soon else "")
         return keys, "📢", (
             f"{head}\n{line}\n<b>{name}</b> · {esc(test['title'])}\n{when}{people}\n{line}\n"
-            "Natija Rasch modelida — haqiqiy imtihondagidek. «Mockda qatnashish»ni bosing, ochilganda eslatamiz 👇")
+            + ("✍️ Faqat esse — mavzu mock ochilganda ko'rinadi, baho 75 ballik shkalada.\n"
+               if esse else "Natija Rasch modelida — haqiqiy imtihondagidek.\n")
+            + "«Mockda qatnashish»ni bosing, ochilganda eslatamiz 👇")
     if "day" not in posted and opens.date() == now.date() and now.hour >= 9 and now < opens - timedelta(hours=1):
         return "day", "📅", (f"📅 <b>Bugun {opens:%H:%M} da {name}!</b>\n{line}\n{esc(test['title'])}\n{when}{people}\n{line}\n"
                             "Do'stlaringizni ham chaqiring — qancha ko'p qatnashsa, natija shuncha aniq 💪")

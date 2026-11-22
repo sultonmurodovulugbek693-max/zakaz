@@ -33,6 +33,14 @@ def rasch_breakdown(test: dict, attempts: list[dict]) -> dict[int, dict]:
     Qog'ozdagi esse bahosi kiritilmagan bo'lsa — score va grade None, pending True (natija chiqmaydi)."""
     if not attempts:
         return {}
+    if test["fmt"] == "esse":  # esse mocki: test qismi yo'q — umumiy ball esse bahosining o'zi (75 ballik)
+        out = {}
+        for attempt in attempts:
+            essay = essay_to_75(attempt.get("essay"))
+            out[attempt["id"]] = {"test": None, "essay": essay, "score": essay,
+                                  "grade": grade_for(essay) if essay is not None else None,
+                                  **({} if essay is not None else {"pending": True})}
+        return out
     labels = [item["label"] for item in test["items"]]
     matrix = []
     for attempt in attempts:
