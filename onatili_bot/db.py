@@ -15,6 +15,7 @@ import random
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
@@ -537,6 +538,24 @@ class _Connection:
 _pool = None
 _pool_lock = threading.Lock()
 
+# Ulanish olinganda tekshiruv — bazagacha bitta ortiqcha borib-kelish (Render ↔ baza ~0,1 s). Yaqinda (FRESH_FOR
+# soniya ichida) ishlatilib qaytgan ulanish tirik — tekshirilmaydi; uzoq turgani (uzilgan bo'lishi mumkin) tekshiriladi
+FRESH_FOR = 20
+_RETURNED = weakref.WeakKeyDictionary()
+
+
+def _mark_returned(conn) -> None:
+    """Ulanish havzaga qaytdi (pool reset) — vaqti yoziladi."""
+    _RETURNED[conn] = time.monotonic()
+
+
+def _check_if_idle(conn) -> None:
+    """Havzadan olishdan oldin: uzoq turgan ulanish tirikmi (o'lik bo'lsa — xato, havza yangisini ochadi)."""
+    if time.monotonic() - _RETURNED.get(conn, 0.0) < FRESH_FOR:
+        return
+    from psycopg_pool import ConnectionPool as Pool  # SQLite rejimida modul tepasida import qilinmagan
+    Pool.check_connection(conn)
+
 
 def _get_pool():
     global _pool
@@ -547,7 +566,8 @@ def _get_pool():
                 # prepare_threshold=None — tayyorlangan so'rovlar keshlanmaydi: deployda jadvalga ustun qo'shilsa,
                 # eski ulanishlar «cached plan must not change result type» xatosini bermaydi (Neon pooler ham shuni xohlaydi)
                 kwargs={"row_factory": dict_row, "autocommit": False, "prepare_threshold": None},
-                check=ConnectionPool.check_connection,  # uzilib qolgan ulanish qayta ochiladi
+                check=_check_if_idle,  # uzilib qolgan ulanish qayta ochiladi (yaqinda ishlatilgani — tekshiruvsiz)
+                reset=_mark_returned,
             )
         return _pool
 
@@ -1961,12 +1981,18 @@ def start_essay_scan(student_id: int, test_id: int, ai: str) -> None:
             "updated_at = excluded.updated_at", (student_id, test_id, ai, _now()))
 
 
+ESSAY_SCAN_WAIT_HOURS = 3  # «Botga yuboraman» bosilgach shuncha vaqt bot rasmlarni esse sahifasi deb kutadi
+
+
 def collecting_essay_scan(student_id: int) -> dict | None:
-    """Botga yuborilgan rasm — esse sahifasimi: o'quvchining rasm yig'ilayotgan essesi (eng oxirgisi)."""
+    """Botga yuborilgan rasm — esse sahifasimi: o'quvchining rasm yig'ilayotgan essesi (eng oxirgisi). Faqat yaqinda
+    boshlangani: tugatilmay qolgan eski yig'ish keyinroq yuborilgan to'lov chekini «esse sahifasi» deb tutib olmasin."""
+    since = (datetime.now() - timedelta(hours=ESSAY_SCAN_WAIT_HOURS)).strftime("%Y-%m-%d %H:%M")
     with connect() as conn:
         return _row(conn.execute(
             "SELECT s.student_id, s.test_id, s.ai, s.pages, t.title, t.code FROM essay_scans s JOIN tests t ON t.id = s.test_id "
-            "WHERE s.student_id = ? AND s.status = 'collecting' ORDER BY s.updated_at DESC LIMIT 1", (student_id,)).fetchone())
+            "WHERE s.student_id = ? AND s.status = 'collecting' AND s.updated_at >= ? ORDER BY s.updated_at DESC LIMIT 1",
+            (student_id, since)).fetchone())
 
 
 def add_essay_scan_page(student_id: int, test_id: int, image_b64: str, mime: str) -> int:
@@ -2136,6 +2162,45 @@ def purge_written_images(days: int = 45) -> int:
             (before,),
         )
         return cursor.rowcount or 0
+
+
+FILES_KEEP_DAYS = 30  # ko'rib chiqilgan cheklar va ariza rasmlari shuncha kun saqlanadi
+
+
+def purge_old_files(keep_days: int = FILES_KEEP_DAYS) -> dict[str, int]:
+    """Bazani to'ldirmaslik uchun eski rasmlar o'chiriladi — yozuvning o'zi (summa, sana, holat, chek izi) qoladi:
+      • ko'rib chiqilgan to'lov cheklari (esse, kredit, tarif) va arizalardagi rasmlar — keep_days kundan keyin;
+      • esse sahifalari rasmlari — 1 kundan keyin (matni o'qib olingan); tugatilmagan yig'ish — «eskirgan» bo'ladi;
+      • 1-varag'i kelmay qolgan 2-varaq (yozma kataklar) rasmlari — keep_days kundan keyin.
+    Qaytaradi: {jadval: nechta yozuv tozalandi}."""
+    before = (datetime.now() - timedelta(days=keep_days)).strftime("%Y-%m-%d %H:%M")
+    day_ago = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+    out = {}
+    with connect() as conn:
+        for table in ("essay_payments", "wallet_payments", "pass_payments"):
+            out[table] = conn.execute(
+                f"UPDATE {table} SET receipt = NULL WHERE receipt IS NOT NULL AND status NOT IN ('open', 'review') "
+                "AND created_at < ?", (before,)).rowcount or 0
+        out["join_requests"] = conn.execute(
+            "UPDATE join_requests SET photo = NULL WHERE photo IS NOT NULL AND status <> 'pending' AND created_at < ?",
+            (before,)).rowcount or 0
+        out["essay_scans"] = conn.execute(
+            "UPDATE essay_scans SET pages = '[]', status = CASE WHEN status = 'collecting' THEN 'expired' ELSE status END "
+            "WHERE updated_at < ? AND (status = 'collecting' OR (pages IS NOT NULL AND pages <> '[]'))",
+            (day_ago,)).rowcount or 0
+        out["written_pending"] = conn.execute("DELETE FROM written_pending WHERE created_at < ?", (before,)).rowcount or 0
+    return out
+
+
+def database_size() -> int | None:
+    """Baza hajmi baytda (PostgreSQL — pg_database_size, SQLite — fayl). Bilib bo'lmasa — None."""
+    try:
+        if POSTGRES:
+            with connect() as conn:
+                return int(conn.execute("SELECT pg_database_size(current_database()) AS n").fetchone()["n"])
+        return os.path.getsize(DB_PATH)
+    except Exception:
+        return None
 
 
 # ---------- Zaxira nusxa (backup) ----------

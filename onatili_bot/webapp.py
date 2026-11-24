@@ -1002,8 +1002,9 @@ async def essay_scan_upload(request: web.Request) -> web.Response:
         data = field.file.read()
         if not data or len(data) > 8 * 1024 * 1024:
             raise ApiError(400, "Har rasm 8 MB dan kichik bo'lsin")
-        await run(db.add_essay_scan_page, user["id"], test["id"], base64.b64encode(data).decode(),
-                  (getattr(field, "content_type", None) or "image/jpeg")[:30])
+        # Qo'lyozma: 2000 px va yuqoriroq sifat — AI harflarni o'qiy olsin, bazada esa 10 barobar kam joy
+        data, mime = await run(shrink_image, data, getattr(field, "content_type", None) or "image/jpeg", 2000, 85)
+        await run(db.add_essay_scan_page, user["id"], test["id"], base64.b64encode(data).decode(), (mime or "image/jpeg")[:30])
     return ok(await read_essay_scan(user["id"], test["id"], notify=False))
 
 
@@ -1085,6 +1086,26 @@ def _digits(text) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
 
+def shrink_image(data: bytes, mime: str | None, max_side: int = 1600, quality: int = 82) -> tuple[bytes, str | None]:
+    """Telefon rasmi (3–8 MB) → JPEG, uzun tomoni max_side gacha: bazada 10–20 barobar kam joy, matni o'qiladigan
+    bo'lib qoladi (chek, esse). PDF, rasm bo'lmagan yoki ochilmaydigan fayl — o'zgarmaydi; kichraymasa — asli qoladi."""
+    if not data or data[:4] == b"%PDF" or not str(mime or "image/").lower().startswith("image/"):
+        return data, mime
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(data)) as source:
+            image = ImageOps.exif_transpose(source)  # telefon «yotqizib» saqlagan rasm to'g'ri tursin
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            image.thumbnail((max_side, max_side))
+            out = io.BytesIO()
+            image.save(out, "JPEG", quality=quality, optimize=True)
+    except Exception:
+        return data, mime
+    small = out.getvalue()
+    return (small, "image/jpeg") if len(small) < len(data) else (data, mime)
+
+
 RECEIPT_AI_TIMEOUT = 120  # o'quvchiga «1–2 daqiqa» deyiladi
 
 
@@ -1132,7 +1153,8 @@ async def check_essay_receipt(payment_id: int, data: bytes, mime: str) -> dict:
         raise ApiError(404, "To'lov topilmadi")
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
-    digest = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data).hexdigest()  # izi — asl fayldan: o'sha chek qayta yuborilsa ham topiladi
+    data, mime = await run(shrink_image, data, mime)  # AI'ga va bazaga — kichraytirilgan nusxa
     good, reasons, txn = await read_receipt_for(pay, pay["owner_id"], data, mime)
     if await run(db.receipt_used, digest, txn, payment_id):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
@@ -1361,7 +1383,8 @@ async def check_wallet_receipt(payment_id: int, data: bytes, mime: str) -> dict:
         raise ApiError(404, "To'lov topilmadi")
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
-    digest = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data).hexdigest()  # izi — asl fayldan: o'sha chek qayta yuborilsa ham topiladi
+    data, mime = await run(shrink_image, data, mime)  # AI'ga va bazaga — kichraytirilgan nusxa
     good, reasons, txn = await read_receipt_for(pay, pay["teacher_id"], data, mime)
     if await run(db.receipt_used, digest, txn, payment_id, "wallet_payments"):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
@@ -1901,7 +1924,8 @@ async def check_pass_receipt(payment_id: int, data: bytes, mime: str) -> dict:
         raise ApiError(404, "To'lov topilmadi")
     if pay["status"] in ("paid", "review"):
         return {"ok": True, "status": pay["status"], "reasons": []}
-    digest = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data).hexdigest()  # izi — asl fayldan: o'sha chek qayta yuborilsa ham topiladi
+    data, mime = await run(shrink_image, data, mime)  # AI'ga va bazaga — kichraytirilgan nusxa
     good, reasons, txn = await verify_receipt(data, mime, pay["amount"], await run(teacher_card, pay["teacher_id"]))
     if await run(db.receipt_used, digest, txn, payment_id, "pass_payments"):
         good, reasons = False, reasons + ["bu chek oldin ishlatilgan"]
@@ -3131,8 +3155,9 @@ async def course_join(request: web.Request) -> web.Response:
         raw = field.file.read()
         if len(raw) > 6 * 1024 * 1024:
             raise ApiError(400, "Rasm 6 MB dan kichik bo'lsin")
-        if raw:
-            photo, mime = base64.b64encode(raw).decode(), (getattr(field, "content_type", None) or "image/jpeg")[:20]
+        if raw:  # ustoz yuzini taniydi — 800 px yetarli (bazada ~50 KB, asli 2–6 MB)
+            raw, mime = await run(shrink_image, raw, getattr(field, "content_type", None) or "image/jpeg", 800)
+            photo, mime = base64.b64encode(raw).decode(), (mime or "image/jpeg")[:20]
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
     request_id = await run(db.save_join_request, teacher_id, user["id"], first, last, photo, mime)
     if request_id and "join_notice" in HOOKS:

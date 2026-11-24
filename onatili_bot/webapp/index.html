@@ -3330,9 +3330,22 @@ VIEWS.settings = async ({ tab } = {}) => {
       ai: free && s.claude ? `<span class="pill-tag done">$${s.claude.usd}</span>` : "",
       public: s.public ? `<span class="pill-tag done">ochiq</span>` : `<span class="pill-tag wait">yopiq</span>`,
     };
+    // FREE_IDS / admin — «✍️ Esse» bo'limida hamma o'quvchining tekshiruvchisi: sozlanmaguncha tepada yo'riqnoma turadi
+    const steps = [[!!s.card, "💳 Karta", "o'quvchilar pulni shu kartaga o'tkazadi"],
+                   [!!(s.packs || []).length, "💰 Kredit narxi", "1 esse (1 kredit) necha so'm — o'zingiz belgilaysiz"],
+                   [!!s.public, "🌐 Ommaviy tekshiruv", "yoqilsa, «✍️ Esse» bo'limida hamma o'quvchi sizni ko'radi"]];
+    const setup = !free ? "" : steps.every(x => x[0])
+      ? `<div class="card" style="border:1.5px solid var(--good)"><b class="small">✅ O'quvchilar sizdan esse tekshiruvi sotib ola oladi</b>
+          <span class="muted small">«✍️ Esse» bo'limida hamma o'quvchi sizni ko'radi: ${s.free} ta esse bepul, keyin kredit — pul kartangizga tushadi.</span></div>`
+      : `<div class="card" style="border:1.5px solid var(--warn);display:grid;gap:8px">
+          <b>📣 O'quvchilar sizdan kredit sotib olishi uchun narx kiriting</b>
+          <span class="muted small">Har qanday o'quvchi «✍️ Esse» bo'limida ${s.free} ta esseni bepul tekshirtiradi, keyin sizdan kredit sotib oladi — pul kartangizga tushadi.</span>
+          ${steps.map(([done, name, text]) => `<span class="small">${done ? "✅" : "⬜️"} <b>${name}</b> — ${text}</span>`).join("")}
+          <button type="button" class="btn block" id="st-setup">${s.card && (s.packs || []).length ? "🌐 Ommaviy tekshiruvni ochish" : "💰 Narxni kiritish"}</button></div>`;
     $app.innerHTML = `<div class="view">
       <div class="hero"><span class="brand"><i>I</i>Sozlamalar</span><h1>⚙️ Sozlamalar</h1>
         <span class="muted small">Bo'limni tanlang — har birining tepasida undagi funksiyalar nima qilishi yozilgan.</span></div>
+      ${setup}
       <div class="list">${Object.entries(SETTINGS_TABS).map(([key, t]) => `<button type="button" class="item" data-st-tab="${key}">
         <span class="ico">${t.icon}</span><span><b>${t.title}</b><small>${t.hint}</small></span>${state[key] || `<span class="muted">›</span>`}</button>`).join("")}
       ${free && s.expert_waiting ? `<button type="button" class="item" data-go-expert style="border:1.5px solid var(--warn)"><span class="ico">🎓</span><span><b>Ekspert: ${s.expert_waiting} ta esse kutmoqda</b><small>O'quvchilar to'lagan — baholang</small></span><span class="muted">›</span></button>` : ""}
@@ -3342,6 +3355,14 @@ VIEWS.settings = async ({ tab } = {}) => {
     document.querySelectorAll("[data-go-expert]").forEach(x => x.onclick = () => { haptic("light"); go("expert"); });
     const toSales = document.getElementById("st-sales");
     if (toSales) toSales.onclick = () => { haptic("light"); go("sales"); };
+    const setupBtn = document.getElementById("st-setup");
+    if (setupBtn) setupBtn.onclick = async () => {
+      haptic("light");
+      if (!s.card || !(s.packs || []).length) return go("settings", { tab: "pay" });  // karta va narx — «To'lov va narxlar»da
+      setupBtn.disabled = true;
+      try { await api("/api/teacher/settings", { public: true }); haptic("success"); toast("🌐 Ochildi — o'quvchilar sizni «✍️ Esse» bo'limida ko'radi"); rerender(); }
+      catch (e) { toast(e.message); haptic("error"); setupBtn.disabled = false; }
+    };
     return;
   }
   const t = SETTINGS_TABS[tab];
@@ -3367,8 +3388,17 @@ VIEWS.settings = async ({ tab } = {}) => {
       ["🔑 Esse kodi", "o'z o'quvchilaringiz uchun — «👥 O'quvchilarim» bo'limida (ular sizning limitingizdan tekshirtiradi)."],
     ]),
   }[tab];
+  // FREE_IDS: o'quvchilar kredit sotib olishi uchun nima qolgani — sahifa tepasida
+  const hasPacks = !!(s.packs || []).length;
+  const payTodo = !free || (s.card && hasPacks && s.public) ? ""
+    : `<div class="card" style="border:1.5px solid var(--warn);display:grid;gap:6px">
+        <b class="small">📣 O'quvchilar sizdan kredit sotib olishi uchun:</b>
+        <span class="small">${s.card ? "✅" : "1️⃣"} Pastda <b>kartangizni</b> kiriting va saqlang</span>
+        <span class="small">${hasPacks ? "✅" : "2️⃣"} <b>«Kredit narxlari»</b>da 1 esse (1 kredit) narxini yozing va saqlang</span>
+        ${s.card && hasPacks ? `<button type="button" class="btn block" id="st-pay-public">🌐 Ommaviy tekshiruvni ochish</button>`
+          : `<span class="small">3️⃣ So'ng «🌐 Begonalar va e'lonlar»da ommaviy tekshiruvni oching</span>`}</div>`;
   const sections = {
-    pay: `${earningsHTML(s.earnings)}
+    pay: `${payTodo}${earningsHTML(s.earnings)}
       <div class="section-title"><h2>💳 Karta</h2><span class="muted small">${s.card ? "kiritilgan" : "kiritilmagan"}</span></div>
       <div class="card">
         <div class="field"><label for="st-card">Karta raqami</label><input class="input" id="st-card" inputmode="numeric" autocomplete="off" value="${esc(s.card || "")}" placeholder="8600 0000 0000 0000"></div>
@@ -3416,6 +3446,13 @@ VIEWS.settings = async ({ tab } = {}) => {
     try { const r = await api("/api/teacher/withdraw", {}); haptic("success");
       toast(`✅ So'rov yuborildi — ${sum(r.amount)} so'm. O'tkazilgach bot xabar beradi`); rerender(); }
     catch (e) { toast(e.message); haptic("error"); wd.disabled = false; }
+  };
+  const payPublic = document.getElementById("st-pay-public");
+  if (payPublic) payPublic.onclick = async () => {
+    payPublic.disabled = true;
+    try { await api("/api/teacher/settings", { public: true }); haptic("success");
+      toast("🌐 Ochildi — o'quvchilar sizni «✍️ Esse» bo'limida ko'radi"); rerender(); }
+    catch (e) { toast(e.message); haptic("error"); payPublic.disabled = false; }
   };
   const pub = document.getElementById("st-public");
   if (pub) pub.onclick = async () => {

@@ -90,6 +90,50 @@ def _seconds_until(hour: int) -> float:
     return (target - now).total_seconds()
 
 
+# ---------- Baza to'lib qolmasin: har kecha eski rasmlar tozalanadi, hajm o'lchanadi ----------
+
+MAINTENANCE_HOUR = 4  # zaxira nusxadan (03:00) keyin
+DB_LIMIT_MB = int(os.getenv("DB_LIMIT_MB") or 500)  # Supabase bepul tarifi — 500 MB
+DB_WARN, DB_URGENT = 0.6, 0.8  # 300 MB — ogohlantirish, 400 MB — shoshilinch
+
+
+def size_text(size: int | None) -> str:
+    """«12,3 MB / 500 MB (2%)» — admin paneli va ogohlantirish uchun."""
+    if size is None:
+        return "noma'lum"
+    mb = size / 1024 / 1024
+    return f"{mb:.1f}".replace(".", ",") + f" MB / {DB_LIMIT_MB} MB ({round(mb * 100 / DB_LIMIT_MB)}%)"
+
+
+async def run_maintenance(bot: Bot) -> dict:
+    """Eski rasmlar tozalanadi; baza limitga yaqin bo'lsa (60% / 80%) — adminlarga xabar."""
+    purged = await asyncio.to_thread(db.purge_old_files)
+    size = await asyncio.to_thread(db.database_size)
+    if sum(purged.values()):
+        logger.info("Eski rasmlar tozalandi: %s", purged)
+    share = (size or 0) / 1024 / 1024 / DB_LIMIT_MB
+    if share >= DB_WARN:
+        text = (("🚨 <b>Baza deyarli to'ldi</b>" if share >= DB_URGENT else "⚠️ <b>Baza to'lib bormoqda</b>")
+                + f"\n💾 {size_text(size)}\nEski rasmlar har kecha o'zi tozalanadi. To'lsa, yangi ma'lumot yozilmay "
+                  "qoladi — vaqtida pullik tarifga o'ting yoki dasturchiga ayting.")
+        for chat_id in ADMIN_IDS:
+            try:
+                await bot.send_message(chat_id, text)
+            except Exception as error:
+                logger.warning("Baza hajmi haqida xabar yuborilmadi (%s): %s", chat_id, error)
+    return {"purged": purged, "size": size}
+
+
+async def daily_maintenance(bot: Bot) -> None:
+    while True:
+        await asyncio.sleep(_seconds_until(MAINTENANCE_HOUR))
+        try:
+            await run_maintenance(bot)
+        except Exception:
+            logger.warning("Kunlik tozalash bajarilmadi", exc_info=True)
+        await asyncio.sleep(60)
+
+
 async def daily_backup(bot: Bot) -> None:
     while True:
         await asyncio.sleep(_seconds_until(BACKUP_HOUR))

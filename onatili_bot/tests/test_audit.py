@@ -162,6 +162,124 @@ class SmallFixes(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("0 ta esse", fake.messages[0][1])
 
 
+def big_photo(width=3000, height=4000) -> bytes:
+    """Telefon rasmiga o'xshash katta JPEG (shovqinli — yaxshi siqilmaydi)."""
+    import random
+    from PIL import Image
+    random.seed(1)
+    small = Image.frombytes("RGB", (300, 400), bytes(random.getrandbits(8) for _ in range(300 * 400 * 3)))
+    out = io.BytesIO()
+    small.resize((width, height)).save(out, "JPEG", quality=95)
+    return out.getvalue()
+
+
+class StorageGuard(unittest.IsolatedAsyncioTestCase):
+    """Baza to'lib qolmasin: rasmlar siqiladi, eskilari tozalanadi, hajm nazorat qilinadi."""
+
+    async def asyncSetUp(self):
+        _env.fresh_db()
+
+    def test_shrink_image(self):
+        from PIL import Image
+        photo = big_photo()
+        small, mime = webapp.shrink_image(photo, "image/jpeg")
+        self.assertEqual(mime, "image/jpeg")
+        self.assertLess(len(small), len(photo) / 5)
+        self.assertEqual(max(Image.open(io.BytesIO(small)).size), 1600)
+        pdf = b"%PDF-1.4 chek"
+        self.assertEqual(webapp.shrink_image(pdf, "application/pdf"), (pdf, "application/pdf"))
+        self.assertEqual(webapp.shrink_image(b"\xff\xd8 buzuq", "image/jpeg"), (b"\xff\xd8 buzuq", "image/jpeg"))
+        png = io.BytesIO()
+        Image.new("RGBA", (2400, 1200), (10, 20, 30, 0)).save(png, "PNG")
+        small, mime = webapp.shrink_image(png.getvalue(), "image/png")
+        self.assertEqual((mime, Image.open(io.BytesIO(small)).mode), ("image/jpeg", "RGB"))
+
+    async def test_receipt_stored_small_hash_from_original(self):
+        import base64
+        import hashlib
+        photo = big_photo()
+        pay = db.start_wallet_payment(OWNER, STUDENT, 5, 40000)
+        saved = webapp.read_receipt_for
+
+        async def no_ai(*_a, **_k):
+            return False, ["sinov"], None
+        webapp.read_receipt_for = no_ai
+        try:
+            await webapp.check_wallet_receipt(pay["id"], photo, "image/jpeg")
+        finally:
+            webapp.read_receipt_for = saved
+        with db.connect() as conn:
+            row = conn.execute("SELECT receipt, mime, receipt_hash FROM wallet_payments WHERE id = ?", (pay["id"],)).fetchone()
+        self.assertLess(len(base64.b64decode(row["receipt"])), len(photo) / 5)
+        self.assertEqual((row["mime"], row["receipt_hash"]), ("image/jpeg", hashlib.sha256(photo).hexdigest()))
+
+    def test_purge_old_files_keeps_records(self):
+        old = "2026-01-01 10:00"
+        paid = db.start_wallet_payment(OWNER, STUDENT, 5, 40000)
+        review = db.start_wallet_payment(OWNER, OTHER, 5, 40000)
+        with db.connect() as conn:
+            conn.execute("UPDATE wallet_payments SET receipt = 'eski', status = 'paid', created_at = ? WHERE id = ?", (old, paid["id"]))
+            conn.execute("UPDATE wallet_payments SET receipt = 'kutyapti', status = 'review', created_at = ? WHERE id = ?",
+                         (old, review["id"]))
+        db.save_join_request(OWNER, STUDENT, "Ali", "Valiyev", "rasm", "image/jpeg")
+        with db.connect() as conn:
+            conn.execute("UPDATE join_requests SET status = 'approved', created_at = ?", (old,))
+        test = esse_mock([])
+        db.start_essay_scan(STUDENT, test["id"], "gemini")
+        db.add_essay_scan_page(STUDENT, test["id"], "sahifa", "image/jpeg")
+        with db.connect() as conn:
+            conn.execute("UPDATE essay_scans SET updated_at = ?", (old,))
+        self.assertIsNone(db.collecting_essay_scan(STUDENT))  # eski yig'ish chekni «esse sahifasi» deb tutmaydi
+        counts = db.purge_old_files()
+        self.assertEqual((counts["wallet_payments"], counts["join_requests"], counts["essay_scans"]), (1, 1, 1))
+        with db.connect() as conn:
+            rows = {r["id"]: r for r in conn.execute("SELECT id, receipt, status, amount FROM wallet_payments").fetchall()}
+            scan = conn.execute("SELECT status, pages FROM essay_scans").fetchone()
+        self.assertEqual((rows[paid["id"]]["receipt"], rows[paid["id"]]["status"], rows[paid["id"]]["amount"]),
+                         (None, "paid", 40000))  # rasm o'chdi, to'lov yozuvi qoldi
+        self.assertEqual(rows[review["id"]]["receipt"], "kutyapti")  # ko'rib chiqilmagani tegilmaydi
+        self.assertEqual((scan["status"], scan["pages"]), ("expired", "[]"))
+        self.assertEqual(db.purge_old_files()["wallet_payments"], 0)
+
+    def test_recent_scan_still_collects(self):
+        test = esse_mock([])
+        db.start_essay_scan(STUDENT, test["id"], "gemini")
+        self.assertEqual(db.collecting_essay_scan(STUDENT)["test_id"], test["id"])
+
+    async def test_size_alert_and_admin_text(self):
+        import ops
+        fake = FakeBot()
+        saved = (ops.ADMIN_IDS, db.database_size)
+        ops.ADMIN_IDS = {OWNER}
+        try:
+            db.database_size = lambda: 10 * 1024 * 1024
+            await ops.run_maintenance(fake)
+            self.assertEqual(fake.messages, [])  # 10 MB — xabar yo'q
+            db.database_size = lambda: 420 * 1024 * 1024
+            result = await ops.run_maintenance(fake)
+        finally:
+            ops.ADMIN_IDS, db.database_size = saved
+        self.assertIn("deyarli to'ldi", fake.messages[0][1])
+        self.assertIn("420,0 MB / 500 MB (84%)", ops.size_text(result["size"]))
+        self.assertIsInstance(db.database_size(), int)  # SQLite — fayl hajmi
+
+    def test_pool_check_skipped_for_fresh_connection(self):
+        from psycopg_pool import ConnectionPool
+        checked = []
+        saved = ConnectionPool.check_connection
+        ConnectionPool.check_connection = staticmethod(lambda conn: checked.append(conn))
+        try:
+            class Conn:  # weakref bo'ladigan oddiy obyekt
+                pass
+            fresh, idle = Conn(), Conn()
+            db._mark_returned(fresh)
+            db._check_if_idle(fresh)
+            db._check_if_idle(idle)  # hech qachon qaytmagan (yangi yoki uzoq turgan) — tekshiriladi
+        finally:
+            ConnectionPool.check_connection = saved
+        self.assertEqual(checked, [idle])
+
+
 async def _done():
     return None
 

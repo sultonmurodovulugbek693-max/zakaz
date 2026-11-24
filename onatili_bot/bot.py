@@ -687,6 +687,8 @@ async def essay_page_received(message: Message, scan: dict) -> None:
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     mime = "image/jpeg" if message.photo else message.document.mime_type
     data = (await message.bot.download(file_id)).read()
+    # Fayl qilib yuborilgan qo'lyozma 5–10 MB bo'ladi — bazaga kichraytirib (AI baribir o'qiy oladigan 2000 px)
+    data, mime = await asyncio.to_thread(webapp.shrink_image, data, mime, 2000, 85)
     count = await asyncio.to_thread(db.add_essay_scan_page, message.from_user.id, scan["test_id"],
                                     base64.b64encode(data).decode(), mime)
     full = count >= db.ESSAY_SCAN_PAGES
@@ -1266,10 +1268,12 @@ def is_admin(event) -> bool:
 async def admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     channels = await asyncio.to_thread(db.list_channels)
     numbers = await asyncio.to_thread(db.stats)
+    size = await asyncio.to_thread(db.database_size)
     lines = [
         "🛠 <b>Admin paneli</b>", LINE,
         f"👥 Foydalanuvchilar: <b>{numbers['users']}</b> · 📝 testlar: <b>{numbers['tests']}</b> · "
-        f"✅ topshirilgan: <b>{numbers['attempts']}</b>", "",
+        f"✅ topshirilgan: <b>{numbers['attempts']}</b>",
+        f"💾 Baza: {ops.size_text(size)}", "",
         "📢 <b>Majburiy obuna kanallari</b>",
     ]
     lines += [f"{i}. <a href=\"{esc(c['url'])}\">{esc(c['title'])}</a>" for i, c in enumerate(channels, 1)] or \
@@ -3148,6 +3152,7 @@ async def main() -> None:
         asyncio.create_task(expert_worker()),  # «🎓 Ekspert»: 48 soatda baholanmasa — kredit qaytadi
         asyncio.create_task(ops.alert_sender(bot)),  # xatolar — adminga Telegram'da
         asyncio.create_task(ops.daily_backup(bot)),  # har kuni baza nusxasi — adminga
+        asyncio.create_task(ops.daily_maintenance(bot)),  # har kecha eski rasmlar tozalanadi, baza hajmi nazorati
         asyncio.create_task(ops.plan_reminders(bot)),  # obuna tugashiga 3 va 1 kun qolganda — o'qituvchiga
     ]
     if url := ops.keep_alive_url():  # Render bepul tarifida server uxlab qolmasin
