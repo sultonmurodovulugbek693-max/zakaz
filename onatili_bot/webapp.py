@@ -3040,13 +3040,19 @@ async def practice_public_submit(user: dict, teacher_id: int, topic: str | None,
         if "wake_ai" in HOOKS:
             HOOKS["wake_ai"]()
         return {"ok": True, "id": practice_id, "status": "pending", "free": True}
-    if not await run(db.wallet_balance, teacher_id, user["id"]) and not await run(essay_packs, teacher_id):
-        raise ApiError(409, "Ustoz hali kredit narxini qo'ymagan")
-    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", photos or None,
-                            "awaiting_credit")
-    _released, teacher_out = await release_waiting(teacher_id, user["id"])
-    status = (await run(db.get_practice, practice_id))["status"]
-    return {"ok": True, "id": practice_id, "status": status, "teacher_out": teacher_out,
+    # Bepullar tugagan: faqat kredit bilan — kredit yo'q bo'lsa esse qabul qilinmaydi (avval «+» → kredit sotib oladi)
+    if not await run(db.wallet_use, teacher_id, user["id"]):
+        if not await run(essay_packs, teacher_id):
+            raise ApiError(409, "Ustoz hali kredit narxini qo'ymagan")
+        raise ApiError(402, "Kreditingiz yo'q — avval kredit sotib oling", need_credit=True)
+    if not await run(plans.platform_routed, teacher_id) and not await ai_allowed(teacher_id, "essays"):
+        await run(db.wallet_add, teacher_id, user["id"], 1)  # AI tekshira olmaydi — kredit qaytadi
+        raise ApiError(402, "Ustozning AI krediti hozir tugagan — kreditingiz yechilmadi. Keyinroq urinib ko'ring")
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", photos or None)
+    await run(db.set_practice_wallet, practice_id, "pending")  # kredit bilan: AI tekshira olmasa — qaytariladi
+    if "wake_ai" in HOOKS:
+        HOOKS["wake_ai"]()
+    return {"ok": True, "id": practice_id, "status": "pending",
             "balance": await run(db.wallet_balance, teacher_id, user["id"])}
 
 
@@ -3141,8 +3147,14 @@ async def practice_photo(request: web.Request) -> web.Response:
                 raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
             if not await run(plans.can_use_ai, teacher_id, "essays"):
                 raise ApiError(402, "Ustozingizning AI krediti tugagan — ustozingizga ayting")
-        elif not await run(public_open, teacher_id) and await run(db.wallet_balance, teacher_id, user["id"]) <= 0:
-            raise ApiError(403, "Ustoz ommaviy esse tekshiruvini yopgan")
+        else:  # begona: bepul (ochiq bo'lsa) yoki kredit — kredit yo'q bo'lsa rasm saqlanmaydi ham
+            is_open = await run(public_open, teacher_id)
+            balance = await run(db.wallet_balance, teacher_id, user["id"])
+            if not is_open and balance <= 0:
+                raise ApiError(403, "Ustoz ommaviy esse tekshiruvini yopgan")
+            free = is_open and await run(db.public_free_used, teacher_id, user["id"]) < public_free(teacher_id)
+            if not free and balance <= 0:
+                raise ApiError(402, "Kreditingiz yo'q — avval kredit sotib oling", need_credit=True)
     if "store_photo" not in HOOKS:
         raise ApiError(503, "Rasmni saqlab bo'lmadi — keyinroq urinib ko'ring")
     pages = []

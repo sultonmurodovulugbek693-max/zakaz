@@ -172,10 +172,10 @@ SYSTEM_PROMPT_CLASSIC = (
 RUBRICS = {
     "official": {"name": "UZBMB rasmiy jadvali (2 / 1,5 / 1 / 0,5)", "rubric": RUBRIC_OFFICIAL,
                  "steps": SCORE_STEPS_OFFICIAL, "prompt": SYSTEM_PROMPT_OFFICIAL},
-    "classic": {"name": "Hozirgi mezon (12 × 0 / 1 / 2)", "rubric": RUBRIC_CLASSIC,
+    "classic": {"name": "Eski mezon (12 × 0 / 1 / 2)", "rubric": RUBRIC_CLASSIC,
                 "steps": [0, 1, 2], "prompt": SYSTEM_PROMPT_CLASSIC},
 }
-DEFAULT_RUBRIC = "classic"  # standart — hozirgi (birinchi) mezon; rasmiysini admin mini appda yoqadi
+DEFAULT_RUBRIC = "official"  # standart — UZBMB rasmiy jadvali (24 ball, 2 / 1,5 / 1 / 0,5); eskisini admin tanlashi mumkin
 # Natijalarda mezon nomi — ikkala mezondan (eski natijalar ham ko'rinadi); bir xil kalitda rasmiysi
 RUBRIC_TITLES = {**{key: title for key, title, _ in RUBRIC_CLASSIC}, **{key: title for key, title, _ in RUBRIC_OFFICIAL}}
 

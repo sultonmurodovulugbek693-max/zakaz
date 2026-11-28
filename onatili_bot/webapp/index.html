@@ -3298,7 +3298,7 @@ async function loadAiModels(data) {
   const rb = data.rubric;
   box.innerHTML = `${rb ? `<div class="section-title"><h2>📏 Baholash mezoni</h2></div>
     <div class="card" style="display:grid;gap:8px"><div class="chips">${rb.options.map(o => `<button type="button" class="chip ${o.key === rb.chosen ? "on" : ""}" data-rubric="${o.key}">${esc(o.name)}</button>`).join("")}</div>
-      <span class="muted small">Esse qaysi mezon bilan baholanadi (AI va 🎓 ekspert). Standart — hozirgi mezon; UZBMB rasmiy jadvalida har mezon 2 / 1,5 / 1 / 0,5 ball.</span></div>` : ""}
+      <span class="muted small">Esse qaysi mezon bilan baholanadi (AI va 🎓 ekspert). Standart — UZBMB rasmiy jadvali: 12 mezon, har biri 2 / 1,5 / 1 / 0,5 ball (jami 24 → 75 ballik shkala).</span></div>` : ""}
     <div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
     <div class="card" style="display:grid;gap:14px">${data.tasks.map(t => `<div style="display:grid;gap:6px">
       <b class="small">${esc(t.title)}</b>
@@ -3742,26 +3742,38 @@ VIEWS.practice = async () => {
   const history = r.history.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">📝</span>
       <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.photos ? `📷 ${h.photos} bet` : `${h.words} so'z`}</small></span>
       <span class="score-col">${h.status === "graded" ? essayStamp(h.score_75) : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
+  const codeCard = title => `<div class="card"><b>${title}</b>
+      <span class="muted small">Ustozingiz bergan kodni kiriting (masalan E48213) — esselaringiz <b>ustozingiz limitidan</b> tekshiriladi.</span>
+      <div class="row" style="gap:8px"><input class="input" id="pcode" placeholder="E48213" autocomplete="off" autocapitalize="characters" style="flex:1">
+        <button type="button" class="btn" id="pcode-go">Ulanish</button></div></div>`;
+  // Tartib: kredit (tepada, «+» — sotib olish) → tekshiruvchi → mavzu → qanday yuborish (matn / rasm) → tugma
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
       <span class="muted small">AI imtihondagidek 75 ballik shkalada tekshiradi va har mezon bo'yicha tahlil beradi.</span></div>
-    <div class="card"><b>🔑 Ustozingiz kodi bormi?</b>
-      <span class="muted small">Ustozingiz bergan kodni kiriting (masalan E48213) — esselaringiz <b>ustozingiz limitidan</b> tekshiriladi.</span>
-      <div class="row" style="gap:8px"><input class="input" id="pcode" placeholder="E48213" autocomplete="off" autocapitalize="characters" style="flex:1">
-        <button type="button" class="btn" id="pcode-go">Ulanish</button></div></div>
-    ${!t.length ? `<div class="card empty"><div class="big">🔗</div><b>Hozircha tekshiruvchi yo'q</b><span>Ustozingiz kodini kiriting yoki undan taklif havolasini so'rang.</span></div>` : `
-    <div class="card">
-      ${t.length > 1 ? `<div class="field"><label>Ustoz</label><div class="chips">${t.map((x, i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-teacher="${x.id}">${esc(x.name)}</button>`).join("")}</div></div>` : `<span class="small">Ustoz: <b>${esc(t[0].name)}</b></span>`}
-      <div id="left" style="display:grid;gap:8px"></div>
-      <div class="field"><label for="ptopic">Mavzu (vaziyat) <span class="muted">— ixtiyoriy</span></label><textarea class="input" id="ptopic" rows="2" placeholder="Masalan: Kitob o'qish foydalimi yoki internet?">${esc(draft.topic || "")}</textarea></div>
-      <textarea class="input" id="pessay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
-      <div class="counter" id="pcount"></div>
-      <div style="display:grid;gap:6px">
-        <label class="btn ghost block" for="pphotos" id="pphotos-label">📷 Yoki qog'ozdagi esse rasmini yuklang (1–6 bet)</label>
+    ${!t.length ? `${codeCard("🔑 Ustozingiz kodi bormi?")}
+    <div class="card empty"><div class="big">🔗</div><b>Hozircha tekshiruvchi yo'q</b><span>Ustozingiz kodini kiriting yoki undan taklif havolasini so'rang.</span></div>` : `
+    <div id="pbar"></div>
+    <div class="card" id="pbuybox" style="display:none;gap:10px"></div>
+    <div class="section-title"><h2>👤 Tekshiruvchi</h2></div>
+    <div class="card" id="pwho" style="display:grid;gap:10px"></div>
+    <div class="section-title"><h2>📌 Mavzu</h2><span class="muted small">ixtiyoriy</span></div>
+    <div class="card"><textarea class="input" id="ptopic" rows="2" placeholder="Vaziyat matni — masalan: Kitob o'qish foydalimi yoki internet?">${esc(draft.topic || "")}</textarea></div>
+    <div class="section-title"><h2>✍️ Esseni qanday yuborasiz?</h2></div>
+    <div class="card" style="display:grid;gap:10px">
+      <div class="chips"><button type="button" class="chip on" data-pway="text">✍️ Matn yozaman</button>
+        <button type="button" class="chip" data-pway="photo">📷 Rasmini yuklayman</button></div>
+      <div id="pway-text" style="display:grid;gap:6px">
+        <textarea class="input" id="pessay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
+        <div class="counter" id="pcount"></div></div>
+      <div id="pway-photo" style="display:none;gap:6px">
+        <span class="muted small">Qog'ozga yozgan essengiz sahifalarini (1–6 bet) rasmga oling — Claude qo'lyozmani o'zi o'qib tekshiradi. Yorug' joyda, varaqni tekis qo'yib oling.</span>
+        <label class="btn ghost block" for="pphotos" id="pphotos-label">📷 Rasmlarni tanlash (1–6 bet)</label>
         <input type="file" id="pphotos" accept="image/*" multiple hidden>
         <span class="muted small" id="pphotos-note" hidden></span></div>
-      <button type="button" class="btn block" id="psend">Tekshirtirish</button></div>
-    <div id="my-essay"></div>`}
+    </div>
+    <button type="button" class="btn block" id="psend">Tekshirtirish</button>
+    <div id="my-essay"></div>
+    ${codeCard("🔑 Boshqa ustozning kodi bormi?")}`}
     ${history ? `<div class="section-title"><h2>Oldingi esselarim</h2></div><div class="list">${history}</div>` : ""}
   </div>`;
   document.querySelectorAll("[data-pr]").forEach(x => x.onclick = () => showPractice(+x.dataset.pr));
@@ -3778,30 +3790,51 @@ VIEWS.practice = async () => {
   };
   codeEl.onkeydown = e => { if (e.key === "Enter") codeBtn.click(); };
   if (!t.length) return;
-  let teacher = t[0], packEssays = 1, mode = "ai";  // mode: «🤖 Claude» yoki «🎓 Ekspert» (FREE_IDS qo'lda)
-  // Ustozning o'quvchisi — oylik chegara; begona — bepullar, kredit va paketlar (bitta chek — bir nechta esse)
-  const left = () => {
-    const box = document.getElementById("left");
-    if (teacher.kind !== "public") { box.innerHTML = `<span class="muted small">Bu oy yana ${teacher.left} / ${teacher.limit} ta esse tekshirtira olasiz.</span>`; return; }
-    const packs = teacher.packs || [];
-    packEssays = packs.length ? packs[packs.length - 1].essays : 1;
-    if (!teacher.expert) mode = "ai";
-    box.innerHTML = `${teacher.expert ? `<div class="field"><label>Kim tekshirsin?</label><div class="chips">
-        <button type="button" class="chip ${mode === "ai" ? "on" : ""}" data-pmode="ai">🤖 Claude · 1 kredit</button>
-        <button type="button" class="chip ${mode === "expert" ? "on" : ""}" data-pmode="expert">🎓 Ekspert · ${teacher.expert} kredit</button></div>
-        <span class="muted small">${mode === "expert" ? `Ekspert (${esc(teacher.name)}) essengizni o'zi o'qib baholaydi${teacher.expert_price ? ` — ${sum(teacher.expert_price)} so'm` : ""}. Natija botga va «📊 Natijalar»ga keladi.` : "Claude imtihondagidek 75 ballik shkalada darhol tekshiradi."}</span></div>` : ""}
-      ${!teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.${teacher.balance ? " Sotib olgan kreditlaringiz baribir ishlaydi." : ""}</span>` : ""}
-      <div class="row" style="gap:8px;flex-wrap:wrap">${teacher.free_left ? `<span class="pill-tag done">🎁 Bepul: ${teacher.free_left} / ${teacher.free}</span>` : ""}
-        <span class="pill-tag ${teacher.balance ? "done" : "wait"}">💳 Kredit: ${teacher.balance} ta</span>
-        ${teacher.waiting ? `<span class="pill-tag wait">⏳ ${teacher.waiting} ta esse kredit kutmoqda</span>` : ""}</div>
-      ${teacher.free_left ? "" : `<span class="muted small">Har esse — 1 kredit. Kredit bo'lmasa ham yuboring: esse saqlanadi va kredit olishingiz bilan o'zi tekshiriladi.</span>`}
-      ${packs.length && teacher.open ? `<div class="chips" id="ppacks">${packs.map((x, i) => `<button type="button" class="chip ${i === packs.length - 1 ? "on" : ""}" data-ppack="${x.essays}">${x.essays} ta · ${sum(x.price)}${x.discount ? ` <b>−${x.discount}%</b>` : ""}</button>`).join("")}</div>
-        <button type="button" class="btn ${teacher.free_left ? "ghost" : ""} block" id="pbuy">💳 Kredit sotib olish</button>` : ""}`;
-    box.querySelectorAll("[data-pmode]").forEach(x => x.onclick = () => { mode = x.dataset.pmode; haptic("select"); left(); });
-    box.querySelectorAll("[data-ppack]").forEach(x => x.onclick = () => { packEssays = +x.dataset.ppack; haptic("select");
-      box.querySelectorAll("[data-ppack]").forEach(y => y.classList.toggle("on", y === x)); });
-    const buy = document.getElementById("pbuy");
-    if (buy) buy.onclick = async () => {
+  const $id = id => document.getElementById(id);
+  const display = (el, on) => { el.style.display = on ? "grid" : "none"; };
+  const topic = $id("ptopic"), essay = $id("pessay"), btn = $id("psend");
+  let teacher = t[0], packEssays = 1, mode = "ai", way = "text", buyOpen = false, photos = [];  // mode: 🤖 Claude | 🎓 Ekspert
+  const pub = () => teacher.kind === "public";
+  const cost = () => (pub() && mode === "expert" ? teacher.expert : 1);
+  // Yuborsa bo'ladimi: ustozning o'quvchisi — oylik qoldiq; begona — bepul (Claude) yoki kredit yetadi. Kredit yo'q — yo'q
+  const canSend = () => !pub() ? teacher.left > 0
+    : (mode !== "expert" && teacher.open && teacher.free_left > 0) || (teacher.balance || 0) >= cost();
+  const canBuy = () => pub() && teacher.open && (teacher.packs || []).length > 0;
+  const bar = () => {
+    $id("pbar").innerHTML = !pub()
+      ? `<div class="card"><b>📅 Bu oy: ${teacher.left} / ${teacher.limit} ta esse</b><span class="muted small">Ustozingiz hisobidan tekshiriladi.</span></div>`
+      : `<div class="card"><div class="row between" style="align-items:center;gap:10px">
+          <span><b>💳 Kreditingiz: ${teacher.balance || 0} ta</b><br><span class="muted small">Har esse — 1 kredit${teacher.open && teacher.free_left ? ` · 🎁 ${teacher.free_left} ta bepul` : ""}${teacher.waiting ? ` · ⏳ ${teacher.waiting} ta esse kredit kutmoqda` : ""}</span></span>
+          ${canBuy() ? `<button type="button" class="btn" id="pplus" aria-label="Kredit sotib olish" style="min-width:48px;padding:8px 14px;font-size:22px;line-height:1">+</button>` : ""}</div></div>`;
+    const plus = $id("pplus");
+    if (plus) plus.onclick = () => { haptic("light"); buyOpen = !buyOpen; buyBox(); };
+  };
+  const who = () => {
+    if (!pub() || !teacher.expert) mode = "ai";
+    $id("pwho").innerHTML = `${t.length > 1 ? `<div class="chips">${t.map(x => `<button type="button" class="chip ${x.id === teacher.id ? "on" : ""}" data-teacher="${x.id}">${esc(x.name)}</button>`).join("")}</div>` : `<b>${esc(teacher.name)}</b>`}
+      ${pub() && teacher.expert ? `<div class="field"><label>Kim tekshirsin?</label><div class="chips">
+          <button type="button" class="chip ${mode === "ai" ? "on" : ""}" data-pmode="ai">🤖 Claude · 1 kredit</button>
+          <button type="button" class="chip ${mode === "expert" ? "on" : ""}" data-pmode="expert">🎓 Ekspert · ${teacher.expert} kredit</button></div>
+        <span class="muted small">${mode === "expert" ? `Ekspert (${esc(teacher.name)}) essengizni o'zi o'qib baholaydi${teacher.expert_price ? ` — ${sum(teacher.expert_price)} so'm` : ""}. Natija botga va «📊 Natijalar»ga keladi.` : "Claude imtihondagidek 75 ballik shkalada darhol tekshiradi."}</span></div>`
+        : `<span class="muted small">Claude imtihondagidek 75 ballik shkalada darhol tekshiradi.</span>`}
+      ${pub() && !teacher.open ? `<span class="small" style="color:var(--bad)">⛔️ Ustoz ommaviy tekshiruvni hozir yopgan.${teacher.balance ? " Sotib olgan kreditlaringiz baribir ishlaydi." : ""}</span>` : ""}`;
+    $id("pwho").querySelectorAll("[data-teacher]").forEach(x => x.onclick = () => {
+      teacher = t.find(y => String(y.id) === x.dataset.teacher); buyOpen = false; haptic("select"); render(); });
+    $id("pwho").querySelectorAll("[data-pmode]").forEach(x => x.onclick = () => { mode = x.dataset.pmode; haptic("select"); render(); });
+  };
+  const buyBox = () => {
+    const box = $id("pbuybox"), packs = teacher.packs || [];
+    if (!buyOpen || !canBuy()) { display(box, false); return; }
+    if (!packs.some(p => p.essays === packEssays)) packEssays = packs[packs.length - 1].essays;
+    display(box, true);
+    box.innerHTML = `<div class="row between"><b>💳 Kredit sotib olish</b><button type="button" class="btn plain" id="pbuy-close" aria-label="Yopish">✕</button></div>
+      <span class="muted small">Paketni tanlang — bot karta va summani yozadi, chekni o'sha yerga yuborasiz. Tasdiqlangach kredit darhol qo'shiladi.</span>
+      <div class="chips">${packs.map(x => `<button type="button" class="chip ${x.essays === packEssays ? "on" : ""}" data-ppack="${x.essays}">${x.essays} ta · ${sum(x.price)}${x.discount ? ` <b>−${x.discount}%</b>` : ""}</button>`).join("")}</div>
+      <button type="button" class="btn block" id="pbuy">💳 ${packEssays} ta kredit sotib olish</button>`;
+    box.querySelectorAll("[data-ppack]").forEach(x => x.onclick = () => { packEssays = +x.dataset.ppack; haptic("select"); buyBox(); });
+    $id("pbuy-close").onclick = () => { buyOpen = false; buyBox(); };
+    const buy = $id("pbuy");
+    buy.onclick = async () => {
       buy.disabled = true;
       try {
         const o = await api("/api/practice/wallet-order", { teacher_id: teacher.id, essays: packEssays }); haptic("success");
@@ -3811,24 +3844,28 @@ VIEWS.practice = async () => {
       buy.disabled = false;
     };
   };
-  left();
-  document.querySelectorAll("[data-teacher]").forEach(x => x.onclick = () => { teacher = t.find(y => String(y.id) === x.dataset.teacher); haptic("select");
-    document.querySelectorAll("[data-teacher]").forEach(y => y.classList.toggle("on", y === x)); left(); });
-  const topic = document.getElementById("ptopic"), essay = document.getElementById("pessay"), btn = document.getElementById("psend");
+  const sendLabel = () => {
+    btn.textContent = canSend() ? "Tekshirtirish" : canBuy() ? "💳 Kredit sotib oling"
+      : !pub() ? "Bu oy uchun chegara tugagan" : teacher.open ? "Kredit narxi hali qo'yilmagan" : "Ustoz tekshiruvni yopgan";
+  };
+  const render = () => { bar(); who(); buyBox(); sendLabel(); };
+  render();
+  // Qanday yuborish: ✍️ matn yoki 📷 qog'ozdagi esse rasmi (1–6 bet) — Claude qo'lyozmani o'zi o'qib baholaydi
+  const setWay = w => {
+    way = w; display($id("pway-text"), w === "text"); display($id("pway-photo"), w === "photo");
+    document.querySelectorAll("[data-pway]").forEach(x => x.classList.toggle("on", x.dataset.pway === w));
+  };
+  document.querySelectorAll("[data-pway]").forEach(x => x.onclick = () => { haptic("select"); setWay(x.dataset.pway); });
   const words = () => essay.value.trim() ? essay.value.trim().split(/\s+/).length : 0;
-  const count = () => { const w = words(); document.getElementById("pcount").textContent = `${w} so'z${w < 60 ? " · kamida 60" : ""}`; };
+  const count = () => { const w = words(); $id("pcount").textContent = `${w} so'z${w < 60 ? " · kamida 60" : ""}`; };
   const save = () => store(draftKey, JSON.stringify({ topic: topic.value, essay: essay.value }));
   essay.oninput = () => { save(); count(); }; topic.oninput = save; count();
-  // Qog'ozdagi esse: 1–6 bet rasmi — Claude qo'lyozmani o'zi o'qib baholaydi (matn yozish shart emas)
-  const photosEl = document.getElementById("pphotos"), photosNote = document.getElementById("pphotos-note"),
-    photosLabel = document.getElementById("pphotos-label");
-  let photos = [];
+  const photosEl = $id("pphotos"), photosNote = $id("pphotos-note"), photosLabel = $id("pphotos-label");
   const showPhotos = () => {
     photosNote.hidden = !photos.length;
-    photosNote.innerHTML = photos.length ? `📷 <b>${photos.length} ta rasm</b> tanlandi — AI qo'lyozmani o'qib tekshiradi. <a href="#" id="pphotos-clear">✕ Bekor qilish</a>` : "";
-    photosLabel.textContent = photos.length ? "📷 Boshqa rasmlarni tanlash" : "📷 Yoki qog'ozdagi esse rasmini yuklang (1–6 bet)";
-    essay.disabled = !!photos.length;
-    const clear = document.getElementById("pphotos-clear");
+    photosNote.innerHTML = photos.length ? `📷 <b>${photos.length} ta rasm</b> tanlandi. <a href="#" id="pphotos-clear">✕ Bekor qilish</a>` : "";
+    photosLabel.textContent = photos.length ? "📷 Boshqa rasmlarni tanlash" : "📷 Rasmlarni tanlash (1–6 bet)";
+    const clear = $id("pphotos-clear");
     if (clear) clear.onclick = e => { e.preventDefault(); photos = []; photosEl.value = ""; showPhotos(); };
   };
   photosEl.onchange = () => {
@@ -3837,18 +3874,22 @@ VIEWS.practice = async () => {
     photos = chosen.slice(0, 6); haptic("select"); showPhotos();
   };
   btn.onclick = async () => {
-    if (!photos.length && words() < 60) { toast("Esse juda qisqa — kamida 60 so'z (yoki esse rasmini yuklang)"); haptic("error"); return essay.focus(); }
-    const pub = teacher.kind === "public";
-    if (!pub && !teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
-    if (pub && !teacher.open && !teacher.balance) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
-    const expert = pub && mode === "expert";
-    if (expert && (teacher.balance || 0) < teacher.expert) {
-      toast(`Ekspert tekshiruvi — ${teacher.expert} kredit, sizda ${teacher.balance || 0} ta. Avval kredit oling`); haptic("error"); return;
+    if (!canSend()) {  // kredit yo'q — esse qabul qilinmaydi: sotib olish paneli ochiladi
+      if (canBuy()) {
+        buyOpen = true; buyBox(); $id("pbuybox").scrollIntoView({ behavior: "smooth", block: "center" });
+        toast(mode === "expert" ? `Ekspert tekshiruvi — ${teacher.expert} kredit, sizda ${teacher.balance || 0} ta. Kredit sotib oling`
+          : "Kreditingiz yo'q — avval kredit sotib oling");
+      } else toast(btn.textContent);
+      haptic("error"); return;
     }
-    btn.disabled = true; btn.textContent = photos.length ? "Rasm yuklanmoqda…" : "Yuborilmoqda…";
+    const photoMode = way === "photo";
+    if (photoMode && !photos.length) { toast("Esse rasmini tanlang (1–6 bet)"); haptic("error"); return; }
+    if (!photoMode && words() < 60) { toast("Esse juda qisqa — kamida 60 so'z"); haptic("error"); return essay.focus(); }
+    const expert = pub() && mode === "expert";
+    btn.disabled = true; btn.textContent = photoMode ? "Rasm yuklanmoqda…" : "Yuborilmoqda…";
     try {
       let res;
-      if (photos.length) {
+      if (photoMode) {
         const form = new FormData();
         form.append("teacher_id", teacher.id); form.append("topic", topic.value.trim()); form.append("mode", expert ? "expert" : "ai");
         for (const f of photos) form.append("photo", await compressImage(f, 2000), "esse.jpg");
@@ -3859,24 +3900,22 @@ VIEWS.practice = async () => {
         essay.value = "";
       }
       store(draftKey, "{}"); haptic("success"); topic.value = ""; count();
-      btn.textContent = "Yana bitta esse"; btn.disabled = false;
+      btn.disabled = false;
       if (res.status === "expert") {
-        teacher.balance = res.balance; left();
-        document.getElementById("my-essay").innerHTML = `<div class="card essay-wait"><b>🎓 Essengiz ekspertga yuborildi</b><span class="muted small">${res.credits} kredit yechildi, qoldi ${res.balance} ta. Ekspert baholagach natija botga va «📊 Natijalar» → «✍️ Esselarim»ga keladi.</span></div>`;
+        teacher.balance = res.balance; render();
+        $id("my-essay").innerHTML = `<div class="card essay-wait"><b>🎓 Essengiz ekspertga yuborildi</b><span class="muted small">${res.credits} kredit yechildi, qoldi ${res.balance} ta. Ekspert baholagach natija botga va «📊 Natijalar» → «✍️ Esselarim»ga keladi.</span></div>`;
         return;
       }
-      if (!pub) { teacher.left = Math.max(0, teacher.left - 1); left(); return watchPractice(res.id); }
+      if (!pub()) { teacher.left = Math.max(0, teacher.left - 1); render(); return watchPractice(res.id); }
       if (res.free) teacher.free_left = Math.max(0, teacher.free_left - 1);
       if (res.balance != null) teacher.balance = res.balance;
-      if (res.status === "awaiting_credit") {
-        teacher.waiting = (teacher.waiting || 0) + 1; left();
-        document.getElementById("my-essay").innerHTML = `<div class="card essay-wait"><b>💳 Essengiz saqlandi</b><span class="muted small">${res.teacher_out
-          ? "Ustozning AI krediti hozir tugagan — kreditingiz yechilmadi. Keyingi esse yuborganingizda birinchi bo'lib shu esse tekshiriladi."
-          : "Kredit oling — to'lov tasdiqlanishi bilan esse o'zi tekshiriladi va natija botga keladi."}</span></div>`;
-        return;
-      }
-      left(); watchPractice(res.id, res.free ? "Bepul tekshiruvdan." : `1 kredit yechildi — qoldi ${teacher.balance} ta.`);
-    } catch (e) { toast(e.message); haptic("error"); btn.disabled = false; btn.textContent = "Tekshirtirish"; }
+      render();
+      watchPractice(res.id, res.free ? "Bepul tekshiruvdan." : `1 kredit yechildi — qoldi ${teacher.balance} ta.`);
+    } catch (e) {
+      btn.disabled = false;
+      if (/kredit sotib oling/i.test(e.message || "")) { teacher.balance = 0; teacher.free_left = 0; buyOpen = canBuy(); }
+      render(); toast(e.message); haptic("error");
+    }
   };
 };
 

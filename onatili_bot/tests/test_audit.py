@@ -113,6 +113,31 @@ class AiGaveUp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.unrated_teacher_essays(self.test["id"]), 1)  # mock natijasi ustoz baholaguncha kutadi
 
 
+class PracticeGaveUpRouted(unittest.IsolatedAsyncioTestCase):
+    """Begona ustozda o'quvchi kredit bilan yuborgan esse: AI tekshira olmasa — kredit o'quvchiga, ustozga bepul kredit emas."""
+    async def asyncSetUp(self):
+        _env.fresh_db()
+        self.bot = FakeBot()
+
+    async def test_wallet_refund_only(self):
+        import plans
+        self.assertTrue(plans.platform_routed(OWNER))
+        practice_id = db.create_practice(OWNER, STUDENT, "Mavzu", "Esse matni. " * 40, "public")
+        db.set_practice_wallet(practice_id, "pending")
+        before = db.get_credits(OWNER)
+        saved = essay_ai.grade
+
+        async def broken(*_a, **_k):
+            raise essay_ai.AIError("o'qib bo'lmadi", retry=False)
+        essay_ai.grade = broken
+        try:
+            await bot.grade_practice(self.bot, db.get_practice(practice_id))
+        finally:
+            essay_ai.grade = saved
+        self.assertEqual(db.wallet_balance(OWNER, STUDENT), 1)
+        self.assertEqual(db.get_credits(OWNER), before)
+
+
 class PinAttempts(ServerBase):
     async def test_wrong_pin_locks_after_five(self):
         import sheet

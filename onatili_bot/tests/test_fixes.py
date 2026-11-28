@@ -1871,16 +1871,20 @@ class AiRoutes(ServerBase):
         return replies, edits
 
     async def test_two_rubrics(self):
-        """Standart — hozirgi mezon (12 × 0/1/2); admin mini appda UZBMB rasmiy jadvalini (2/1,5/1/0,5) yoqadi."""
+        """Standart — UZBMB rasmiy jadvali (12 mezon, 2/1,5/1/0,5); admin mini appda eski mezonni (12 × 0/1/2) tanlashi mumkin."""
         essay_ai.forget_choices()
-        self.assertEqual(essay_ai.rubric_choice(), "classic")
-        self.assertIn("kochirmaslik", essay_ai.RUBRIC_KEYS)
-        self.assertEqual(essay_ai.result_schema()["properties"]["criteria"]["items"]["properties"]["score"]["enum"], [0, 1, 2])
+        self.assertEqual(essay_ai.rubric_choice(), "official")
+        self.assertEqual(essay_ai.RUBRIC_KEYS[:3], ["uslub", "qarashlar", "dalillar"])
+        self.assertEqual(essay_ai.result_schema()["properties"]["criteria"]["items"]["properties"]["score"]["enum"],
+                         [0, 0.5, 1, 1.5, 2])
         webapp.ADMIN_IDS.add(OWNER)
         try:
             data = (await self.get("/api/admin/ai"))[1]
-            self.assertEqual((data["rubric"]["chosen"], [o["key"] for o in data["rubric"]["options"]]), ("classic", ["official", "classic"]))
+            self.assertEqual((data["rubric"]["chosen"], [o["key"] for o in data["rubric"]["options"]]), ("official", ["official", "classic"]))
             self.assertEqual((await self.post("/api/admin/ai", {"rubric": "xyz"}))[0], 400)
+            status, data = await self.post("/api/admin/ai", {"rubric": "classic"})
+            self.assertEqual((status, data["rubric"]["chosen"]), (200, "classic"))
+            self.assertIn("kochirmaslik", essay_ai.RUBRIC_KEYS)
             status, data = await self.post("/api/admin/ai", {"rubric": "official"})
             self.assertEqual((status, data["rubric"]["chosen"]), (200, "official"))
             self.assertEqual(essay_ai.RUBRIC_KEYS[:3], ["uslub", "qarashlar", "dalillar"])
@@ -2057,26 +2061,25 @@ class PracticePublic(ServerBase):
         for _ in range(2):
             status, res = await self.send()
             self.assertEqual((status, res["status"], res["free"]), (200, "pending", True), res)
-        status, res = await self.send()  # bepullar tugadi, kredit yo'q — saqlanadi
-        self.assertEqual((status, res["status"], res["balance"]), (200, "awaiting_credit", 0))
-        waiting_id = res["id"]
+        status, res = await self.send()  # bepullar tugadi, kredit yo'q — esse qabul qilinmaydi: avval kredit sotib oladi
+        self.assertEqual((status, res.get("need_credit")), (402, True), res)
         t = (await self.get("/api/practice"))[1]["teachers"][0]
-        self.assertEqual((t["free_left"], t["waiting"]), (0, 1))
+        self.assertEqual((t["free_left"], t["waiting"]), (0, 0))
 
         status, order = await self.post("/api/practice/wallet-order", {"teacher_id": OWNER, "essays": 5})
         self.assertEqual((status, order["payment"]["amount"]), (200, 20000), order)
         self.user = {"id": OWNER, "name": "Ustoz", "username": None}
         await self.post(f"/api/teacher/wallet-payment/{order['payment']['id']}", {"action": "approve"})
-        self.assertEqual(db.get_practice(waiting_id)["status"], "pending")  # kredit tushdi — saqlangan esse tekshiruvda
-        self.assertEqual(db.wallet_balance(OWNER, OTHER), 4)
+        self.assertEqual(db.wallet_balance(OWNER, OTHER), 5)
 
         self.user = {"id": OTHER, "name": "Begona", "username": None}
         status, res = await self.send()
-        self.assertEqual((res["status"], res["balance"]), ("pending", 3))
+        self.assertEqual((res["status"], res["balance"]), ("pending", 4))
+        self.assertEqual(db.get_practice(res["id"])["wallet"], 1)  # kredit bilan — AI tekshira olmasa qaytadi
         db.set_setting(f"essay_public:{OWNER}", "0")  # ustoz yopdi — sotib olingan kredit baribir ishlaydi
         t = (await self.get("/api/practice"))[1]["teachers"][0]
-        self.assertEqual((t["open"], t["free_left"], t["balance"]), (False, 0, 3))  # krediti bor — ko'rinadi
-        for left in (2, 1, 0):
+        self.assertEqual((t["open"], t["free_left"], t["balance"]), (False, 0, 4))  # krediti bor — ko'rinadi
+        for left in (3, 2, 1, 0):
             status, res = await self.send()
             self.assertEqual((status, res["status"], res["balance"]), (200, "pending", left), res)
         self.assertEqual((await self.send())[0], 403)  # kredit tugadi — endi yopiq

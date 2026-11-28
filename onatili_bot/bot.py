@@ -2367,7 +2367,8 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
                                        + "Rasm bo'lsa, yorug' joyda tekis qilib qayta yuboring.")
             except Exception:
                 pass
-        if give_up and not plans.ai_unlimited(practice["teacher_id"]):
+        routed_paid = bool(practice.get("wallet")) and await asyncio.to_thread(plans.platform_routed, practice["teacher_id"])  # ustoz krediti yechilmagan
+        if give_up and not routed_paid and not plans.ai_unlimited(practice["teacher_id"]):
             await asyncio.to_thread(db.add_credits, practice["teacher_id"], 1)  # tekshirilmadi — kredit qaytadi
         if error.retry and not give_up:
             raise
