@@ -239,7 +239,7 @@ class EssayBot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.wallet_balance(TEACHER, STRANGER), 0)
         grade, essay_ai.grade = essay_ai.grade, None
 
-        async def broken(*_):
+        async def broken(*_a, **_k):
             raise essay_ai.AIError("o'qib bo'lmadi", retry=False)
         essay_ai.grade = broken
         try:

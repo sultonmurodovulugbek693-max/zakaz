@@ -1573,8 +1573,25 @@ async def settings_view(user: dict) -> dict:
             "expert_price": await run(expert_price, user["id"]),  # «🎓 Ekspert tekshiruvi» (FREE_IDS)
             "expert_waiting": len(await run(db.expert_queue, user["id"])) if plans.ai_unlimited(user["id"]) else 0,
             "announce_channels": await run(announce_channels, user["id"]),
+            "rubric": await run(rubric_view, user["id"]),
             "claude": await run(claude_capacity) if plans.ai_unlimited(user["id"]) else None,
             "public_url": f"https://t.me/{username}?start={public_code(user['id'])}" if username else None}
+
+
+def rubric_view(teacher_id: int) -> dict:
+    """«📏 Baholash mezoni» (sozlamalar → «🤖 AI»): ikkala mezon va qaysi biri tanlangan.
+    Admin tanlovi — o'zi tanlamagan hamma ustoz uchun standart; ustoz tanlovi — faqat o'z o'quvchilari essesiga."""
+    admin = plans.is_admin(teacher_id)
+    return {"chosen": essay_ai.rubric_choice() if admin else essay_ai.rubric_of(teacher_id),
+            "own": admin or essay_ai.own_rubric(teacher_id) is not None, "for_all": admin,
+            "options": [{"key": k, "name": v["name"], "about": v["about"]} for k, v in essay_ai.RUBRICS.items()]}
+
+
+async def save_rubric(teacher_id: int, rubric: str) -> None:
+    if rubric not in essay_ai.RUBRICS:
+        raise ApiError(400, "Bunday mezon yo'q")
+    await run(db.set_setting, "ai:rubric" if plans.is_admin(teacher_id) else f"rubric:{teacher_id}", rubric)
+    essay_ai.forget_choices()
 
 
 async def teacher_settings(request: web.Request) -> web.Response:
@@ -1644,6 +1661,8 @@ async def teacher_settings_save(request: web.Request) -> web.Response:
     """Karta (16 raqam + egasi) va/yoki ommaviy tekshiruvni yoqish — botdagi /esse bilan bir xil qoidalar."""
     user = await auth(request)
     payload = await body(request)
+    if "rubric" in payload:  # «📏 Baholash mezoni»: bundan keyingi esselar shu mezon bilan baholanadi
+        await save_rubric(user["id"], str(payload.get("rubric") or ""))
     if "card" in payload:
         number = _digits(payload.get("card"))
         if len(number) != 16:
@@ -1727,12 +1746,8 @@ async def ai_models(request: web.Request) -> web.Response:
         raise ApiError(403, "AI modellarini faqat admin tanlaydi")
     if request.method == "POST":
         payload = await body(request)
-        if "rubric" in payload:  # «📏 Baholash mezoni»: hozirgi (standart) yoki UZBMB rasmiy jadvali
-            rubric = str(payload.get("rubric") or "")
-            if rubric not in essay_ai.RUBRICS:
-                raise ApiError(400, "Bunday mezon yo'q")
-            await run(db.set_setting, "ai:rubric", rubric)
-            essay_ai.forget_choices()
+        if "rubric" in payload:  # «📏 Baholash mezoni» (standart — o'zi tanlamagan ustozlar uchun)
+            await save_rubric(user["id"], str(payload.get("rubric") or ""))
             return ok(await run(ai_models_view))
         task, choice = str(payload.get("task") or ""), str(payload.get("choice") or "")
         if task not in essay_ai.TASKS or choice not in essay_ai.allowed_choices(task):
@@ -2076,7 +2091,7 @@ async def my_essay(request: web.Request) -> web.Response:
         "teacher_changed": attempt["essay"] is not None and essay["ai_score"] is not None and attempt["essay"] != essay["ai_score"],
         "criteria": ai.get("criteria") if essay["status"] == "graded" else None,
         "comment": ai.get("comment") if essay["status"] == "graded" else None,
-        "titles": essay_ai.RUBRIC_TITLES,
+        "titles": essay_ai.titles_of(ai),
     })
 
 
@@ -2187,7 +2202,7 @@ async def result(request: web.Request) -> web.Response:
             "status": essay["status"], "confirmed": confirmed,
             "criteria": (essay["ai_result"] or {}).get("criteria") if (confirmed or is_teacher) else None,
             "comment": (essay["ai_result"] or {}).get("comment") if (confirmed or is_teacher) else None,
-            "titles": essay_ai.RUBRIC_TITLES,
+            "titles": essay_ai.titles_of(essay["ai_result"]),
         }
     return ok({
         "test": {"title": test["title"], "code": test["code"], "fmt": test["fmt"], "theme": test.get("theme") or "classic",
@@ -2882,7 +2897,7 @@ def _practice_view(item: dict) -> dict:
             "score": item["ai_score"], "score_75": essay_to_75(item["ai_score"]), "max": ESSAY_MAX, "scale": ESSAY_SCALE,
             "criteria": ai.get("criteria") if item["status"] == "graded" else None,
             "comment": ai.get("comment") if item["status"] == "graded" else None,
-            "titles": essay_ai.RUBRIC_TITLES, "words": len(item["text"].split()),
+            "titles": essay_ai.titles_of(ai), "words": len(item["text"].split()),
             "photos": len(item.get("photos") or []),  # qog'ozdagi esse rasmi (bet soni) — matni yo'q
             "expert": ai.get("by") == "expert"}  # 🎓 ekspert qo'lda baholagan (AI emas)
 
@@ -2971,8 +2986,14 @@ async def expert_queue_view(request: web.Request) -> web.Response:
                            "words": len(p["text"].split()), "created_at": p["created_at"], "price": p.get("price") or 0,
                            "photos": len(p.get("photos") or [])}  # rasmli esse — botdagi xabarda
                           for p in rows],
-               "rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in essay_ai.RUBRIC],
-               "steps": sorted(essay_ai.SCORE_STEPS, reverse=True)})
+               **rubric_form(await run(essay_ai.rubric_of, user["id"]))})
+
+
+def rubric_form(key: str) -> dict:
+    """Ekspert formasi: mezon nomlari, darajalari va qo'yiladigan ballar (ustoz tanlagan mezon)."""
+    rub = essay_ai.RUBRICS[key]
+    return {"rubric": [{"key": k, "title": t, "levels": lv} for k, t, lv in rub["rubric"]],
+            "steps": sorted(rub["steps"], reverse=True), "rubric_key": key, "rubric_name": rub["name"]}
 
 
 async def expert_grade(request: web.Request) -> web.Response:
@@ -2984,14 +3005,15 @@ async def expert_grade(request: web.Request) -> web.Response:
     raw = payload.get("scores") if isinstance(payload.get("scores"), dict) else {}
     notes = payload.get("notes") if isinstance(payload.get("notes"), dict) else {}
     criteria = []
-    steps = essay_ai.SCORE_STEPS  # tanlangan mezon: rasmiy — 2/1,5/1/0,5 (0), hozirgi — 0/1/2
-    for key in essay_ai.RUBRIC_KEYS:
+    rubric = await run(essay_ai.rubric_of, user["id"])  # ekspert sozlamalarda tanlagan mezon (formadagi bilan bir xil)
+    steps = essay_ai.RUBRICS[rubric]["steps"]  # rasmiy — 2/1,5/1/0,5 (0), eski — 0/1/2
+    for key, title, _ in essay_ai.RUBRICS[rubric]["rubric"]:
         score = raw.get(key)
         if score not in steps:
-            raise ApiError(400, f"«{essay_ai.RUBRIC_TITLES[key]}» uchun ball qo'ying: "
+            raise ApiError(400, f"«{title}» uchun ball qo'ying: "
                                 + ", ".join(str(x).replace(".", ",") for x in sorted(steps, reverse=True)))
         criteria.append({"key": key, "score": score, "comment": clean_text(notes.get(key), 300)})
-    result = {"score": sum(c["score"] for c in criteria), "criteria": criteria, "outline": False,
+    result = {"score": sum(c["score"] for c in criteria), "criteria": criteria, "rubric": rubric, "outline": False,
               "comment": clean_text(payload.get("comment"), 600), "transcription": "", "by": "expert",
               "expert": user.get("name") or "Ekspert"}
     practice_id = int(request.match_info["practice_id"])
@@ -3393,7 +3415,7 @@ async def essay_detail(request: web.Request) -> web.Response:
         "status": essay["status"] if essay else "none", "text": essay["text"] if essay else None,
         "photos": len(essay["photos"]) if essay else 0, "ai_score": essay["ai_score"] if essay else None,
         "ai": essay["ai_result"] if essay else None, "error": essay["error"] if essay else None,
-        "titles": essay_ai.RUBRIC_TITLES, "topic": test.get("essay_topic"),
+        "titles": essay_ai.titles_of(essay["ai_result"] if essay else None), "topic": test.get("essay_topic"),
     })
 
 

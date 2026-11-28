@@ -168,12 +168,15 @@ SYSTEM_PROMPT_CLASSIC = (
     "student's own mistakes, and grade the transcription."
 )
 
-# Ikkala mezon: admin «🤖 AI» → «📏 Baholash mezoni»da tanlaydi (sozlama ai:rubric). Standart — hozirgi mezon.
+# Ikkala mezon: har ustoz ilovada «⚙️ Sozlamalar» → «🤖 AI»da o'zi tanlaydi (sozlama rubric:<id>); tanlamagan ustozga —
+# admin tanlovi (ai:rubric, ilovada yoki botda «🤖 AI»); u ham bo'lmasa — UZBMB rasmiy jadvali
 RUBRICS = {
     "official": {"name": "UZBMB rasmiy jadvali (2 / 1,5 / 1 / 0,5)", "rubric": RUBRIC_OFFICIAL,
-                 "steps": SCORE_STEPS_OFFICIAL, "prompt": SYSTEM_PROMPT_OFFICIAL},
+                 "steps": SCORE_STEPS_OFFICIAL, "prompt": SYSTEM_PROMPT_OFFICIAL,
+                 "about": "Imtihondagidek: 12 mezon, har biri 2 / 1,5 / 1 / 0,5 ball — jami 24 → 75 ballik shkala"},
     "classic": {"name": "Eski mezon (12 × 0 / 1 / 2)", "rubric": RUBRIC_CLASSIC,
-                "steps": [0, 1, 2], "prompt": SYSTEM_PROMPT_CLASSIC},
+                "steps": [0, 1, 2], "prompt": SYSTEM_PROMPT_CLASSIC,
+                "about": "12 mezon, har biri faqat butun ball: 2 / 1 / 0 — jami 24 → 75 ballik shkala"},
 }
 DEFAULT_RUBRIC = "official"  # standart — UZBMB rasmiy jadvali (24 ball, 2 / 1,5 / 1 / 0,5); eskisini admin tanlashi mumkin
 # Natijalarda mezon nomi — ikkala mezondan (eski natijalar ham ko'rinadi); bir xil kalitda rasmiysi
@@ -181,9 +184,31 @@ RUBRIC_TITLES = {**{key: title for key, title, _ in RUBRIC_CLASSIC}, **{key: tit
 
 
 def rubric_choice() -> str:
-    """Hozir qaysi mezon bilan baholanadi: "official" | "classic" (admin tanlovi, 20 soniya keshda)."""
+    """Standart mezon: "official" | "classic" (admin tanlovi, 20 soniya keshda) — o'zi tanlamagan ustozlar uchun."""
     saved = _saved_choices().get("rubric")
     return saved if saved in RUBRICS else DEFAULT_RUBRIC
+
+
+def own_rubric(teacher_id: int | None) -> str | None:
+    """Ustozning o'zi ilovada tanlagan mezoni (tanlamagan bo'lsa — None)."""
+    if not teacher_id:
+        return None
+    _saved_choices()  # kesh yangilansin (20 soniya)
+    saved = _ROUTE_CACHE["rubrics"].get(str(teacher_id))
+    return saved if saved in RUBRICS else None
+
+
+def rubric_of(teacher_id: int | None) -> str:
+    """Shu ustozning o'quvchilari essesi qaysi mezon bilan baholanadi: o'z tanlovi, bo'lmasa — standart."""
+    return own_rubric(teacher_id) or rubric_choice()
+
+
+def titles_of(result: dict | None) -> dict:
+    """Natijadagi mezon nomlari — esse qaysi mezon bilan baholangan bo'lsa, o'shaniki (eski natijalarda — umumiy)."""
+    key = (result or {}).get("rubric")
+    if key in RUBRICS:
+        return {k: title for k, title, _ in RUBRICS[key]["rubric"]}
+    return RUBRIC_TITLES
 
 
 def active_rubric() -> dict:
@@ -210,8 +235,8 @@ TRANSCRIBE_PROMPT = (
 )
 
 # Javob shakli (JSON schema) — har ikki xizmat shu shaklda qaytaradi; mezon kalitlari va ballar tanlangan mezondan
-def result_schema(with_transcription: bool = True) -> dict:
-    rub = active_rubric()
+def result_schema(with_transcription: bool = True, rubric: str | None = None) -> dict:
+    rub = RUBRICS.get(rubric) or active_rubric()
     schema = {
         "type": "object",
         "properties": {
@@ -305,7 +330,7 @@ TASKS = {  # ish: (nomi, standart tanlov)
     "paid": ("💎 Titul yozma javoblari — pullik variant", "haiku"),
     "receipt": ("🧾 Chek tekshirish", None),
 }
-_ROUTE_CACHE: dict = {"at": 0.0, "saved": {}}
+_ROUTE_CACHE: dict = {"at": 0.0, "saved": {}, "rubrics": {}}
 
 
 def _model_of(choice: str) -> str | None:
@@ -325,6 +350,7 @@ def _saved_choices() -> dict:
             import db
             settings = db.get_settings()
             _ROUTE_CACHE["saved"] = {k[3:]: v for k, v in settings.items() if k.startswith("ai:")}
+            _ROUTE_CACHE["rubrics"] = {k[7:]: v for k, v in settings.items() if k.startswith("rubric:")}  # ustozlar tanlovi
         except Exception:
             pass
         _ROUTE_CACHE["at"] = _time.time()
@@ -411,9 +437,10 @@ def _half(value, steps=None) -> float:
     return int(score) if score == int(score) else score
 
 
-def finalize(raw: dict) -> dict:
+def finalize(raw: dict, rubric: str | None = None) -> dict:
     """Model javobini tekshiradi: har mezon bir marta, ball 0–2; jami — yig'indi (modelga ishonmaymiz)."""
-    rub = active_rubric()
+    rubric = rubric if rubric in RUBRICS else rubric_choice()
+    rub = RUBRICS[rubric]
     keys = [key for key, _, _ in rub["rubric"]]
     by_key = {}
     for item in raw.get("criteria", []):
@@ -428,6 +455,7 @@ def finalize(raw: dict) -> dict:
     return {
         "score": sum(item["score"] for item in criteria),
         "criteria": criteria,
+        "rubric": rubric,  # qaysi mezon bilan baholangan — natijada nomlar shundan
         "outline": bool(raw.get("has_outline_or_epigraph")),
         "comment": str(raw.get("overall_comment", "")).strip()[:600],
         "transcription": str(raw.get("transcription", "")).strip(),
@@ -587,15 +615,18 @@ async def _call(system: str, text: str, images: list[tuple[bytes, str]], schema:
     return out, usage
 
 
-async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, str]] | None = None) -> dict:
-    """Esseni baholaydi: {"score", "criteria", "comment", "outline", "transcription", "cost", "provider"}."""
+async def grade(topic: str, essay_text: str | None, images: list[tuple[bytes, str]] | None = None,
+                rubric: str | None = None) -> dict:
+    """Esseni baholaydi: {"score", "criteria", "rubric", "comment", "outline", "transcription", "cost", "provider"}.
+    rubric — ustoz tanlagan mezon (rubric_of); berilmasa — standart."""
     # Esse — ESSAY_PROVIDER'da, chuqurroq tahlil bilan (effort "high"); matnli esse qayta ko'chirilmaydi
-    schema = result_schema(with_transcription=not essay_text)
+    rubric = rubric if rubric in RUBRICS else rubric_choice()
+    schema = result_schema(with_transcription=not essay_text, rubric=rubric)
     provider, model = route("essay")
-    out, usage = await _call(active_rubric()["prompt"], _user_text(topic, essay_text), images or [], schema,
+    out, usage = await _call(RUBRICS[rubric]["prompt"], _user_text(topic, essay_text), images or [], schema,
                              provider=provider, effort="high", kind="essay", model=model)
     try:
-        result = finalize(json.loads(out))
+        result = finalize(json.loads(out), rubric)
     except (json.JSONDecodeError, ValueError, TypeError) as error:
         raise AIError(f"AI javobini o'qib bo'lmadi: {out[:200]}", retry=True) from error
     if essay_text and not result["transcription"]:

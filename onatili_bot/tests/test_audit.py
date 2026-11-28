@@ -138,6 +138,103 @@ class PracticeGaveUpRouted(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.get_credits(OWNER), before)
 
 
+class RubricPerTeacher(ServerBase):
+    """«⚙️ Sozlamalar» → «🤖 AI» → «📏 Baholash mezoni»: har ustoz o'zi tanlaydi; esse shu mezon bilan baholanadi."""
+    ESSAY = "Kitob o'qish foydali. " * 30
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        essay_ai.forget_choices()
+        self.prompts = []
+        self._call = essay_ai._call
+
+        async def fake_call(system, text, images, schema, **_k):
+            self.prompts.append(system)
+            keys = schema["properties"]["criteria"]["items"]["properties"]["key"]["enum"]
+            steps = schema["properties"]["criteria"]["items"]["properties"]["score"]["enum"]
+            import json
+            out = {"criteria": [{"key": k, "score": 1.5, "comment": "izoh"} for k in keys],
+                   "has_outline_or_epigraph": False, "overall_comment": "Yaxshi"}
+            self.steps = steps
+            return json.dumps(out), {"cost": 0.0}
+        essay_ai._call = fake_call
+
+    async def asyncTearDown(self):
+        essay_ai._call = self._call
+        essay_ai.forget_choices()
+        await super().asyncTearDown()
+
+    async def grade(self, teacher_id):
+        practice_id = db.create_practice(teacher_id, STUDENT, "Kitob", self.ESSAY, "student")
+        await bot.grade_practice(self.bot, db.get_practice(practice_id))
+        return db.get_practice(practice_id)
+
+    async def test_teacher_chooses_and_grading_follows(self):
+        status, data = await self.get("/api/teacher/settings")
+        self.assertEqual(status, 200, data)
+        rub = data["rubric"]
+        self.assertEqual((rub["chosen"], rub["own"], rub["for_all"]), ("official", False, False))
+        self.assertEqual([o["key"] for o in rub["options"]], ["official", "classic"])
+        self.assertTrue(all(o["about"] for o in rub["options"]))
+        self.assertEqual((await self.post("/api/teacher/settings", {"rubric": "xyz"}))[0], 400)
+
+        status, data = await self.post("/api/teacher/settings", {"rubric": "classic"})
+        self.assertEqual((status, data["rubric"]["chosen"], data["rubric"]["own"]), (200, "classic", True))
+        self.assertEqual((essay_ai.rubric_of(OWNER), essay_ai.rubric_of(OTHER)), ("classic", "official"))
+        self.assertEqual(essay_ai.rubric_choice(), "official")  # boshqa ustozlarga ta'sir qilmaydi
+
+        mine = await self.grade(OWNER)  # eski mezon: 12 × 0/1/2 — 1,5 → 1 (yarim ball yo'q)
+        self.assertEqual(self.steps, [0, 1, 2])
+        self.assertIn("kochirmaslik", self.prompts[-1])
+        self.assertEqual((mine["ai_result"]["rubric"], mine["ai_score"]), ("classic", 12))
+        self.assertTrue(any(c == STUDENT and "Publitsistik uslub va so'z boyligi" in t for c, t in self.bot.messages))
+        view = webapp._practice_view(mine)
+        self.assertEqual(view["titles"]["uslub"], "Publitsistik uslub va so'z boyligi")
+
+        other = await self.grade(OTHER)  # tanlamagan ustoz — standart (UZBMB rasmiy jadvali)
+        self.assertEqual(self.steps, [0, 0.5, 1, 1.5, 2])
+        self.assertEqual((other["ai_result"]["rubric"], other["ai_score"]), ("official", 18))  # 12 × 1,5
+        self.assertEqual(webapp._practice_view(other)["titles"]["uslub"], "Publitsistik uslub")
+
+        status, data = await self.post("/api/teacher/settings", {"rubric": "official"})
+        self.assertEqual((status, data["rubric"]["chosen"]), (200, "official"))
+        self.assertEqual((await self.grade(OWNER))["ai_score"], 18)
+
+    async def test_admin_sets_default_for_others(self):
+        webapp.ADMIN_IDS.add(OTHER)
+        try:
+            self.user = {"id": OTHER, "name": "Admin", "username": None}
+            status, data = await self.post("/api/teacher/settings", {"rubric": "classic"})
+            self.assertEqual((status, data["rubric"]["chosen"], data["rubric"]["for_all"]), (200, "classic", True))
+            self.assertEqual(essay_ai.rubric_choice(), "classic")
+            self.assertEqual(essay_ai.rubric_of(OWNER), "classic")  # o'zi tanlamagan ustoz — admin standarti
+            self.user = {"id": OWNER, "name": "Ustoz", "username": None}
+            await self.post("/api/teacher/settings", {"rubric": "official"})
+            self.assertEqual((essay_ai.rubric_of(OWNER), essay_ai.rubric_choice()), ("official", "classic"))
+        finally:
+            webapp.ADMIN_IDS.discard(OTHER)
+            db.set_setting("ai:rubric", "official")
+
+    async def test_expert_form_uses_own_rubric(self):
+        import plans
+        saved = plans.FREE_IDS
+        plans.FREE_IDS = {OWNER}
+        try:
+            await self.post("/api/teacher/settings", {"rubric": "classic"})
+            practice_id = db.create_practice(OWNER, STUDENT, "Kitob", self.ESSAY, "expert", None, "expert")
+            queue = (await self.get("/api/expert/queue"))[1]
+            self.assertEqual((queue["rubric_key"], queue["steps"], queue["rubric"][0]["key"]), ("classic", [2, 1, 0], "kirish"))
+            scores = {c["key"]: 2 for c in queue["rubric"]}
+            scores["imlo"] = 1.5  # eski mezonda yarim ball yo'q
+            self.assertEqual((await self.post(f"/api/expert/practice/{practice_id}", {"scores": scores}))[0], 400)
+            scores["imlo"] = 1
+            status, graded = await self.post(f"/api/expert/practice/{practice_id}", {"scores": scores})
+            self.assertEqual((status, graded["score_75"]), (200, 73), graded)
+            self.assertEqual(db.get_practice(practice_id)["ai_result"]["rubric"], "classic")
+        finally:
+            plans.FREE_IDS = saved
+
+
 class PinAttempts(ServerBase):
     async def test_wrong_pin_locks_after_five(self):
         import sheet

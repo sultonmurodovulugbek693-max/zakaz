@@ -2353,7 +2353,8 @@ async def grade_practice(bot: Bot, practice: dict) -> None:
         for file_id, mime in practice.get("photos") or []:
             buffer = await bot.download(file_id)
             images.append((buffer.read(), mime))
-        result = await essay_ai.grade(practice["topic"] or "", practice["text"] or None, images)
+        rubric = await asyncio.to_thread(essay_ai.rubric_of, practice["teacher_id"])  # ustoz sozlamalarda tanlagan mezon
+        result = await essay_ai.grade(practice["topic"] or "", practice["text"] or None, images, rubric=rubric)
     except essay_ai.AIError as error:
         give_up = not error.retry or practice["tries"] + 1 >= ESSAY_MAX_TRIES
         await asyncio.to_thread(db.practice_failed, practice["id"], str(error), give_up)
@@ -2408,7 +2409,9 @@ async def essay_gave_up(bot: Bot, attempt_id: int, charge: str | None) -> None:
 async def grade_one(bot: Bot, essay: dict) -> None:
     try:
         images = [] if essay["text"] else await download_photos(bot, essay["photos"])
-        result = await essay_ai.grade(essay["topic"] or "", essay["text"], images)
+        test = await asyncio.to_thread(db.get_test, essay["test_id"])
+        rubric = await asyncio.to_thread(essay_ai.rubric_of, test["owner_id"] if test else None)  # test egasining mezoni
+        result = await essay_ai.grade(essay["topic"] or "", essay["text"], images, rubric=rubric)
     except essay_ai.AIError as error:
         give_up = not error.retry or essay["tries"] + 1 >= ESSAY_MAX_TRIES
         charge = await asyncio.to_thread(db.essay_failed, essay["attempt_id"], str(error), give_up)
@@ -2941,11 +2944,12 @@ def practice_result_text(result: dict, words: int | None) -> str:
     if words:
         lines.append(f"✍️ {words} so'z")
     lines.append(LINE)
+    titles = essay_ai.titles_of(result)  # esse qaysi mezon bilan baholangan bo'lsa — o'shaning nomlari
     for item in result.get("criteria", []):
         score = item["score"]  # rasmiy mezonda 0,5 qadam: 2 / 1,5 / 1 / 0,5
         mark = "✅" if score >= 2 else "🟡" if score >= 1 else "❌"
         comment = item.get("comment", "")
-        lines.append(f"{mark} <b>{esc(essay_ai.RUBRIC_TITLES.get(item['key'], item['key']))}</b>: {fmt_num(score)}/2"
+        lines.append(f"{mark} <b>{esc(titles.get(item['key'], item['key']))}</b>: {fmt_num(score)}/2"
                      + (f" — {esc(comment[:160])}" if comment else ""))
     if result.get("comment"):
         lines += [LINE, f"💬 {esc(result['comment'][:600])}"]

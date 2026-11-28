@@ -222,6 +222,25 @@ html.dark .quick-action i { background: #20302a; }
 @media (prefers-reduced-motion: reduce) { .stamp-drop, .essay-wait .run i { animation: none; } }
 .essay-wait .spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* «📏 Baholash mezoni» (sozlamalar → AI): ikki variant; bosilganda — «yangilanmoqda» animatsiyasi, so'ng ✓ */
+.rub-box { position: relative; overflow: hidden; }
+.rub-opt { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; padding: 12px 14px; border-radius: 14px;
+  border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; transition: border-color .2s, background .2s, transform .15s; }
+.rub-opt:active { transform: scale(.98); }
+.rub-opt b { display: block; font-size: 15px; }
+.rub-opt small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 3px; line-height: 1.35; }
+.rub-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.rub-dot { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; transition: border-color .2s; }
+.rub-opt.on .rub-dot { border-color: var(--accent); }
+.rub-opt.on .rub-dot::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: pick .3s; }
+.rub-busy { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center;
+  background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(2px); animation: flash-in .2s ease-out; }
+.rub-busy[hidden] { display: none; }
+.rub-busy .spin { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.rub-busy .run { width: 170px; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; }
+.rub-busy .run i { display: block; height: 100%; width: 35%; border-radius: 99px; background: var(--accent); animation: es-run 1.1s ease-in-out infinite; }
+.rub-busy .check { width: 58px; height: 58px; }
+@media (prefers-reduced-motion: reduce) { .rub-busy .run i, .rub-busy .spin { animation: none; } }
 .essay-self { display: grid; gap: 10px; }
 .board-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 2px; border-top: 1px solid var(--line); font-size: 14px; }
 .board-row:first-child { border-top: 0; }
@@ -3288,18 +3307,51 @@ function earningsHTML(e) {
 // Har ekran tepasida — undagi har bir funksiya nima qilishi (FREE_IDS uchun ayniqsa: sozlama ko'p)
 const SETTINGS_TABS = {
   pay: { icon: "💳", title: "To'lov va narxlar", hint: "karta, kredit narxlari, ekspert, tariflar, daromad" },
-  ai: { icon: "🤖", title: "AI", hint: "qaysi ishni qaysi AI qiladi, Claude balansi" },
+  ai: { icon: "🤖", title: "AI", hint: "esse baholash mezoni, qaysi ishni qaysi AI qiladi, Claude balansi" },
   public: { icon: "🌐", title: "Begonalar va e'lonlar", hint: "ommaviy esse havolasi, e'lon kanali" },
 };
+// «📏 Baholash mezoni»: ikki mezon — ustoz tanlaydi (o'z o'quvchilari essesi), admin — tanlamaganlar uchun standart
+const RUB_BUSY = `<span class="spin" aria-hidden="true"></span><b>Mezon yangilanmoqda…</b><div class="run"><i></i></div>`;
+function rubricNote(r) {
+  return (r.for_all ? "Siz tanlagan mezon o'zi tanlamagan hamma ustozga ishlaydi."
+    : r.own ? "O'quvchilaringiz essesi shu mezon bilan baholanadi." : "Hozir standart mezon ishlayapti — o'zingiz tanlasangiz, shunisi ishlaydi.")
+    + " Yangi esselar tanlangan mezon bilan tekshiriladi; oldin tekshirilganlari o'zgarmaydi.";
+}
+function rubricCardHTML(r) {
+  if (!r) return "";
+  return `<div class="section-title"><h2>📏 Baholash mezoni</h2><span class="muted small">${r.for_all ? "hamma uchun standart" : "o'quvchilaringiz uchun"}</span></div>
+    <div class="card rub-box" id="rub-box" style="gap:10px">
+      ${r.options.map(o => `<button type="button" class="rub-opt ${o.key === r.chosen ? "on" : ""}" data-rub="${o.key}" aria-pressed="${o.key === r.chosen}">
+        <span class="rub-dot" aria-hidden="true"></span><span><b>${esc(o.name)}</b><small>${esc(o.about)}</small></span></button>`).join("")}
+      <span class="muted small" id="rub-note">${rubricNote(r)}</span>
+      <div class="rub-busy" role="status" aria-live="polite" hidden>${RUB_BUSY}</div>
+    </div>`;
+}
+function bindRubricCard() {
+  const box = document.getElementById("rub-box"); if (!box) return;
+  const overlay = box.querySelector(".rub-busy");
+  let busy = false;
+  box.querySelectorAll("[data-rub]").forEach(x => x.onclick = async () => {
+    if (busy || x.classList.contains("on")) return;
+    busy = true; haptic("select");
+    overlay.innerHTML = RUB_BUSY; overlay.hidden = false;
+    const done = () => { overlay.hidden = true; overlay.innerHTML = RUB_BUSY; busy = false; };
+    try {
+      const [fresh] = await Promise.all([api("/api/teacher/settings", { rubric: x.dataset.rub }), new Promise(ok => setTimeout(ok, 900))]);
+      const r = fresh.rubric;
+      box.querySelectorAll("[data-rub]").forEach(b => { const on = b.dataset.rub === r.chosen; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+      document.getElementById("rub-note").textContent = rubricNote(r);
+      overlay.innerHTML = `<svg class="check" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><path d="M30 52 L45 66 L71 37"/></svg><b>Mezon yangilandi</b>`;
+      haptic("success");
+      setTimeout(done, 1200);
+    } catch (e) { done(); toast(e.message); haptic("error"); }
+  });
+}
 // «⚙️ Model tanlash» (admin): har ish — qaysi AI; kaliti yo'q — 🔒. Botdagi /ai_sozlama bilan bir xil sozlama
 async function loadAiModels(data) {
   const box = document.getElementById("ai-models"); if (!box) return;
   if (!data) { try { data = await api("/api/admin/ai"); } catch (e) { box.innerHTML = ""; return toast(e.message); } }
-  const rb = data.rubric;
-  box.innerHTML = `${rb ? `<div class="section-title"><h2>📏 Baholash mezoni</h2></div>
-    <div class="card" style="display:grid;gap:8px"><div class="chips">${rb.options.map(o => `<button type="button" class="chip ${o.key === rb.chosen ? "on" : ""}" data-rubric="${o.key}">${esc(o.name)}</button>`).join("")}</div>
-      <span class="muted small">Esse qaysi mezon bilan baholanadi (AI va 🎓 ekspert). Standart — UZBMB rasmiy jadvali: 12 mezon, har biri 2 / 1,5 / 1 / 0,5 ball (jami 24 → 75 ballik shkala).</span></div>` : ""}
-    <div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
+  box.innerHTML = `<div class="section-title"><h2>⚙️ Model tanlash</h2><span class="muted small">Gemini ${data.keys.gemini ? "✅" : "❌"} · Claude ${data.keys.claude ? "✅" : "❌"}</span></div>
     <div class="card" style="display:grid;gap:14px">${data.tasks.map(t => `<div style="display:grid;gap:6px">
       <b class="small">${esc(t.title)}</b>
       <div class="chips">${t.options.map(o => `<button type="button" class="chip ${o.key === t.chosen ? "on" : ""}" data-ai-task="${t.key}" data-ai-choice="${o.key}" ${o.locked ? "disabled" : ""}>${o.locked ? "🔒 " : ""}${esc(o.name)}</button>`).join("")}</div>
@@ -3327,7 +3379,7 @@ VIEWS.settings = async ({ tab } = {}) => {
   if (!SETTINGS_TABS[tab]) {  // menyu: har bo'lim — nima ichida va holati
     const state = {
       pay: !s.card ? `<span class="pill-tag wait">karta yo'q</span>` : s.earnings && s.earnings.balance ? `<span class="pill-tag done">${sum(s.earnings.balance)} so'm</span>` : "",
-      ai: free && s.claude ? `<span class="pill-tag done">$${s.claude.usd}</span>` : "",
+      ai: free && s.claude ? `<span class="pill-tag done">$${s.claude.usd}</span>` : s.rubric ? `<span class="pill-tag">${s.rubric.chosen === "official" ? "rasmiy mezon" : "eski mezon"}</span>` : "",
       public: s.public ? `<span class="pill-tag done">ochiq</span>` : `<span class="pill-tag wait">yopiq</span>`,
     };
     // FREE_IDS / admin — «✍️ Esse» bo'limida hamma o'quvchining tekshiruvchisi: sozlanmaguncha tepada yo'riqnoma turadi
@@ -3376,6 +3428,7 @@ VIEWS.settings = async ({ tab } = {}) => {
       free && ["💎 O'quvchi tariflari", "begona o'quvchi muddatli tarif oladi — muddat davomida hamma mocklaringiz unga bepul."],
     ]),
     ai: guideHTML([
+      ["📏 Baholash mezoni", owner ? "esse qaysi mezon bilan baholanadi — siz tanlagani o'zi tanlamagan hamma ustozga standart." : "o'quvchilaringiz essesi qaysi mezon bilan baholanadi (AI ham, 🎓 ekspert ham). Ball shu mezon bo'yicha hisoblanadi va 75 ballik shkala orqali Rasch natijaga qo'shiladi."],
       ["📝 Esse baholash", "faqat Claude (imtihondagidek 75 ballik shkala). Claude ishlamasa esse sizga qo'lda baholash uchun keladi."],
       ["🧾 Chek tekshirish", "Gemini o'qiydi: summa, bugungi sana, karta yoki ism. Natija 1–2 daqiqada."],
       ["📷 Esse rasmini o'qish", "o'quvchi tanlaydi: Gemini (bepul) yoki Claude (aniqroq) — qo'lyozmani matnga aylantiradi."],
@@ -3407,7 +3460,8 @@ VIEWS.settings = async ({ tab } = {}) => {
       ${packsCardHTML({ essay_packs: s.packs, min_price: rs ? s.earnings.min_price : 0, warn: rs ? revshareWarnHTML(s.earnings.teacher_percent, s.earnings.min_price) : "" })}
       ${free ? expertPriceHTML(s) : ""}
       ${free ? studentTariffsHTML(s.student_tariffs || []) : ""}`,
-    ai: `${owner ? `<div id="ai-models"><div class="card"><span class="muted small">Modellar yuklanmoqda…</span></div></div>` : ""}
+    ai: `${rubricCardHTML(s.rubric)}
+      ${owner ? `<div id="ai-models"><div class="card"><span class="muted small">Modellar yuklanmoqda…</span></div></div>` : ""}
       ${free ? claudeCardHTML(s.claude, true)
       : `<div class="card"><span class="small">O'z o'quvchilaringiz essesi 📦 esse paketidan tekshiriladi — qoldig'i «💎 Obuna» bo'limida.</span></div>`}`,
     public: `<div class="section-title"><h2>🌐 Ommaviy esse havolasi</h2><span class="muted small">${s.public ? "✅ ochiq" : "⛔️ yopiq"}</span></div>
@@ -3423,6 +3477,7 @@ VIEWS.settings = async ({ tab } = {}) => {
     ${sections}
   </div>`;
   if (tab === "ai" && owner) loadAiModels();
+  if (tab === "ai") bindRubricCard();
   bindPacksCard();
   bindStudentTariffs();
   bindExpertPrice();

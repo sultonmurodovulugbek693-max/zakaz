@@ -693,7 +693,7 @@ class EssaySelfCheck(ServerBase):
         self.essay_ai = essay_ai
         self._grade, self._enabled = essay_ai.grade, essay_ai.essay_enabled
 
-        async def fake_grade(topic, text, images=()):
+        async def fake_grade(topic, text, images=(), rubric=None):
             criteria = [{"key": k, "score": 2 if i < 9 else 0, "comment": "Yaxshi"} for i, k in enumerate(essay_ai.RUBRIC_KEYS)]
             return {"score": sum(c["score"] for c in criteria), "criteria": criteria, "comment": "Umumiy izoh",
                     "outline": False, "transcription": "", "cost": 0.01, "provider": "test"}
