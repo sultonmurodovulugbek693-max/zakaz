@@ -1586,7 +1586,7 @@ VIEWS.myresults = async () => {
   try { board = await api("/api/mock-board"); } catch (e) {}
   // «✍️ Esse» bo'limida o'zi tekshirtirgan esselar — shaxsiy natijalar
   const essayRows = essays.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">✍️</span>
-      <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
+      <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.photos ? `📷 ${h.photos} bet` : `${h.words} so'z`}</small></span>
       <span class="score-col">${h.status === "graded" ? essayStamp(h.score_75) : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="home-top"><div class="home-hello"><span class="brand"><i>I</i>Natijalar</span>
@@ -3740,7 +3740,7 @@ VIEWS.practice = async () => {
   let draft = {}; try { draft = JSON.parse(store(draftKey) || "{}"); } catch (e) {}
   const t = r.teachers;
   const history = r.history.map(h => `<button type="button" class="item" data-pr="${h.id}"><span class="ico">📝</span>
-      <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.words} so'z</small></span>
+      <span><b>${esc((h.topic || "Mavzusiz esse").slice(0, 60))}</b><small>${dmy(h.created_at)} · ${h.photos ? `📷 ${h.photos} bet` : `${h.words} so'z`}</small></span>
       <span class="score-col">${h.status === "graded" ? essayStamp(h.score_75) : h.status === "failed" ? "❗️" : h.status === "awaiting_credit" ? "💳" : h.status === "expert" ? "🎓" : h.status === "refunded" ? "↩️" : "⏳"}</span></button>`).join("");
   $app.innerHTML = `<div class="view">
     <div class="hero"><span class="brand"><i>I</i>Esse tekshirish</span><h1>✍️ Esse yozing</h1>
@@ -3756,6 +3756,10 @@ VIEWS.practice = async () => {
       <div class="field"><label for="ptopic">Mavzu (vaziyat) <span class="muted">— ixtiyoriy</span></label><textarea class="input" id="ptopic" rows="2" placeholder="Masalan: Kitob o'qish foydalimi yoki internet?">${esc(draft.topic || "")}</textarea></div>
       <textarea class="input" id="pessay" rows="12" placeholder="Kirish (2–3 jumla) · asosiy qism (kamida 3 xatboshi) · xulosa (2–3 jumla)">${esc(draft.essay || "")}</textarea>
       <div class="counter" id="pcount"></div>
+      <div style="display:grid;gap:6px">
+        <label class="btn ghost block" for="pphotos" id="pphotos-label">📷 Yoki qog'ozdagi esse rasmini yuklang (1–6 bet)</label>
+        <input type="file" id="pphotos" accept="image/*" multiple hidden>
+        <span class="muted small" id="pphotos-note" hidden></span></div>
       <button type="button" class="btn block" id="psend">Tekshirtirish</button></div>
     <div id="my-essay"></div>`}
     ${history ? `<div class="section-title"><h2>Oldingi esselarim</h2></div><div class="list">${history}</div>` : ""}
@@ -3815,8 +3819,25 @@ VIEWS.practice = async () => {
   const count = () => { const w = words(); document.getElementById("pcount").textContent = `${w} so'z${w < 60 ? " · kamida 60" : ""}`; };
   const save = () => store(draftKey, JSON.stringify({ topic: topic.value, essay: essay.value }));
   essay.oninput = () => { save(); count(); }; topic.oninput = save; count();
+  // Qog'ozdagi esse: 1–6 bet rasmi — Claude qo'lyozmani o'zi o'qib baholaydi (matn yozish shart emas)
+  const photosEl = document.getElementById("pphotos"), photosNote = document.getElementById("pphotos-note"),
+    photosLabel = document.getElementById("pphotos-label");
+  let photos = [];
+  const showPhotos = () => {
+    photosNote.hidden = !photos.length;
+    photosNote.innerHTML = photos.length ? `📷 <b>${photos.length} ta rasm</b> tanlandi — AI qo'lyozmani o'qib tekshiradi. <a href="#" id="pphotos-clear">✕ Bekor qilish</a>` : "";
+    photosLabel.textContent = photos.length ? "📷 Boshqa rasmlarni tanlash" : "📷 Yoki qog'ozdagi esse rasmini yuklang (1–6 bet)";
+    essay.disabled = !!photos.length;
+    const clear = document.getElementById("pphotos-clear");
+    if (clear) clear.onclick = e => { e.preventDefault(); photos = []; photosEl.value = ""; showPhotos(); };
+  };
+  photosEl.onchange = () => {
+    const chosen = [...photosEl.files];
+    if (chosen.length > 6) { toast("Ko'pi bilan 6 ta rasm — birinchi 6 tasi olindi"); haptic("error"); }
+    photos = chosen.slice(0, 6); haptic("select"); showPhotos();
+  };
   btn.onclick = async () => {
-    if (words() < 60) { toast("Esse juda qisqa — kamida 60 so'z"); haptic("error"); return essay.focus(); }
+    if (!photos.length && words() < 60) { toast("Esse juda qisqa — kamida 60 so'z (yoki esse rasmini yuklang)"); haptic("error"); return essay.focus(); }
     const pub = teacher.kind === "public";
     if (!pub && !teacher.left) { toast("Bu oy uchun chegara tugagan"); haptic("error"); return; }
     if (pub && !teacher.open && !teacher.balance) { toast("Ustoz ommaviy tekshiruvni yopgan"); haptic("error"); return; }
@@ -3824,10 +3845,20 @@ VIEWS.practice = async () => {
     if (expert && (teacher.balance || 0) < teacher.expert) {
       toast(`Ekspert tekshiruvi — ${teacher.expert} kredit, sizda ${teacher.balance || 0} ta. Avval kredit oling`); haptic("error"); return;
     }
-    btn.disabled = true; btn.textContent = "Yuborilmoqda…";
+    btn.disabled = true; btn.textContent = photos.length ? "Rasm yuklanmoqda…" : "Yuborilmoqda…";
     try {
-      const res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim(), mode: expert ? "expert" : "ai" });
-      store(draftKey, "{}"); haptic("success"); essay.value = ""; topic.value = ""; count();
+      let res;
+      if (photos.length) {
+        const form = new FormData();
+        form.append("teacher_id", teacher.id); form.append("topic", topic.value.trim()); form.append("mode", expert ? "expert" : "ai");
+        for (const f of photos) form.append("photo", await compressImage(f, 2000), "esse.jpg");
+        res = await apiForm("/api/practice/photo", form);
+        photos = []; photosEl.value = ""; showPhotos();
+      } else {
+        res = await api("/api/practice", { teacher_id: teacher.id, topic: topic.value.trim(), essay: essay.value.trim(), mode: expert ? "expert" : "ai" });
+        essay.value = "";
+      }
+      store(draftKey, "{}"); haptic("success"); topic.value = ""; count();
       btn.textContent = "Yana bitta esse"; btn.disabled = false;
       if (res.status === "expert") {
         teacher.balance = res.balance; left();

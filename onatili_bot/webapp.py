@@ -218,7 +218,8 @@ async def bootstrap(request: web.Request) -> web.Response:
         "practice": essay_ai.essay_enabled() or await run(experts_available),  # AI yo'q bo'lsa ham — ekspert bor
         # «📊 Natijalar»da «✍️ Esselarim»: o'zi tekshirtirgan esselar (shaxsiy — ustozga ro'yxat bo'lib bormaydi)
         "essays": [{"id": p["id"], "status": p["status"], "topic": p["topic"], "created_at": p["created_at"],
-                    "score_75": essay_to_75(p["ai_score"]), "words": len(p["text"].split())}
+                    "score_75": essay_to_75(p["ai_score"]), "words": len(p["text"].split()),
+                    "photos": len(p.get("photos") or [])}
                    for p in await run(db.practice_of_student, uid, 30)],
         "my_card": my_card,
         # Begona o'qituvchi: begonalar puli platformaga, ulushi balansiga; esse narxi kamida min_price
@@ -2882,6 +2883,7 @@ def _practice_view(item: dict) -> dict:
             "criteria": ai.get("criteria") if item["status"] == "graded" else None,
             "comment": ai.get("comment") if item["status"] == "graded" else None,
             "titles": essay_ai.RUBRIC_TITLES, "words": len(item["text"].split()),
+            "photos": len(item.get("photos") or []),  # qog'ozdagi esse rasmi (bet soni) — matni yo'q
             "expert": ai.get("by") == "expert"}  # 🎓 ekspert qo'lda baholagan (AI emas)
 
 
@@ -2950,7 +2952,7 @@ async def practice_expert_submit(user: dict, teacher_id: int, topic: str | None,
     if "send_text" in HOOKS:
         try:
             who = html.escape(user.get("name") or "o'quvchi")
-            size = f"{len(photos)} ta rasm — quyida" if photos else f"{len(text.split())} so'z"
+            size = f"{len(photos)} ta rasm — shu chatda" if photos else f"{len(text.split())} so'z"
             await HOOKS["send_text"](teacher_id, f"🎓 <b>Ekspert tekshiruvi</b> · yangi esse ({size}) — "
                                      f"{who}\nIlovada «🎓 Ekspert» bo'limida baholang.")
         except Exception:
@@ -3020,9 +3022,11 @@ async def practice_code(request: web.Request) -> web.Response:
     return ok({"ok": True, "fresh": fresh, "teacher": teacher.get("full_name") or "Ustoz"})
 
 
-async def practice_public_submit(user: dict, teacher_id: int, topic: str | None, text: str) -> dict:
+async def practice_public_submit(user: dict, teacher_id: int, topic: str | None, text: str,
+                                 photos: list | None = None) -> dict:
     """Begona o'quvchi ilovada: bepullari bo'lsa — ustoz kreditidan; tugagan bo'lsa — o'z kreditidan (yo'q bo'lsa
-    esse saqlanadi va kredit olgach o'zi tekshiriladi). Botdagi ommaviy havola bilan bir xil qoidalar."""
+    esse saqlanadi va kredit olgach o'zi tekshiriladi). Botdagi ommaviy havola bilan bir xil qoidalar.
+    photos — qog'ozdagi esse rasmlari [[file_id, mime], ...] (matn o'rniga)."""
     is_open = await run(public_open, teacher_id)
     balance = await run(db.wallet_balance, teacher_id, user["id"])
     if not is_open and balance <= 0:  # yopiq bo'lsa ham sotib olingan kredit kuymaydi — faqat kreditsizga yopiq
@@ -3032,13 +3036,14 @@ async def practice_public_submit(user: dict, teacher_id: int, topic: str | None,
     if is_open and await run(db.public_free_used, teacher_id, user["id"]) < public_free(teacher_id):
         if not await ai_allowed(teacher_id, "essays"):
             raise ApiError(402, "Ustozning AI krediti tugagan — keyinroq urinib ko'ring yoki ustozga ayting")
-        practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public")
+        practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", photos or None)
         if "wake_ai" in HOOKS:
             HOOKS["wake_ai"]()
         return {"ok": True, "id": practice_id, "status": "pending", "free": True}
     if not await run(db.wallet_balance, teacher_id, user["id"]) and not await run(essay_packs, teacher_id):
         raise ApiError(409, "Ustoz hali kredit narxini qo'ymagan")
-    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", None, "awaiting_credit")
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "public", photos or None,
+                            "awaiting_credit")
     _released, teacher_out = await release_waiting(teacher_id, user["id"])
     status = (await run(db.get_practice, practice_id))["status"]
     return {"ok": True, "id": practice_id, "status": status, "teacher_out": teacher_out,
@@ -3067,12 +3072,20 @@ async def practice_submit(request: web.Request) -> web.Response:
         raise ApiError(400, f"Esse juda qisqa — kamida {PRACTICE_MIN_WORDS} so'z yozing")
     if len(text) > PRACTICE_MAX_CHARS:
         raise ApiError(400, "Esse juda uzun")
-    if payload.get("mode") == "expert":  # «🎓 Ekspert»: FREE_IDS qo'lda tekshiradi (AI shart emas) — narxi kreditda
-        return ok(await practice_expert_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
+    topic = str(payload.get("topic") or "").strip()[:1500] or None
+    return ok(await practice_route(user, teacher_id, linked, topic, text, None, payload.get("mode") == "expert"))
+
+
+async def practice_route(user: dict, teacher_id: int, linked: bool, topic: str | None, text: str,
+                         photos: list | None, expert: bool) -> dict:
+    """«✍️ Esse»: matn yoki rasm — qaysi yo'l bilan tekshiriladi. Ekspert (FREE_IDS qo'lda, kreditda), begona
+    (ommaviy havola qoidalari: bepul / kredit) yoki ustozning o'quvchisi (ustoz kreditidan, oylik chegara bilan)."""
+    if expert:  # «🎓 Ekspert»: FREE_IDS qo'lda tekshiradi (AI shart emas) — narxi kreditda
+        return await practice_expert_submit(user, teacher_id, topic, text, photos)
     if not essay_ai.essay_enabled():
         raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
     if not linked:  # begona — ommaviy havola qoidalari (bepul / kredit)
-        return ok(await practice_public_submit(user, teacher_id, str(payload.get("topic") or "").strip()[:1500] or None, text))
+        return await practice_public_submit(user, teacher_id, topic, text, photos)
     if not await run(plans.essay_open, teacher_id):  # aniq sabab: ustozda tarif yo'q (kredit tugagan emas)
         raise ApiError(403, "Ustozingizda hozir tarif yo'q — esse tekshiruvi yopiq. Ustozingizga ayting.")
     limit = await run(student_limit, teacher_id)
@@ -3080,12 +3093,80 @@ async def practice_submit(request: web.Request) -> web.Response:
         raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
     if not await ai_allowed(teacher_id, "essays"):  # ustozning 1 krediti
         raise ApiError(402, "Ustozingizning AI krediti tugagan — ustozingizga ayting")
-    topic = str(payload.get("topic") or "").strip()[:1500] or None
     await run(db.remember_user, user["id"], user["name"], user.get("username"))
-    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text)
+    practice_id = await run(db.create_practice, teacher_id, user["id"], topic, text, "student", photos or None)
     if "wake_ai" in HOOKS:
         HOOKS["wake_ai"]()
-    return ok({"ok": True, "id": practice_id})
+    return {"ok": True, "id": practice_id}
+
+
+PRACTICE_MAX_PHOTOS = 6  # botdagi kabi
+
+
+async def practice_photo(request: web.Request) -> web.Response:
+    """«✍️ Esse»: qog'ozga yozilgan esse rasmi (1–6 bet) — Claude qo'lyozmani o'zi o'qib baholaydi (botdagi kabi).
+    Rasmlar Telegram'da saqlanadi (file_id): AI tekshiruvida — o'quvchining bot chatiga, ekspertda — ekspertning
+    chatiga (u esseni o'sha yerda o'qiydi). Qolgan qoidalar — matnli essedagidek (practice_route)."""
+    user = await auth(request)
+    try:
+        form = await request.post()
+    except Exception:
+        raise ApiError(400, "Rasm yuborilmadi")
+    teacher_id = to_int(form.get("teacher_id"), 0, "Ustoz")
+    topic = str(form.get("topic") or "").strip()[:1500] or None
+    expert = form.get("mode") == "expert"
+    files = [f for f in form.getall("photo", []) if hasattr(f, "file")]
+    if not files:
+        raise ApiError(400, "Esse rasmini tanlang")
+    if len(files) > PRACTICE_MAX_PHOTOS:
+        raise ApiError(400, f"Ko'pi bilan {PRACTICE_MAX_PHOTOS} ta rasm (bet)")
+    linked = await run(db.is_linked, teacher_id, user["id"])
+    if not linked and (teacher_id == user["id"] or not await run(db.find_user, str(teacher_id))):
+        raise ApiError(403, "Siz bu ustozga ulanmagansiz")
+    if expert:  # rasm ekspertga yuborilishidan oldin — kredit yetadimi (aks holda unga keraksiz rasm boradi)
+        need = await run(expert_credits, teacher_id)
+        if not need:
+            raise ApiError(409, "Bu ekspert hozir qo'lda tekshiruv qabul qilmayapti")
+        balance = await run(db.wallet_balance, teacher_id, user["id"])
+        if balance < need:
+            raise ApiError(402, f"Ekspert tekshiruvi — {need} kredit, sizda {balance} ta. Avval kredit oling", need=need)
+    else:  # rasm saqlanishidan oldin — kredit yechmaydigan tekshiruvlar (rad etiladigan esse rasmi chatga bormasin)
+        if not essay_ai.essay_enabled():
+            raise ApiError(503, "AI esse tekshiruvi hozir o'chiq")
+        if linked:
+            if not await run(plans.essay_open, teacher_id):
+                raise ApiError(403, "Ustozingizda hozir tarif yo'q — esse tekshiruvi yopiq. Ustozingizga ayting.")
+            limit = await run(student_limit, teacher_id)
+            if await run(db.practice_used, teacher_id, user["id"], plans.month_key()) >= limit:
+                raise ApiError(429, f"Bu oy uchun chegara tugadi ({limit} ta esse) — keyingi oy yoki ustozingizdan so'rang")
+            if not await run(plans.can_use_ai, teacher_id, "essays"):
+                raise ApiError(402, "Ustozingizning AI krediti tugagan — ustozingizga ayting")
+        elif not await run(public_open, teacher_id) and await run(db.wallet_balance, teacher_id, user["id"]) <= 0:
+            raise ApiError(403, "Ustoz ommaviy esse tekshiruvini yopgan")
+    if "store_photo" not in HOOKS:
+        raise ApiError(503, "Rasmni saqlab bo'lmadi — keyinroq urinib ko'ring")
+    pages = []
+    for field in files:
+        data = field.file.read()
+        mime = (getattr(field, "content_type", None) or "image/jpeg").lower()
+        if not mime.startswith("image/"):
+            raise ApiError(400, "Faqat rasm (JPG, PNG) yuboring")
+        if not data or len(data) > 12 * 1024 * 1024:
+            raise ApiError(400, "Har rasm 12 MB dan kichik bo'lsin")
+        pages.append((await run(shrink_image, data, mime, 2000, 85))[0])  # qo'lyozma o'qilsin, yuklash tezroq
+    chat = teacher_id if expert else user["id"]
+    who = html.escape(user.get("name") or "o'quvchi")
+    photos = []
+    try:
+        for index, data in enumerate(pages, 1):
+            caption = (f"🎓 Ekspert tekshiruvi · {who} · {index}/{len(pages)}-bet" if expert
+                       else f"📝 Esse rasmi · {index}/{len(pages)}-bet (ilovadan)")
+            photos.append([await HOOKS["store_photo"](chat, data, caption), "image/jpeg"])
+    except Exception:
+        logger.warning("Esse rasmi Telegram'ga saqlanmadi", exc_info=True)
+        raise ApiError(502, "Rasm ekspertga yetkazilmadi — keyinroq urinib ko'ring" if expert else
+                            "Rasmni saqlab bo'lmadi — botni oching, /start bosing va qayta urinib ko'ring")
+    return ok(await practice_route(user, teacher_id, linked, topic, "", photos, expert))
 
 
 async def practice_get(request: web.Request) -> web.Response:
@@ -4941,6 +5022,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/teacher/link/limit", link_limit)
     app.router.add_get("/api/practice", practice_home)
     app.router.add_post("/api/practice", practice_submit)
+    app.router.add_post("/api/practice/photo", practice_photo)
     app.router.add_get("/api/practice/{practice_id:\\d+}", practice_get)
     app.router.add_post("/api/practice/wallet-order", practice_wallet_order)
     app.router.add_post("/api/practice/code", practice_code)

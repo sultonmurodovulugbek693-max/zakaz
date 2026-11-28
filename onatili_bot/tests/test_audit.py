@@ -284,5 +284,71 @@ async def _done():
     return None
 
 
+class PracticePhoto(ServerBase):
+    """«✍️ Esse» ilovada: qog'ozdagi esse rasmi (1–6 bet) — Telegram'ga saqlanadi va Claude navbatiga tushadi."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self._saved = (essay_ai.essay_enabled, webapp.plans.FREE_IDS)
+        essay_ai.essay_enabled = lambda: True
+        self.stored = []
+
+        async def store_photo(chat_id, data, caption):
+            self.stored.append((chat_id, len(data), caption))
+            return f"file-{len(self.stored)}"
+        webapp.HOOKS["store_photo"] = store_photo
+        webapp.HOOKS["wake_ai"] = lambda: None
+        self.user = {"id": STUDENT, "name": "Ali Valiyev", "username": None}
+
+    async def asyncTearDown(self):
+        essay_ai.essay_enabled, webapp.plans.FREE_IDS = self._saved
+        await super().asyncTearDown()
+
+    async def send(self, files, **fields):
+        from aiohttp import FormData
+        form = FormData()
+        for key, value in {"teacher_id": OWNER, **fields}.items():
+            form.add_field(key, str(value))
+        for name, data, mime in files:
+            form.add_field("photo", data, filename=name, content_type=mime)
+        response = await self.client.post("/api/practice/photo", data=form)
+        return response.status, await response.json()
+
+    async def test_linked_student_photo_goes_to_claude_queue(self):
+        db.link_student(OWNER, STUDENT)
+        db.add_credits(OWNER, 3)
+        photo = big_photo(1500, 2000)
+        status, res = await self.send([("1.jpg", photo, "image/jpeg"), ("2.jpg", photo, "image/jpeg")], topic="Kitob")
+        self.assertEqual(status, 200, res)
+        item = db.get_practice(res["id"])
+        self.assertEqual((item["status"], item["kind"], item["topic"], item["text"]), ("pending", "student", "Kitob", ""))
+        self.assertEqual(item["photos"], [["file-1", "image/jpeg"], ["file-2", "image/jpeg"]])
+        self.assertEqual([c for c, _, _ in self.stored], [STUDENT, STUDENT])  # o'quvchining o'z bot chatiga
+        self.assertTrue(all(size < len(photo) for _, size, _ in self.stored))  # siqilib yuborildi
+        self.assertEqual(db.get_credits(OWNER), 2)  # ustozning 1 krediti
+        _, page = await self.get("/api/practice")
+        self.assertEqual(page["history"][0]["photos"], 2)
+
+    async def test_expert_without_credits_sends_nothing(self):
+        webapp.plans.FREE_IDS = {OWNER}
+        db.set_setting(f"expert_price:{OWNER}", "20000")
+        db.set_setting(f"essay_price:{OWNER}", "10000")
+        status, res = await self.send([("1.jpg", big_photo(800, 1000), "image/jpeg")], mode="expert")
+        self.assertEqual((status, res.get("need")), (402, 2))
+        self.assertEqual(self.stored, [])  # kredit yetmasa — ekspertga rasm bormaydi
+
+    async def test_validation(self):
+        db.link_student(OWNER, STUDENT)
+        self.assertEqual((await self.send([("1.jpg", big_photo(300, 400), "image/jpeg")]))[0], 402)  # ustozda kredit yo'q
+        db.add_credits(OWNER, 3)
+        self.assertEqual((await self.send([]))[0], 400)
+        self.assertEqual((await self.send([("a.pdf", b"%PDF-1.4", "application/pdf")]))[0], 400)
+        many = [(f"{i}.jpg", big_photo(300, 400), "image/jpeg") for i in range(7)]
+        self.assertEqual((await self.send(many))[0], 400)
+        self.user = {"id": OTHER, "name": "Begona", "username": None}
+        self.assertEqual((await self.send([("1.jpg", big_photo(300, 400), "image/jpeg")], teacher_id=999999))[0], 403)
+        self.assertEqual(self.stored, [])
+
+
 if __name__ == "__main__":
     unittest.main()
